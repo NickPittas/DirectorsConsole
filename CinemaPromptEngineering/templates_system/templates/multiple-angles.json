@@ -1,0 +1,407 @@
+{
+  "meta": {
+    "name": "Multiple-Angles",
+    "description": "",
+    "author": "",
+    "version": "1.0.0",
+    "engine": "qwen",
+    "categories": [
+      "editing",
+      "img2img"
+    ],
+    "supports_angles": true,
+    "supports_next_scene": true,
+    "requires_images": true
+  },
+  "parameters": [
+    {
+      "name": "positive_prompt",
+      "type": "prompt",
+      "node_id": "112",
+      "input_name": "prompt",
+      "display_name": "Positive Prompt",
+      "description": "Positive prompt (what to generate)",
+      "default": ""
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "node_id": "106",
+      "input_name": "steps",
+      "display_name": "Sampling Steps",
+      "description": "Number of denoising steps",
+      "default": 4,
+      "constraints": {
+        "min": 1,
+        "max": 150,
+        "step": 1
+      }
+    },
+    {
+      "name": "cfg_scale",
+      "type": "float",
+      "node_id": "106",
+      "input_name": "cfg",
+      "display_name": "CFG Scale",
+      "description": "Classifier-free guidance scale",
+      "default": 1.0,
+      "constraints": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.5
+      }
+    },
+    {
+      "name": "seed",
+      "type": "seed",
+      "node_id": "106",
+      "input_name": "seed",
+      "display_name": "Seed",
+      "description": "Random seed (-1 for random)",
+      "default": 251524729001471
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "node_id": "106",
+      "input_name": "denoise",
+      "display_name": "Denoise Strength",
+      "description": "Denoising strength (img2img)",
+      "default": 1.0,
+      "constraints": {
+        "min": 0.1,
+        "max": 1.0,
+        "step": 0.05
+      }
+    }
+  ],
+  "loras": [
+    {
+      "name": "lora_1",
+      "display_name": "Qwen\\Edit\\qwen-image-edit-2511-multiple-angles-lora",
+      "node_id": "109",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    },
+    {
+      "name": "lora_2",
+      "display_name": "Qwen\\next-scene_lora_v1-3000",
+      "node_id": "119",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    }
+  ],
+  "inputs": [
+    {
+      "name": "reference_image_1",
+      "display_name": "Reference Image 1",
+      "node_id": "41",
+      "input_name": "image",
+      "type": "image",
+      "required": false,
+      "description": "Reference image for node 41"
+    }
+  ],
+  "workflow": {
+    "9": {
+      "inputs": {
+        "filename_prefix": "Qwen_Edit_2511_MultiAngle",
+        "images": [
+          "103",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    },
+    "41": {
+      "inputs": {
+        "image": "KIKINIS_00004_.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Load Image"
+      }
+    },
+    "94": {
+      "inputs": {
+        "shift": 3.1,
+        "model": [
+          "117",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow"
+      }
+    },
+    "96": {
+      "inputs": {
+        "reference_latents_method": "index_timestep_zero",
+        "conditioning": [
+          "100",
+          0
+        ]
+      },
+      "class_type": "FluxKontextMultiReferenceLatentMethod",
+      "_meta": {
+        "title": "FluxKontextMultiReferenceLatentMethod"
+      }
+    },
+    "97": {
+      "inputs": {
+        "reference_latents_method": "index_timestep_zero",
+        "conditioning": [
+          "112",
+          0
+        ]
+      },
+      "class_type": "FluxKontextMultiReferenceLatentMethod",
+      "_meta": {
+        "title": "FluxKontextMultiReferenceLatentMethod"
+      }
+    },
+    "98": {
+      "inputs": {
+        "strength": 1,
+        "model": [
+          "94",
+          0
+        ]
+      },
+      "class_type": "CFGNorm",
+      "_meta": {
+        "title": "CFGNorm"
+      }
+    },
+    "100": {
+      "inputs": {
+        "prompt": "",
+        "clip": [
+          "116",
+          1
+        ],
+        "vae": [
+          "116",
+          2
+        ],
+        "image1": [
+          "107",
+          0
+        ]
+      },
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "_meta": {
+        "title": "TextEncodeQwenImageEditPlus"
+      }
+    },
+    "103": {
+      "inputs": {
+        "samples": [
+          "106",
+          0
+        ],
+        "vae": [
+          "116",
+          2
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "105": {
+      "inputs": {
+        "pixels": [
+          "107",
+          0
+        ],
+        "vae": [
+          "116",
+          2
+        ]
+      },
+      "class_type": "VAEEncode",
+      "_meta": {
+        "title": "VAE Encode"
+      }
+    },
+    "106": {
+      "inputs": {
+        "seed": 251524729001471,
+        "steps": 4,
+        "cfg": 1,
+        "sampler_name": "euler_ancestral",
+        "scheduler": "beta",
+        "denoise": 1,
+        "model": [
+          "98",
+          0
+        ],
+        "positive": [
+          "97",
+          0
+        ],
+        "negative": [
+          "96",
+          0
+        ],
+        "latent_image": [
+          "105",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler"
+      }
+    },
+    "107": {
+      "inputs": {
+        "image": [
+          "41",
+          0
+        ]
+      },
+      "class_type": "FluxKontextImageScale",
+      "_meta": {
+        "title": "FluxKontextImageScale"
+      }
+    },
+    "109": {
+      "inputs": {
+        "lora_name": "Qwen\\Edit\\qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "strength_model": 1,
+        "model": [
+          "119",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    },
+    "112": {
+      "inputs": {
+        "prompt": "",
+        "clip": [
+          "116",
+          1
+        ],
+        "vae": [
+          "116",
+          2
+        ],
+        "image1": [
+          "107",
+          0
+        ]
+      },
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "_meta": {
+        "title": "TextEncodeQwenImageEditPlus (Positive)"
+      }
+    },
+    "114": {
+      "inputs": {
+        "prompt": "<sks> front view low-angle shot close-up\n<sks> front-right quarter view low-angle shot close-up\n<sks> right side view low-angle shot close-up\n<sks> back-right quarter view low-angle shot close-up\n<sks> back view low-angle shot close-up\n<sks> back-left quarter view low-angle shot close-up\n<sks> left side view low-angle shot close-up\n<sks> front-left quarter view low-angle shot close-up\n<sks> front view eye-level shot close-up\n<sks> front-right quarter view eye-level shot close-up\n<sks> right side view eye-level shot close-up\n<sks> back-right quarter view eye-level shot close-up\n<sks> back view eye-level shot close-up\n<sks> back-left quarter view eye-level shot close-up\n<sks> left side view eye-level shot close-up\n<sks> front-left quarter view eye-level shot close-up\n<sks> front view elevated shot close-up\n<sks> front-right quarter view elevated shot close-up\n<sks> right side view elevated shot close-up\n<sks> back-right quarter view elevated shot close-up\n<sks> back view elevated shot close-up\n<sks> back-left quarter view elevated shot close-up\n<sks> left side view elevated shot close-up\n<sks> front-left quarter view elevated shot close-up\n<sks> front view high-angle shot close-up\n<sks> front-right quarter view high-angle shot close-up\n<sks> right side view high-angle shot close-up\n<sks> back-right quarter view high-angle shot close-up\n<sks> back view high-angle shot close-up\n<sks> back-left quarter view high-angle shot close-up\n<sks> left side view high-angle shot close-up\n<sks> front-left quarter view high-angle shot close-up\n<sks> front view low-angle shot medium shot\n<sks> front-right quarter view low-angle shot medium shot\n<sks> right side view low-angle shot medium shot\n<sks> back-right quarter view low-angle shot medium shot\n<sks> back view low-angle shot medium shot\n<sks> back-left quarter view low-angle shot medium shot\n<sks> left side view low-angle shot medium shot\n<sks> front-left quarter view low-angle shot medium shot\n<sks> front view eye-level shot medium shot\n<sks> front-right quarter view eye-level shot medium shot\n<sks> right side view eye-level shot medium shot\n<sks> back-right quarter view eye-level shot medium shot\n<sks> back view eye-level shot medium shot\n<sks> back-left quarter view eye-level shot medium shot\n<sks> left side view eye-level shot medium shot\n<sks> front-left quarter view eye-level shot medium shot\n<sks> front view elevated shot medium shot\n<sks> front-right quarter view elevated shot medium shot\n<sks> right side view elevated shot medium shot\n<sks> back-right quarter view elevated shot medium shot\n<sks> back view elevated shot medium shot\n<sks> back-left quarter view elevated shot medium shot\n<sks> left side view elevated shot medium shot\n<sks> front-left quarter view elevated shot medium shot\n<sks> front view high-angle shot medium shot\n<sks> front-right quarter view high-angle shot medium shot\n<sks> right side view high-angle shot medium shot\n<sks> back-right quarter view high-angle shot medium shot\n<sks> back view high-angle shot medium shot\n<sks> back-left quarter view high-angle shot medium shot\n<sks> left side view high-angle shot medium shot\n<sks> front-left quarter view high-angle shot medium shot\n<sks> front view low-angle shot wide shot\n<sks> front-right quarter view low-angle shot wide shot\n<sks> right side view low-angle shot wide shot\n<sks> back-right quarter view low-angle shot wide shot\n<sks> back view low-angle shot wide shot\n<sks> back-left quarter view low-angle shot wide shot\n<sks> left side view low-angle shot wide shot\n<sks> front-left quarter view low-angle shot wide shot\n<sks> front view eye-level shot wide shot\n<sks> front-right quarter view eye-level shot wide shot\n<sks> right side view eye-level shot wide shot\n<sks> back-right quarter view eye-level shot wide shot\n<sks> back view eye-level shot wide shot\n<sks> back-left quarter view eye-level shot wide shot\n<sks> left side view eye-level shot wide shot\n<sks> front-left quarter view eye-level shot wide shot\n<sks> front view elevated shot wide shot\n<sks> front-right quarter view elevated shot wide shot\n<sks> right side view elevated shot wide shot\n<sks> back-right quarter view elevated shot wide shot\n<sks> back view elevated shot wide shot\n<sks> back-left quarter view elevated shot wide shot\n<sks> left side view elevated shot wide shot\n<sks> front-left quarter view elevated shot wide shot\n<sks> front view high-angle shot wide shot\n<sks> front-right quarter view high-angle shot wide shot\n<sks> right side view high-angle shot wide shot\n<sks> back-right quarter view high-angle shot wide shot\n<sks> back view high-angle shot wide shot\n<sks> back-left quarter view high-angle shot wide shot\n<sks> left side view high-angle shot wide shot\n<sks> front-left quarter view high-angle shot wide shot",
+        "start_index": 0,
+        "max_rows": 1000,
+        "remove_empty_lines": true
+      },
+      "class_type": "easy promptLine",
+      "_meta": {
+        "title": "PromptLine"
+      }
+    },
+    "116": {
+      "inputs": {
+        "ckpt_name": "Qwen-Rapid-AIO-SFW-v18.safetensors"
+      },
+      "class_type": "CheckpointLoaderSimple",
+      "_meta": {
+        "title": "Load Checkpoint"
+      }
+    },
+    "117": {
+      "inputs": {
+        "sage_attention": "sageattn_qk_int8_pv_fp8_cuda++",
+        "allow_compile": true,
+        "model": [
+          "109",
+          0
+        ]
+      },
+      "class_type": "PathchSageAttentionKJ",
+      "_meta": {
+        "title": "Patch Sage Attention KJ"
+      }
+    },
+    "118": {
+      "inputs": {
+        "backend": "inductor",
+        "fullgraph": false,
+        "mode": "default",
+        "dynamic": "auto",
+        "compile_transformer_blocks_only": true,
+        "dynamo_cache_size_limit": 64,
+        "debug_compile_keys": false,
+        "model": [
+          "116",
+          0
+        ]
+      },
+      "class_type": "TorchCompileModelAdvanced",
+      "_meta": {
+        "title": "TorchCompileModelAdvanced"
+      }
+    },
+    "119": {
+      "inputs": {
+        "lora_name": "Qwen\\next-scene_lora_v1-3000.safetensors",
+        "strength_model": 1,
+        "model": [
+          "120",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    },
+    "120": {
+      "inputs": {
+        "sage_attention": "sageattn_qk_int8_pv_fp8_cuda++",
+        "allow_compile": true,
+        "model": [
+          "118",
+          0
+        ]
+      },
+      "class_type": "PathchSageAttentionKJ",
+      "_meta": {
+        "title": "Patch Sage Attention KJ"
+      }
+    }
+  }
+}

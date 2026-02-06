@@ -1,0 +1,297 @@
+.image-drop-zone-container {
+  margin-bottom: 12px;
+}
+
+.image-drop-zone-container.bypassed {
+  opacity: 0.7;
+}
+
+/* Header with label and bypass toggle */
+.image-drop-zone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.image-drop-zone-label {
+  display: block;
+  font-size: 12px;
+  color: var(--sb-text-secondary);
+  font-weight: 500;
+}
+
+/* Bypass Toggle */
+.bypass-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.bypass-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #e67e22;
+  cursor: pointer;
+}
+
+.bypass-toggle .bypass-label {
+  color: var(--sb-text-muted);
+  transition: color 0.15s;
+}
+
+.image-drop-zone-container.bypassed .bypass-toggle .bypass-label {
+  color: #e67e22;
+}
+
+/* Bypassed Placeholder */
+.image-drop-zone.bypassed-placeholder {
+  border-color: #5a4a2a;
+  border-style: dashed;
+  background-color: rgba(230, 126, 34, 0.05);
+}
+
+.bypassed-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px;
+  text-align: center;
+}
+
+.bypassed-icon {
+  font-size: 24px;
+  opacity: 0.7;
+}
+
+.bypassed-text {
+  color: #e67e22;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.bypassed-hint {
+  color: var(--sb-text-muted);
+  font-size: 11px;
+}
+
+.image-drop-zone {
+  border: 2px dashed var(--sb-border-medium);
+  border-radius: 8px;
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--sb-bg-medium);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.image-drop-zone:hover:not(.disabled) {
+  border-color: var(--sb-border-strong);
+  background-color: var(--sb-bg-elevated);
+}
+
+.image-drop-zone.drag-over {
+  border-color: var(--sb-accent-primary);
+  background-color: var(--sb-accent-primary-dim);
+}
+
+.image-drop-zone.has-image {
+  border-style: solid;
+  border-color: rgba(84, 164, 104, 0.3);
+}
+
+.image-drop-zone.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.drop-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+}
+
+.drop-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.drop-text {
+  font-size: 13px;
+  color: var(--sb-text-muted);
+}
+
+.drop-actions {
+  margin-top: 8px;
+}
+
+.browse-btn {
+  padding: 6px 16px;
+  background-color: var(--sb-bg-elevated);
+  border: none;
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.browse-btn:hover:not(:disabled) {
+  background-color: var(--sb-border-strong);
+}
+
+.browse-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.image-preview {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 100px;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+/* Mask overlay on image preview - shows red where mask is applied */
+.mask-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+/* Image Preview Actions */
+.image-preview-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+}
+
+.image-action-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.image-action-btn:hover:not(:disabled) {
+  transform: scale(1.1);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
+}
+
+.image-action-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Clear button - Red */
+.clear-btn {
+  background-color: rgba(180, 60, 60, 0.9);
+  color: #ff6b6b;
+}
+
+.clear-btn:hover:not(:disabled) {
+  background-color: rgba(200, 70, 70, 1);
+}
+
+/* Crop button - Blue */
+.crop-btn {
+  background-color: rgba(50, 100, 150, 0.9);
+  color: #64b5f6;
+}
+
+.crop-btn:hover:not(:disabled) {
+  background-color: rgba(70, 130, 180, 1);
+}
+
+/* Mask button - Purple */
+.mask-btn {
+  background-color: rgba(120, 60, 150, 0.9);
+  color: #ce93d8;
+}
+
+.mask-btn:hover:not(:disabled) {
+  background-color: rgba(150, 80, 180, 1);
+}
+
+.mask-btn.has-mask {
+  background-color: rgba(180, 100, 200, 0.95);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(180, 100, 200, 0.5);
+}
+
+/* Paint button - Green */
+.paint-btn {
+  background-color: rgba(60, 140, 80, 0.9);
+  color: #81c784;
+}
+
+.paint-btn:hover:not(:disabled) {
+  background-color: rgba(80, 160, 100, 1);
+}
+
+.paint-btn.has-paint {
+  background-color: rgba(100, 180, 120, 0.95);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(100, 180, 120, 0.5);
+}
+
+/* Legacy clear button (kept for backwards compatibility) */
+.clear-image-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: rgba(90, 45, 45, 0.9);
+  border: none;
+  color: #ff4d4d;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.clear-image-btn:hover:not(:disabled) {
+  background-color: #5a2d2d;
+  transform: scale(1.1);
+}
+
+.clear-image-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

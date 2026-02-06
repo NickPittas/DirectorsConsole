@@ -1,0 +1,95 @@
+.delete-confirm-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.delete-confirm-dialog {
+  background-color: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 6px;
+  padding: 14px;
+  max-width: 360px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.delete-confirm-dialog h3 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--sb-text-primary);
+}
+
+.delete-confirm-dialog p {
+  margin: 0 0 6px 0;
+  color: var(--sb-text-secondary);
+  font-size: 11px;
+}
+
+.delete-filename {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 10px !important;
+  color: var(--sb-text-primary) !important;
+  background-color: var(--sb-bg-light);
+  padding: 4px 8px;
+  border-radius: 3px;
+  word-break: break-all;
+  margin: 4px 0 !important;
+}
+
+.delete-warning {
+  color: var(--sb-status-error) !important;
+  font-size: 10px !important;
+  margin-top: 8px !important;
+}
+
+.dont-ask-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+  cursor: pointer;
+  color: var(--sb-text-secondary);
+  font-size: 10px;
+}
+
+.dont-ask-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.dialog-actions button {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-btn {
+  background-color: var(--sb-bg-elevated);
+  color: var(--sb-text-primary);
+}
+
+.cancel-btn:hover {
+  background-color: var(--sb-border-strong);
+}
+
+.delete-btn {
+  background-color: #dc3545;
+  color: white;
+}
+
+.delete-btn:hover {
+  background-color: #c82333;
+}

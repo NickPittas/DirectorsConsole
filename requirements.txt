@@ -1,0 +1,24 @@
+# Director's Console - Unified Application Requirements
+# Webapp-Only (PyQt6 Legacy Removed)
+
+# Core dependencies for CPE and Orchestrator webapps
+
+# StoryboardUI dependencies
+Pillow>=10.0.0
+numpy>=1.24.0
+aiohttp>=3.9.0
+httpx>=0.25.0
+
+# Orchestrator dependencies
+pydantic>=2.5.0
+watchdog>=3.0.0
+
+# CinemaPromptEngineering API dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-dotenv>=1.0.0
+
+# Common utilities
+loguru>=0.7.0
+tomli>=2.0.1; python_version < '3.11'
+tomli-w>=1.0.0

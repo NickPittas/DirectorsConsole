@@ -1,0 +1,407 @@
+{
+  "meta": {
+    "name": "Qwen Edit Fusion",
+    "description": "",
+    "author": "",
+    "version": "1.0.0",
+    "engine": "qwen",
+    "categories": [
+      "editing",
+      "img2img"
+    ],
+    "supports_angles": true,
+    "supports_next_scene": false,
+    "requires_images": true
+  },
+  "parameters": [
+    {
+      "name": "positive_prompt",
+      "type": "prompt",
+      "node_id": "11",
+      "input_name": "prompt",
+      "display_name": "Positive Prompt",
+      "description": "Positive prompt (what to generate)",
+      "default": "\u6eb6\u56fe,\u7ea0\u6b63\u4ea7\u54c1\u900f\u89c6\u89d2\u5ea6\u548c\u5149\u5f71\u5e76\u4f7f\u4ea7\u54c1\u878d\u5165\u80cc\u666f"
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "node_id": "14",
+      "input_name": "steps",
+      "display_name": "Sampling Steps",
+      "description": "Number of denoising steps",
+      "default": 4,
+      "constraints": {
+        "min": 1,
+        "max": 150,
+        "step": 1
+      }
+    },
+    {
+      "name": "cfg_scale",
+      "type": "float",
+      "node_id": "14",
+      "input_name": "cfg",
+      "display_name": "CFG Scale",
+      "description": "Classifier-free guidance scale",
+      "default": 1.0,
+      "constraints": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.5
+      }
+    },
+    {
+      "name": "seed",
+      "type": "seed",
+      "node_id": "14",
+      "input_name": "seed",
+      "display_name": "Seed",
+      "description": "Random seed (-1 for random)",
+      "default": 1238
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "node_id": "14",
+      "input_name": "denoise",
+      "display_name": "Denoise Strength",
+      "description": "Denoising strength (img2img)",
+      "default": 1.0,
+      "constraints": {
+        "min": 0.1,
+        "max": 1.0,
+        "step": 0.05
+      }
+    }
+  ],
+  "loras": [
+    {
+      "name": "lora_1",
+      "display_name": "Qwen_Edit_Fusion",
+      "node_id": "94",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    },
+    {
+      "name": "lora_2",
+      "display_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16",
+      "node_id": "95",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    }
+  ],
+  "inputs": [
+    {
+      "name": "reference_image_1",
+      "display_name": "Reference Image 1",
+      "node_id": "31",
+      "input_name": "image",
+      "type": "image",
+      "required": false,
+      "description": "Reference image for node 31"
+    }
+  ],
+  "workflow": {
+    "1": {
+      "inputs": {
+        "strength": 1,
+        "model": [
+          "2",
+          0
+        ]
+      },
+      "class_type": "CFGNorm",
+      "_meta": {
+        "title": "CFGNorm"
+      }
+    },
+    "2": {
+      "inputs": {
+        "shift": 3,
+        "model": [
+          "95",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow"
+      }
+    },
+    "10": {
+      "inputs": {
+        "pixels": [
+          "39",
+          0
+        ],
+        "vae": [
+          "22",
+          0
+        ]
+      },
+      "class_type": "VAEEncode",
+      "_meta": {
+        "title": "VAE Encode"
+      }
+    },
+    "11": {
+      "inputs": {
+        "prompt": "\u6eb6\u56fe,\u7ea0\u6b63\u4ea7\u54c1\u900f\u89c6\u89d2\u5ea6\u548c\u5149\u5f71\u5e76\u4f7f\u4ea7\u54c1\u878d\u5165\u80cc\u666f",
+        "clip": [
+          "79",
+          0
+        ],
+        "vae": [
+          "22",
+          0
+        ],
+        "image1": [
+          "39",
+          0
+        ]
+      },
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "_meta": {
+        "title": "TextEncodeQwenImageEditPlus"
+      }
+    },
+    "12": {
+      "inputs": {
+        "samples": [
+          "14",
+          0
+        ],
+        "vae": [
+          "22",
+          0
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "14": {
+      "inputs": {
+        "seed": 1238,
+        "steps": 4,
+        "cfg": 1,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "91",
+          0
+        ],
+        "negative": [
+          "90",
+          0
+        ],
+        "latent_image": [
+          "10",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler"
+      }
+    },
+    "22": {
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      },
+      "class_type": "VAELoader",
+      "_meta": {
+        "title": "Load VAE"
+      }
+    },
+    "31": {
+      "inputs": {
+        "image": "freepik__the-man-is-opening-the-car-door__52137.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Load Image"
+      }
+    },
+    "39": {
+      "inputs": {
+        "upscale_method": "lanczos",
+        "megapixels": 1,
+        "resolution_steps": 1,
+        "image": [
+          "31",
+          0
+        ]
+      },
+      "class_type": "ImageScaleToTotalPixels",
+      "_meta": {
+        "title": "ImageScaleToTotalPixels"
+      }
+    },
+    "44": {
+      "inputs": {
+        "rgthree_comparer": {
+          "images": [
+            {
+              "name": "A",
+              "selected": true,
+              "url": "/api/view?filename=rgthree.compare._temp_hhcxo_00003_.png&type=temp&subfolder=&rand=0.1500563560860083"
+            },
+            {
+              "name": "B",
+              "selected": true,
+              "url": "/api/view?filename=rgthree.compare._temp_hhcxo_00004_.png&type=temp&subfolder=&rand=0.14861875546727799"
+            }
+          ]
+        },
+        "image_a": [
+          "12",
+          0
+        ],
+        "image_b": [
+          "39",
+          0
+        ]
+      },
+      "class_type": "Image Comparer (rgthree)",
+      "_meta": {
+        "title": "Image Comparer (rgthree)"
+      }
+    },
+    "60": {
+      "inputs": {
+        "image": [
+          "39",
+          0
+        ]
+      },
+      "class_type": "easy imageSize",
+      "_meta": {
+        "title": "ImageSize"
+      }
+    },
+    "79": {
+      "inputs": {
+        "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      },
+      "class_type": "CLIPLoader",
+      "_meta": {
+        "title": "Load CLIP"
+      }
+    },
+    "90": {
+      "inputs": {
+        "conditioning": [
+          "91",
+          0
+        ]
+      },
+      "class_type": "ConditioningZeroOut",
+      "_meta": {
+        "title": "ConditioningZeroOut"
+      }
+    },
+    "91": {
+      "inputs": {
+        "reference_latents_method": "index_timestep_zero",
+        "conditioning": [
+          "92",
+          0
+        ]
+      },
+      "class_type": "FluxKontextMultiReferenceLatentMethod",
+      "_meta": {
+        "title": "FluxKontextMultiReferenceLatentMethod"
+      }
+    },
+    "92": {
+      "inputs": {
+        "conditioning": [
+          "11",
+          0
+        ],
+        "latent": [
+          "10",
+          0
+        ]
+      },
+      "class_type": "ReferenceLatent",
+      "_meta": {
+        "title": "ReferenceLatent"
+      }
+    },
+    "93": {
+      "inputs": {
+        "unet_name": "Qwen\\qwen-image-edit-2511-Q8_0.gguf"
+      },
+      "class_type": "UnetLoaderGGUF",
+      "_meta": {
+        "title": "Unet Loader (GGUF)"
+      }
+    },
+    "94": {
+      "inputs": {
+        "lora_name": "Qwen\\Edit\\Qwen_Edit_Fusion.safetensors",
+        "strength_model": 1,
+        "model": [
+          "93",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    },
+    "95": {
+      "inputs": {
+        "lora_name": "Qwen\\Edit\\Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "strength_model": 1,
+        "model": [
+          "94",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    },
+    "96": {
+      "inputs": {
+        "filename_prefix": "QwenEditFusion",
+        "images": [
+          "12",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    }
+  }
+}

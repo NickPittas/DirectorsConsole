@@ -1,0 +1,4 @@
+data_dir: "./data"
+log_dir: "./logs"
+database_path: "./data/orchestrator.db"
+backends: []

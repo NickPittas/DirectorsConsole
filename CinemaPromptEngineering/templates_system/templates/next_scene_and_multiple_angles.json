@@ -1,0 +1,325 @@
+{
+  "meta": {
+    "name": "Next Scene And Multiple Angles",
+    "description": "",
+    "author": "",
+    "version": "1.0.0",
+    "engine": "qwen",
+    "categories": [
+      "editing",
+      "img2img"
+    ],
+    "supports_angles": true,
+    "supports_next_scene": true,
+    "requires_images": true
+  },
+  "parameters": [
+    {
+      "name": "positive_prompt",
+      "type": "prompt",
+      "node_id": "68",
+      "input_name": "prompt",
+      "display_name": "Positive Prompt",
+      "description": "Positive prompt (what to generate)",
+      "default": ""
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "node_id": "56",
+      "input_name": "steps",
+      "display_name": "Sampling Steps",
+      "description": "Number of denoising steps",
+      "default": 4,
+      "constraints": {
+        "min": 1,
+        "max": 150,
+        "step": 1
+      }
+    },
+    {
+      "name": "cfg_scale",
+      "type": "float",
+      "node_id": "56",
+      "input_name": "cfg",
+      "display_name": "CFG Scale",
+      "description": "Classifier-free guidance scale",
+      "default": 1.0,
+      "constraints": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.5
+      }
+    },
+    {
+      "name": "seed",
+      "type": "seed",
+      "node_id": "56",
+      "input_name": "seed",
+      "display_name": "Seed",
+      "description": "Random seed (-1 for random)",
+      "default": 1100457255822137
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "node_id": "56",
+      "input_name": "denoise",
+      "display_name": "Denoise Strength",
+      "description": "Denoising strength (img2img)",
+      "default": 1.0,
+      "constraints": {
+        "min": 0.1,
+        "max": 1.0,
+        "step": 0.05
+      }
+    }
+  ],
+  "loras": [
+    {
+      "name": "lora_1",
+      "display_name": "next-scene_lora_v1-3000",
+      "node_id": "73",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    },
+    {
+      "name": "lora_2",
+      "display_name": "Qwen-Edit-2509-Multiple-angles",
+      "node_id": "76",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    }
+  ],
+  "inputs": [
+    {
+      "name": "reference_image_1",
+      "display_name": "Reference Image 1",
+      "node_id": "74",
+      "input_name": "image",
+      "type": "image",
+      "required": false,
+      "description": "Reference image for node 74"
+    }
+  ],
+  "workflow": {
+    "52": {
+      "inputs": {
+        "strength": 1,
+        "model": [
+          "55",
+          0
+        ]
+      },
+      "class_type": "CFGNorm",
+      "_meta": {
+        "title": "CFGNorm"
+      }
+    },
+    "55": {
+      "inputs": {
+        "shift": 3,
+        "model": [
+          "76",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow"
+      }
+    },
+    "56": {
+      "inputs": {
+        "seed": 1100457255822137,
+        "steps": 4,
+        "cfg": 1,
+        "sampler_name": "euler_ancestral",
+        "scheduler": "beta",
+        "denoise": 1,
+        "model": [
+          "52",
+          0
+        ],
+        "positive": [
+          "68",
+          0
+        ],
+        "negative": [
+          "61",
+          0
+        ],
+        "latent_image": [
+          "60",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler"
+      }
+    },
+    "58": {
+      "inputs": {
+        "filename_prefix": "ComfyUI",
+        "images": [
+          "69",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    },
+    "60": {
+      "inputs": {
+        "pixels": [
+          "71",
+          0
+        ],
+        "vae": [
+          "75",
+          2
+        ]
+      },
+      "class_type": "VAEEncode",
+      "_meta": {
+        "title": "VAE Encode"
+      }
+    },
+    "61": {
+      "inputs": {
+        "prompt": "",
+        "clip": [
+          "75",
+          1
+        ],
+        "vae": [
+          "75",
+          2
+        ],
+        "image1": [
+          "71",
+          0
+        ]
+      },
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "_meta": {
+        "title": "TextEncodeQwenImageEditPlus"
+      }
+    },
+    "68": {
+      "inputs": {
+        "prompt": "Next Scene: <sks> front view low-angle shot close-up\n",
+        "clip": [
+          "75",
+          1
+        ],
+        "vae": [
+          "75",
+          2
+        ],
+        "image1": [
+          "71",
+          0
+        ]
+      },
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "_meta": {
+        "title": "TextEncodeQwenImageEditPlus"
+      }
+    },
+    "69": {
+      "inputs": {
+        "samples": [
+          "56",
+          0
+        ],
+        "vae": [
+          "75",
+          2
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "71": {
+      "inputs": {
+        "upscale_method": "lanczos",
+        "megapixels": 1,
+        "resolution_steps": 1,
+        "image": [
+          "74",
+          0
+        ]
+      },
+      "class_type": "ImageScaleToTotalPixels",
+      "_meta": {
+        "title": "ImageScaleToTotalPixels"
+      }
+    },
+    "73": {
+      "inputs": {
+        "lora_name": "Qwen\\next-scene_lora_v1-3000.safetensors",
+        "strength_model": 1,
+        "model": [
+          "75",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    },
+    "74": {
+      "inputs": {
+        "image": "Picture1.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Load Image"
+      }
+    },
+    "75": {
+      "inputs": {
+        "ckpt_name": "Qwen-Rapid-AIO-SFW-v18.safetensors"
+      },
+      "class_type": "CheckpointLoaderSimple",
+      "_meta": {
+        "title": "Load Checkpoint"
+      }
+    },
+    "76": {
+      "inputs": {
+        "lora_name": "Qwen\\Edit\\Qwen-Edit-2509-Multiple-angles.safetensors",
+        "strength_model": 1,
+        "model": [
+          "73",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    }
+  }
+}

@@ -1,0 +1,96 @@
+<sks> front view low-angle shot close-up
+<sks> front-right quarter view low-angle shot close-up
+<sks> right side view low-angle shot close-up
+<sks> back-right quarter view low-angle shot close-up
+<sks> back view low-angle shot close-up
+<sks> back-left quarter view low-angle shot close-up
+<sks> left side view low-angle shot close-up
+<sks> front-left quarter view low-angle shot close-up
+<sks> front view eye-level shot close-up
+<sks> front-right quarter view eye-level shot close-up
+<sks> right side view eye-level shot close-up
+<sks> back-right quarter view eye-level shot close-up
+<sks> back view eye-level shot close-up
+<sks> back-left quarter view eye-level shot close-up
+<sks> left side view eye-level shot close-up
+<sks> front-left quarter view eye-level shot close-up
+<sks> front view elevated shot close-up
+<sks> front-right quarter view elevated shot close-up
+<sks> right side view elevated shot close-up
+<sks> back-right quarter view elevated shot close-up
+<sks> back view elevated shot close-up
+<sks> back-left quarter view elevated shot close-up
+<sks> left side view elevated shot close-up
+<sks> front-left quarter view elevated shot close-up
+<sks> front view high-angle shot close-up
+<sks> front-right quarter view high-angle shot close-up
+<sks> right side view high-angle shot close-up
+<sks> back-right quarter view high-angle shot close-up
+<sks> back view high-angle shot close-up
+<sks> back-left quarter view high-angle shot close-up
+<sks> left side view high-angle shot close-up
+<sks> front-left quarter view high-angle shot close-up
+<sks> front view low-angle shot medium shot
+<sks> front-right quarter view low-angle shot medium shot
+<sks> right side view low-angle shot medium shot
+<sks> back-right quarter view low-angle shot medium shot
+<sks> back view low-angle shot medium shot
+<sks> back-left quarter view low-angle shot medium shot
+<sks> left side view low-angle shot medium shot
+<sks> front-left quarter view low-angle shot medium shot
+<sks> front view eye-level shot medium shot
+<sks> front-right quarter view eye-level shot medium shot
+<sks> right side view eye-level shot medium shot
+<sks> back-right quarter view eye-level shot medium shot
+<sks> back view eye-level shot medium shot
+<sks> back-left quarter view eye-level shot medium shot
+<sks> left side view eye-level shot medium shot
+<sks> front-left quarter view eye-level shot medium shot
+<sks> front view elevated shot medium shot
+<sks> front-right quarter view elevated shot medium shot
+<sks> right side view elevated shot medium shot
+<sks> back-right quarter view elevated shot medium shot
+<sks> back view elevated shot medium shot
+<sks> back-left quarter view elevated shot medium shot
+<sks> left side view elevated shot medium shot
+<sks> front-left quarter view elevated shot medium shot
+<sks> front view high-angle shot medium shot
+<sks> front-right quarter view high-angle shot medium shot
+<sks> right side view high-angle shot medium shot
+<sks> back-right quarter view high-angle shot medium shot
+<sks> back view high-angle shot medium shot
+<sks> back-left quarter view high-angle shot medium shot
+<sks> left side view high-angle shot medium shot
+<sks> front-left quarter view high-angle shot medium shot
+<sks> front view low-angle shot wide shot
+<sks> front-right quarter view low-angle shot wide shot
+<sks> right side view low-angle shot wide shot
+<sks> back-right quarter view low-angle shot wide shot
+<sks> back view low-angle shot wide shot
+<sks> back-left quarter view low-angle shot wide shot
+<sks> left side view low-angle shot wide shot
+<sks> front-left quarter view low-angle shot wide shot
+<sks> front view eye-level shot wide shot
+<sks> front-right quarter view eye-level shot wide shot
+<sks> right side view eye-level shot wide shot
+<sks> back-right quarter view eye-level shot wide shot
+<sks> back view eye-level shot wide shot
+<sks> back-left quarter view eye-level shot wide shot
+<sks> left side view eye-level shot wide shot
+<sks> front-left quarter view eye-level shot wide shot
+<sks> front view elevated shot wide shot
+<sks> front-right quarter view elevated shot wide shot
+<sks> right side view elevated shot wide shot
+<sks> back-right quarter view elevated shot wide shot
+<sks> back view elevated shot wide shot
+<sks> back-left quarter view elevated shot wide shot
+<sks> left side view elevated shot wide shot
+<sks> front-left quarter view elevated shot wide shot
+<sks> front view high-angle shot wide shot
+<sks> front-right quarter view high-angle shot wide shot
+<sks> right side view high-angle shot wide shot
+<sks> back-right quarter view high-angle shot wide shot
+<sks> back view high-angle shot wide shot
+<sks> back-left quarter view high-angle shot wide shot
+<sks> left side view high-angle shot wide shot
+<sks> front-left quarter view high-angle shot wide shot

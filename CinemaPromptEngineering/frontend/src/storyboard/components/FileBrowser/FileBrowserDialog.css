@@ -1,0 +1,800 @@
+/**
+ * FileBrowserDialog.css - Styles for the Windows Explorer-like file browser
+ */
+
+/* ==========================================================================
+   Overlay & Dialog Container
+   ========================================================================== */
+
+.file-browser-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+.file-browser-dialog {
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 8px;
+  width: 750px;
+  max-width: calc(100vw - 40px);
+  height: 500px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   Header
+   ========================================================================== */
+
+.file-browser-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+  border-radius: 8px 8px 0 0;
+  flex-shrink: 0;
+}
+
+.file-browser-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sb-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.file-browser-title svg {
+  color: var(--sb-accent-primary);
+}
+
+.file-browser-header .close-btn {
+  background: none;
+  border: none;
+  color: var(--sb-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.file-browser-header .close-btn:hover {
+  color: var(--sb-text-primary);
+  background: var(--sb-bg-elevated);
+}
+
+/* ==========================================================================
+   Body - Dual Pane Layout
+   ========================================================================== */
+
+.file-browser-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left Pane - Tree View */
+.file-browser-left-pane {
+  width: 180px;
+  min-width: 160px;
+  max-width: 280px;
+  border-right: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-darkest);
+  overflow: auto;
+  resize: horizontal;
+}
+
+/* Right Pane - Contents */
+.file-browser-right-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--sb-bg-dark);
+}
+
+/* ==========================================================================
+   Drive Tree View
+   ========================================================================== */
+
+.drive-tree-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-header {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--sb-text-muted);
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+}
+
+.tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.tree-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--sb-text-muted);
+  font-size: 12px;
+}
+
+/* Tree Node */
+.tree-node-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  cursor: pointer;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+  transition: all 0.15s ease;
+  border-radius: 4px;
+  margin: 0 4px;
+}
+
+.tree-node:hover {
+  background: var(--sb-bg-elevated);
+  color: var(--sb-text-primary);
+}
+
+.tree-node.selected {
+  background: var(--sb-accent-primary);
+  color: #fff;
+}
+
+.tree-spacer {
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.tree-expand-btn {
+  background: none;
+  border: none;
+  color: var(--sb-text-muted);
+  cursor: pointer;
+  padding: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
+.tree-expand-btn:hover {
+  background: var(--sb-bg-elevated);
+  color: var(--sb-text-primary);
+}
+
+.tree-expand-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tree-loading-icon {
+  animation: spin 1s linear infinite;
+}
+
+.tree-icon {
+  flex-shrink: 0;
+}
+
+.tree-icon.drive {
+  color: var(--sb-status-success);
+}
+
+.tree-icon.folder,
+.tree-icon.folder-open {
+  color: #ffc107;
+}
+
+.tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-empty-children {
+  padding: 4px 8px;
+  color: var(--sb-text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ==========================================================================
+   Breadcrumb Bar
+   ========================================================================== */
+
+.breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.breadcrumb-home-btn {
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.breadcrumb-home-btn:hover {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+  border-color: var(--sb-accent-primary);
+}
+
+.breadcrumb-segments {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 2px;
+}
+
+.breadcrumb-segment-wrapper {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.breadcrumb-separator {
+  color: var(--sb-text-muted);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+.breadcrumb-segment {
+  background: none;
+  border: none;
+  color: var(--sb-text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.breadcrumb-segment:hover:not(:disabled) {
+  background: var(--sb-bg-elevated);
+  color: var(--sb-text-primary);
+}
+
+.breadcrumb-segment:disabled {
+  color: var(--sb-text-primary);
+  font-weight: 500;
+  cursor: default;
+}
+
+.breadcrumb-segment.current {
+  color: var(--sb-text-primary);
+  font-weight: 500;
+}
+
+.breadcrumb-refresh-btn {
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.breadcrumb-refresh-btn:hover:not(:disabled) {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+  border-color: var(--sb-accent-primary);
+}
+
+.breadcrumb-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Breadcrumb Edit Input */
+.breadcrumb-edit-container {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.breadcrumb-input {
+  width: 100%;
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-accent-primary);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  padding: 4px 8px;
+  font-size: 11px;
+  outline: none;
+}
+
+.breadcrumb-input:focus {
+  border-color: var(--sb-accent-primary-hover);
+  box-shadow: 0 0 0 2px rgba(212, 168, 85, 0.2);
+}
+
+.breadcrumb-segments {
+  cursor: text;
+}
+
+/* ==========================================================================
+   Folder Contents View
+   ========================================================================== */
+
+.folder-contents-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+
+.folder-contents-view.loading,
+.folder-contents-view.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.contents-loading,
+.contents-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--sb-text-muted);
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--sb-border-medium);
+  border-top-color: var(--sb-accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.empty-icon {
+  color: var(--sb-border-medium);
+}
+
+.contents-section {
+  margin-bottom: 20px;
+}
+
+.contents-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sb-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--sb-border-medium);
+}
+
+.items-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 4px;
+}
+
+.content-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 2px solid transparent;
+  background: var(--sb-bg-elevated);
+}
+
+.content-item:hover {
+  background: var(--sb-bg-elevated);
+  border-color: var(--sb-border-medium);
+}
+
+.content-item.selected {
+  background: rgba(212, 168, 85, 0.2);
+  border-color: var(--sb-accent-primary);
+}
+
+.content-item .item-icon {
+  flex-shrink: 0;
+}
+
+.content-item .item-icon.drive {
+  color: var(--sb-status-success);
+}
+
+.content-item .item-icon.folder {
+  color: #ffc107;
+}
+
+.content-item .item-icon.project {
+  color: var(--sb-accent-primary);
+}
+
+.content-item .item-name {
+  font-size: 10px;
+  color: var(--sb-text-primary);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.content-item:hover .item-name {
+  color: var(--sb-text-primary);
+}
+
+.content-item.selected .item-name {
+  color: var(--sb-text-primary);
+}
+
+.content-item.project {
+  align-items: flex-start;
+}
+
+.content-item.project .item-icon {
+  align-self: center;
+}
+
+.content-item .item-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.content-item .item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--sb-text-muted);
+}
+
+.content-item .meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ==========================================================================
+   Error Display
+   ========================================================================== */
+
+.file-browser-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 8px 12px;
+  background: rgba(217, 83, 79, 0.15);
+  border: 1px solid rgba(217, 83, 79, 0.3);
+  border-radius: 4px;
+  color: #e57373;
+  font-size: 12px;
+}
+
+.file-browser-error svg {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Save Input
+   ========================================================================== */
+
+.file-browser-save-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+  flex-shrink: 0;
+}
+
+.file-browser-save-input label {
+  font-size: 11px;
+  color: var(--sb-text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.file-browser-save-input input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+}
+
+.file-browser-save-input input:focus {
+  outline: none;
+  border-color: var(--sb-accent-primary);
+}
+
+.file-browser-save-input input::placeholder {
+  color: var(--sb-text-muted);
+}
+
+/* ==========================================================================
+   New Folder Input
+   ========================================================================== */
+
+.file-browser-new-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+  flex-shrink: 0;
+}
+
+.file-browser-new-folder input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+}
+
+.file-browser-new-folder input:focus {
+  outline: none;
+  border-color: var(--sb-accent-primary);
+}
+
+.file-browser-new-folder button {
+  padding: 4px 8px;
+  background: var(--sb-accent-primary);
+  border: none;
+  border-radius: 4px;
+  color: #1a1a1f;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.file-browser-new-folder button:hover {
+  background: var(--sb-accent-primary-hover);
+}
+
+.file-browser-new-folder button:last-child {
+  background: var(--sb-bg-elevated);
+}
+
+.file-browser-new-folder button:last-child:hover {
+  background: var(--sb-border-strong);
+}
+
+/* ==========================================================================
+   Footer
+   ========================================================================== */
+
+.file-browser-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  border-top: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+  border-radius: 0 0 8px 8px;
+  flex-shrink: 0;
+}
+
+.new-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.new-folder-btn:hover:not(:disabled) {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+  border-color: var(--sb-border-strong);
+}
+
+.new-folder-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-browser-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.file-browser-actions button {
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cancel-btn {
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  color: var(--sb-text-primary);
+}
+
+.cancel-btn:hover {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+}
+
+.primary-btn {
+  background: var(--sb-accent-primary);
+  border: none;
+  color: #1a1a1f;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: var(--sb-accent-primary-hover);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Responsive Adjustments
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .file-browser-dialog {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .file-browser-left-pane {
+    width: 160px;
+    min-width: 140px;
+  }
+
+  .items-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  .file-browser-footer {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .file-browser-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .file-browser-left-pane {
+    display: none;
+  }
+
+  .items-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ==========================================================================
+   Scrollbar Styling
+   ========================================================================== */
+
+.file-browser-dialog ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.file-browser-dialog ::-webkit-scrollbar-track {
+  background: var(--sb-bg-darkest);
+}
+
+.file-browser-dialog ::-webkit-scrollbar-thumb {
+  background: var(--sb-border-medium);
+  border-radius: 4px;
+}
+
+.file-browser-dialog ::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-border-strong);
+}

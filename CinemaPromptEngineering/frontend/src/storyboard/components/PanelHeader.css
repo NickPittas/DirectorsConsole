@@ -1,0 +1,158 @@
+.panel-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  background: #2a2a2a;
+  border-bottom: 1px solid #444;
+  cursor: grab;
+  user-select: none;
+  gap: 8px;
+}
+
+.panel-header:hover {
+  background: #333;
+}
+
+.panel-header.selected {
+  background: #3a4a5a;
+}
+
+.panel-header.selected:hover {
+  background: #4a5a6a;
+}
+
+/* Drag Handle */
+.panel-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  cursor: grab;
+  color: #888;
+  transition: color 0.2s;
+}
+
+.panel-drag-handle:hover {
+  color: #ccc;
+}
+
+.panel-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Panel Name */
+.panel-name-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ddd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-name.editable {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.2s;
+}
+
+.panel-name.editable:hover {
+  border-bottom-color: #666;
+}
+
+.panel-name.locked {
+  color: #999;
+  cursor: not-allowed;
+}
+
+.panel-lock-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+/* Name Input */
+.panel-name-input {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: #fff;
+  outline: none;
+  min-width: 0;
+}
+
+.panel-name-input:focus {
+  border-color: #4a9eff;
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+}
+
+/* Actions */
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.panel-header:hover .panel-header-actions {
+  opacity: 1;
+}
+
+.panel-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.panel-remove-btn:hover {
+  background: #c62828;
+  color: #fff;
+}
+
+/* Resize Handle */
+.panel-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, #666 50%);
+  border-bottom-right-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.panel-header:hover ~ .panel-resize-handle,
+.panel-resize-handle:hover {
+  opacity: 1;
+}
+
+/* Selection indicator */
+.panel-header.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #4a9eff;
+}

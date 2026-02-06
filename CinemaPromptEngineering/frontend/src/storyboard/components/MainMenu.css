@@ -1,0 +1,183 @@
+/* MainMenu.css */
+
+.main-menu {
+  position: relative;
+  z-index: 100;
+}
+
+.main-menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 6px;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 11px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.main-menu-trigger:hover {
+  background: var(--sb-bg-light);
+  border-color: var(--sb-border-strong);
+}
+
+.main-menu-trigger.active {
+  background: var(--sb-bg-elevated);
+  border-color: var(--sb-accent-primary);
+}
+
+.main-menu-trigger .project-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.main-menu-trigger .chevron {
+  opacity: 0.6;
+  transition: transform 0.2s ease;
+}
+
+.main-menu-trigger .chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.main-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 240px;
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  animation: menuFadeIn 0.15s ease;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.menu-section {
+  padding: 8px 0;
+}
+
+.menu-section-title {
+  padding: 4px 12px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--sb-text-muted);
+  letter-spacing: 0.5px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  transition: all 0.1s ease;
+  text-align: left;
+  font-size: 11px;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--sb-bg-light);
+  color: var(--sb-text-primary);
+}
+
+.menu-item:active:not(:disabled) {
+  background: var(--sb-bg-elevated);
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menu-item svg {
+  color: var(--sb-text-muted);
+  flex-shrink: 0;
+}
+
+.menu-item:hover:not(:disabled) svg {
+  color: var(--sb-accent-primary);
+}
+
+.menu-item span:first-of-type {
+  flex: 1;
+}
+
+.menu-shortcut {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--sb-text-muted);
+  font-family: monospace;
+}
+
+.menu-item.cancel-btn {
+  color: var(--sb-status-error);
+}
+
+.menu-item.cancel-btn:hover:not(:disabled) {
+  background-color: rgba(196, 84, 84, 0.15);
+  color: var(--sb-status-error);
+}
+
+.menu-item.cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menu-divider {
+  height: 1px;
+  background: var(--sb-border-medium);
+  margin: 2px 10px;
+}
+
+.menu-badge {
+  font-size: 9px;
+  color: var(--sb-text-primary);
+  padding: 1px 6px;
+  background: var(--sb-accent-primary);
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.menu-divider {
+  height: 1px;
+  background: var(--sb-border-medium);
+  margin: 2px 10px;
+}
+
+/* Spinning animation for restart button */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}

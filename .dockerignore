@@ -1,0 +1,95 @@
+# Director's Console - Docker Ignore
+# Excludes files from Docker build context
+
+# Git
+.git/
+.gitignore
+
+# Virtual environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node modules (frontend deps are installed in Docker)
+node_modules/
+CinemaPromptEngineering/frontend/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Test files
+tests/
+**/tests/
+**/*_test.py
+**/test_*.py
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Development files
+*.md
+!README.md
+docs/
+agent_tasks/
+code-review-findings/
+plans/
+*.png
+*.jpg
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# Orchestrator venv
+Orchestrator/.venv/
+
+# Build artifacts
+*.spec
+*.exe
+*.dmg
+
+# Temporary files
+*.tmp
+*.temp
+.start.pid
+output.log
+nul
+NDH6SA~M
+
+# Local config (use environment variables instead)
+.env
+.env.local
+*.local
+
+# ComfyUI custom node output (built frontend goes to static/)
+CinemaPromptEngineering/ComfyCinemaPrompting/

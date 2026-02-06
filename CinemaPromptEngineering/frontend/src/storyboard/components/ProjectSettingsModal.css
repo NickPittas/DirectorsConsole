@@ -1,0 +1,319 @@
+/* ProjectSettingsModal.css */
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.project-settings-modal {
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 8px;
+  width: 420px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sb-text-primary);
+}
+
+.modal-header .close-btn {
+  background: none;
+  border: none;
+  color: var(--sb-text-muted);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.modal-header .close-btn:hover {
+  color: var(--sb-text-primary);
+}
+
+.modal-body {
+  padding: 10px;
+}
+
+.form-group {
+  margin-bottom: 8px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--sb-text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.form-group input[type="text"] {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+}
+
+.form-group input[type="text"]:focus {
+  outline: none;
+  border-color: var(--sb-accent-primary);
+}
+
+.form-group input[type="text"]::placeholder {
+  color: var(--sb-text-muted);
+}
+
+.help-text {
+  display: block;
+  margin-top: 4px;
+  color: var(--sb-text-muted);
+  font-size: 9px;
+}
+
+.preview {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--sb-bg-elevated);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--sb-status-success);
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--sb-text-primary);
+  font-size: 10px;
+}
+
+.checkbox-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sb-accent-primary);
+}
+
+.template-examples {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--sb-border-medium);
+}
+
+.template-examples h4 {
+  margin: 0 0 10px 0;
+  color: var(--sb-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-btn {
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--sb-text-secondary);
+  font-size: 10px;
+  font-family: monospace;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.template-btn:hover {
+  background: var(--sb-bg-elevated);
+  border-color: var(--sb-accent-primary);
+  color: var(--sb-text-primary);
+}
+
+.template-btn small {
+  font-size: 9px;
+  color: var(--sb-text-muted);
+  font-family: inherit;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--sb-border-medium);
+  background: var(--sb-bg-elevated);
+}
+
+.btn-secondary {
+  padding: 5px 10px;
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-strong);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+}
+
+.btn-primary {
+  padding: 5px 10px;
+  background: var(--sb-accent-primary);
+  border: none;
+  border-radius: 4px;
+  color: #1a1a1f;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: var(--sb-accent-primary-hover);
+}
+
+/* History Navigation Styling */
+.image-nav.history-nav {
+  background: rgba(0, 0, 0, 0.8);
+  padding: 4px 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-nav.history-nav button {
+  background: var(--sb-border-medium);
+  border: 1px solid var(--sb-border-strong);
+  color: var(--sb-text-primary);
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.image-nav.history-nav button:hover:not(:disabled) {
+  background: var(--sb-border-medium);
+  border-color: var(--sb-accent-primary);
+}
+
+.image-nav.history-nav button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.image-nav.history-nav .history-counter {
+  color: var(--sb-status-success);
+  font-family: monospace;
+  font-size: 11px;
+  min-width: 50px;
+  text-align: center;
+}
+
+.image-nav.history-nav .save-btn {
+  background: #2a5a2a;
+  border-color: #3a7a3a;
+  margin-left: 4px;
+}
+
+.image-nav.history-nav .save-btn:hover {
+  background: #3a7a3a;
+}
+
+.image-nav.history-nav .restore-btn {
+  background: #4a6fa5;
+  padding: 2px 6px;
+}
+
+.image-nav.history-nav .restore-btn:hover {
+  background: #5a8fcf;
+}
+
+/* Status Indicator */
+.status-indicator {
+  font-weight: normal;
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.status-indicator.checking {
+  color: #f0ad4e;
+}
+
+.status-indicator.online {
+  color: #5cb85c;
+}
+
+.status-indicator.offline {
+  color: #d9534f;
+}
+
+/* Input with browse button */
+.input-with-button {
+  display: flex;
+  gap: 8px;
+}
+
+.input-with-button input {
+  flex: 1;
+}
+
+.browse-btn {
+  padding: 4px 8px;
+  background: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-strong);
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.browse-btn:hover:not(:disabled) {
+  background: var(--sb-border-strong);
+  color: var(--sb-text-primary);
+  border-color: var(--sb-accent-primary);
+}
+
+.browse-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+

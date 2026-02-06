@@ -1,0 +1,248 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Storyboard Maker Template",
+  "description": "Template definition for Storyboard Maker workflow generation",
+  "type": "object",
+  "required": ["meta", "workflow"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Template name"
+        },
+        "version": {
+          "type": "string",
+          "description": "Template version",
+          "default": "1.0.0"
+        },
+        "author": {
+          "type": "string",
+          "description": "Template author",
+          "default": ""
+        },
+        "description": {
+          "type": "string",
+          "description": "Template description",
+          "default": ""
+        },
+        "engine": {
+          "type": "string",
+          "description": "AI engine (qwen, z_image, flux, sd, other)",
+          "default": "other"
+        },
+        "categories": {
+          "type": "array",
+          "description": "Template categories (generation, img2img, editing, etc.)",
+          "items": {
+            "type": "string"
+          },
+          "default": ["generation"]
+        },
+        "supports_angles": {
+          "type": "boolean",
+          "description": "Whether this template supports camera angle tokens",
+          "default": false
+        },
+        "supports_next_scene": {
+          "type": "boolean",
+          "description": "Whether this template supports next scene continuity",
+          "default": false
+        },
+        "requires_images": {
+          "type": "boolean",
+          "description": "Whether this template requires reference images",
+          "default": false
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "description": "List of adjustable parameters",
+      "items": {
+        "type": "object",
+        "required": ["name", "display_name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Internal parameter name"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name for UI"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["integer", "float", "seed", "enum", "boolean", "prompt"],
+            "description": "Parameter type"
+          },
+          "node_id": {
+            "type": "string",
+            "description": "ComfyUI node ID"
+          },
+          "input_name": {
+            "type": "string",
+            "description": "Node input name"
+          },
+          "default": {
+            "description": "Default value"
+          },
+          "constraints": {
+            "type": "object",
+            "description": "Validation constraints",
+            "properties": {
+              "min": {
+                "type": "number",
+                "description": "Minimum value"
+              },
+              "max": {
+                "type": "number",
+                "description": "Maximum value"
+              },
+              "step": {
+                "type": "number",
+                "description": "Step value"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Options for enum type"
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "Parameter description"
+          }
+        }
+      },
+      "default": []
+    },
+    "loras": {
+      "type": "array",
+      "description": "LoRA slot definitions",
+      "items": {
+        "type": "object",
+        "required": ["name", "display_name", "node_id"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Internal LoRA name"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name for UI"
+          },
+          "node_id": {
+            "type": "string",
+            "description": "LoRA loader node ID"
+          },
+          "strength_inputs": {
+            "type": "object",
+            "description": "Strength input names for model and clip",
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "Model strength input name",
+                "default": "strength_model"
+              },
+              "clip": {
+                "type": "string",
+                "description": "CLIP strength input name",
+                "default": "strength_clip"
+              }
+            }
+          },
+          "default_enabled": {
+            "type": "boolean",
+            "description": "Default enabled state",
+            "default": false
+          },
+          "default_strength": {
+            "type": "number",
+            "description": "Default strength",
+            "default": 0.75
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether this LoRA is required",
+            "default": false
+          }
+        }
+      },
+      "default": []
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Image input definitions",
+      "items": {
+        "type": "object",
+        "required": ["name", "display_name", "node_id", "input_name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Internal input name"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name for UI"
+          },
+          "node_id": {
+            "type": "string",
+            "description": "Node ID"
+          },
+          "input_name": {
+            "type": "string",
+            "description": "Node input name"
+          },
+          "type": {
+            "type": "string",
+            "description": "Input type (image, mask, controlnet, etc.)"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether this input is required",
+            "default": false
+          },
+          "batch_min": {
+            "type": "integer",
+            "description": "Minimum batch size",
+            "default": 1
+          },
+          "batch_max": {
+            "type": "integer",
+            "description": "Maximum batch size",
+            "default": 1
+          },
+          "description": {
+            "type": "string",
+            "description": "Input description"
+          }
+        }
+      },
+      "default": []
+    },
+    "workflow": {
+      "type": "object",
+      "description": "ComfyUI workflow definition",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["class_type", "inputs"],
+        "properties": {
+          "class_type": {
+            "type": "string",
+            "description": "ComfyUI node class name"
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Node inputs"
+          }
+        }
+      }
+    }
+  }
+}

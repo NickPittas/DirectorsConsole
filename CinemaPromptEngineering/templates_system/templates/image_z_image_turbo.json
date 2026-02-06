@@ -1,0 +1,248 @@
+{
+  "meta": {
+    "name": "Z Image Turbo",
+    "description": "",
+    "author": "",
+    "version": "1.0.0",
+    "engine": "z_image",
+    "categories": [
+      "generation"
+    ],
+    "supports_angles": false,
+    "supports_next_scene": false,
+    "requires_images": false
+  },
+  "parameters": [
+    {
+      "name": "positive_prompt",
+      "type": "prompt",
+      "node_id": "45",
+      "input_name": "text",
+      "display_name": "Positive Prompt",
+      "description": "Positive prompt (what to generate)",
+      "default": ""
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "node_id": "44",
+      "input_name": "steps",
+      "display_name": "Sampling Steps",
+      "description": "Number of denoising steps",
+      "default": 9,
+      "constraints": {
+        "min": 1,
+        "max": 150,
+        "step": 1
+      }
+    },
+    {
+      "name": "cfg_scale",
+      "type": "float",
+      "node_id": "44",
+      "input_name": "cfg",
+      "display_name": "CFG Scale",
+      "description": "Classifier-free guidance scale",
+      "default": 1.0,
+      "constraints": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.5
+      }
+    },
+    {
+      "name": "seed",
+      "type": "seed",
+      "node_id": "44",
+      "input_name": "seed",
+      "display_name": "Seed",
+      "description": "Random seed (-1 for random)",
+      "default": 898061177214163
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "node_id": "44",
+      "input_name": "denoise",
+      "display_name": "Denoise Strength",
+      "description": "Denoising strength (img2img)",
+      "default": 1.0,
+      "constraints": {
+        "min": 0.1,
+        "max": 1.0,
+        "step": 0.05
+      }
+    }
+  ],
+  "loras": [
+    {
+      "name": "lora_1",
+      "display_name": "Z-Image\\Pixel art style",
+      "node_id": "48",
+      "strength_inputs": {
+        "model": "strength_model",
+        "clip": "strength_clip",
+        "lora_name": ""
+      },
+      "compatible_patterns": [],
+      "default_enabled": true,
+      "default_strength": 1,
+      "required": true
+    }
+  ],
+  "inputs": [],
+  "workflow": {
+    "9": {
+      "inputs": {
+        "filename_prefix": "z-image",
+        "images": [
+          "43",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    },
+    "39": {
+      "inputs": {
+        "clip_name": "qwen_3_4b.safetensors",
+        "type": "lumina2",
+        "device": "default"
+      },
+      "class_type": "CLIPLoader",
+      "_meta": {
+        "title": "Load CLIP"
+      }
+    },
+    "40": {
+      "inputs": {
+        "vae_name": "ae.safetensors"
+      },
+      "class_type": "VAELoader",
+      "_meta": {
+        "title": "Load VAE"
+      }
+    },
+    "41": {
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      },
+      "class_type": "EmptySD3LatentImage",
+      "_meta": {
+        "title": "EmptySD3LatentImage"
+      }
+    },
+    "42": {
+      "inputs": {
+        "conditioning": [
+          "45",
+          0
+        ]
+      },
+      "class_type": "ConditioningZeroOut",
+      "_meta": {
+        "title": "ConditioningZeroOut"
+      }
+    },
+    "43": {
+      "inputs": {
+        "samples": [
+          "44",
+          0
+        ],
+        "vae": [
+          "40",
+          0
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "44": {
+      "inputs": {
+        "seed": 898061177214163,
+        "steps": 9,
+        "cfg": 1,
+        "sampler_name": "res_multistep",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": [
+          "47",
+          0
+        ],
+        "positive": [
+          "45",
+          0
+        ],
+        "negative": [
+          "42",
+          0
+        ],
+        "latent_image": [
+          "41",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler"
+      }
+    },
+    "45": {
+      "inputs": {
+        "text": "Pixel art style Latina female with thick wavy hair, harbor boats and pastel houses behind. Breezy seaside light, warm tones, cinematic close-up. ",
+        "clip": [
+          "39",
+          0
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Prompt)"
+      }
+    },
+    "46": {
+      "inputs": {
+        "unet_name": "z\\z_image_turbo_bf16.safetensors",
+        "weight_dtype": "default"
+      },
+      "class_type": "UNETLoader",
+      "_meta": {
+        "title": "Load Diffusion Model"
+      }
+    },
+    "47": {
+      "inputs": {
+        "shift": 3,
+        "model": [
+          "48",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow"
+      }
+    },
+    "48": {
+      "inputs": {
+        "lora_name": "Z-Image\\Pixel art style.safetensors",
+        "strength_model": 1,
+        "model": [
+          "46",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "LoraLoaderModelOnly"
+      }
+    }
+  }
+}

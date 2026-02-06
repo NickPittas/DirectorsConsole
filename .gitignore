@@ -1,0 +1,289 @@
+# =============================================================================
+# Director's Console - .gitignore
+# Project: Project Eliot - VFX Production Pipeline
+# =============================================================================
+
+# =============================================================================
+# Python
+# =============================================================================
+# Virtual environments (match at any depth)
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+**/.conda/
+
+# Python cache (match at any depth)
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.venvrc
+
+# =============================================================================
+# Node.js / Frontend
+# =============================================================================
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+.vite/
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Rollup cache
+.rollup.cache
+
+# =============================================================================
+# IDEs and Editors
+# =============================================================================
+# VS Code
+.vscode/
+*.code-workspace
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains (PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Visual Studio
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vimrc
+
+# Emacs
+*~
+#*#
+.#*
+
+# =============================================================================
+# OS Generated Files
+# =============================================================================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Linux
+*~
+.nfs*
+
+# =============================================================================
+# Project Specific - Director's Console
+# =============================================================================
+# Logs
+logs/
+*.log
+Console.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Model files and large binaries (if not intended for repo)
+# *.safetensors
+# *.ckpt
+# *.pth
+# *.onnx
+
+# Generated documentation
+docs/_build/
+site/
+
+# Local configuration (user-specific)
+config.local.yaml
+config.user.yaml
+
+# Output directories
+output/
+exports/
+downloads/
+
+# Workflow backups
+*.workflow.backup
+
+# =============================================================================
+# Misc
+# =============================================================================
+# Certificates
+*.pem
+*.key
+*.crt
+
+# Archives
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Docker - Allow project Docker files
+!Dockerfile
+!Dockerfile.orchestrator
+!docker-compose.yml
+!docker-compose.cpe-only.yml
+!.dockerignore
+!DOCKER.md
+!docker-start.bat
+!docker-start.sh
+
+# =============================================================================
+# Allow specific files (uncomment if needed)
+# =============================================================================
+# !.env.example
+# !config.example.yaml
+
+# Windows device-name artifacts
+nul
+CinemaPromptEngineering/frontend/nul
+Orchestrator/nul
+
+# Windows 8.3 short-name artifacts
+NDH6SA~M
+Orchestrator/NDH6SA~M
+
+# Stale output logs
+output.log
+
+# PID lock files
+.start.pid
+
+# =============================================================================
+# Security - Credentials & Sensitive Data
+# =============================================================================
+# Workflow files (user-specific ComfyUI workflows)
+WorkflowsForImport/
+
+# Credential/token files
+*.credentials
+*.tokens
+credentials.json
+token.json
+
+# Secret environment files (already covered above but being explicit)
+.env.production
+.secrets

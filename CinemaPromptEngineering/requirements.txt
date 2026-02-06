@@ -1,0 +1,28 @@
+# Cinema Prompt Engineering - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Data Validation
+pydantic>=2.5.0
+jsonschema>=4.20.0
+
+# HTTP Clients
+httpx>=0.26.0
+aiohttp>=3.9.0
+requests>=2.31.0
+
+# Form handling for file uploads
+python-multipart>=0.0.6
+
+# Image Processing
+Pillow>=10.0.0
+
+# Encryption for credential storage
+cryptography>=41.0.0
+
+# Logging
+loguru>=0.7.0
+

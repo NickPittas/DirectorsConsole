@@ -1,0 +1,370 @@
+/**
+ * Camera Angle Selector Styles
+ * 
+ * Styles for the 3D camera angle selector modal
+ */
+
+/* ============================================================================
+   Overlay
+   ============================================================================ */
+
+.camera-angle-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+/* ============================================================================
+   Modal
+   ============================================================================ */
+
+.camera-angle-modal {
+  background-color: var(--sb-bg-elevated);
+  border-radius: 8px;
+  width: 90vw;
+  max-width: 1000px;
+  height: 80vh;
+  max-height: 700px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Header
+   ============================================================================ */
+
+.camera-angle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--sb-border-medium);
+  background-color: var(--sb-bg-light);
+}
+
+.camera-angle-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sb-text-primary);
+}
+
+.camera-angle-close {
+  background: none;
+  border: none;
+  color: var(--sb-text-muted);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.camera-angle-close:hover {
+  background-color: var(--sb-border-medium);
+  color: var(--sb-text-primary);
+}
+
+/* ============================================================================
+   Content
+   ============================================================================ */
+
+.camera-angle-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Filters Sidebar
+   ============================================================================ */
+
+.camera-angle-filters {
+  width: 200px;
+  background-color: var(--sb-bg-light);
+  border-right: 1px solid var(--sb-border-medium);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.filter-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.filter-group-header label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sb-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.filter-toggle-all {
+  background: none;
+  border: none;
+  color: var(--sb-accent-primary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+.filter-toggle-all:hover {
+  background-color: var(--sb-accent-primary-dim);
+}
+
+.filter-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.filter-checkbox:hover {
+  background-color: var(--sb-bg-elevated);
+}
+
+.filter-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--sb-accent-primary);
+}
+
+.filter-checkbox .checkbox-label {
+  font-size: 12px;
+  color: var(--sb-text-secondary);
+  cursor: pointer;
+}
+
+/* ============================================================================
+   Canvas Container
+   ============================================================================ */
+
+.camera-angle-canvas-container {
+  flex: 1;
+  position: relative;
+  background-color: var(--sb-bg-medium);
+}
+
+.camera-angle-canvas-container canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ============================================================================
+   Tooltip
+   ============================================================================ */
+
+.camera-angle-tooltip {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.9);
+  color: var(--sb-text-primary);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+/* ============================================================================
+   Footer
+   ============================================================================ */
+
+.camera-angle-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-top: 1px solid var(--sb-border-medium);
+  background-color: var(--sb-bg-light);
+  gap: 20px;
+}
+
+.camera-angle-selected {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.camera-angle-selected .selected-label {
+  font-size: 11px;
+  color: var(--sb-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.camera-angle-selected .selected-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sb-text-primary);
+}
+
+.camera-angle-selected .selected-prompt {
+  font-size: 11px;
+  color: var(--sb-accent-primary);
+  font-family: 'Courier New', monospace;
+  background-color: var(--sb-accent-primary-dim);
+  padding: 4px 8px;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-angle-selected .selected-empty {
+  font-size: 13px;
+  color: var(--sb-text-muted);
+  font-style: italic;
+}
+
+/* ============================================================================
+   Actions
+   ============================================================================ */
+
+.camera-angle-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.camera-angle-btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.camera-angle-btn.primary {
+  background-color: var(--sb-accent-primary);
+  color: #1a1a1f;
+}
+
+.camera-angle-btn.primary:hover:not(:disabled) {
+  background-color: var(--sb-accent-primary-hover);
+}
+
+.camera-angle-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.camera-angle-btn.secondary {
+  background-color: var(--sb-border-medium);
+  color: var(--sb-text-primary);
+}
+
+.camera-angle-btn.secondary:hover {
+  background-color: var(--sb-border-strong);
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
+@media (max-width: 768px) {
+  .camera-angle-modal {
+    width: 95vw;
+    height: 90vh;
+    max-height: none;
+  }
+
+  .camera-angle-content {
+    flex-direction: column;
+  }
+
+  .camera-angle-filters {
+    width: 100%;
+    height: auto;
+    max-height: 200px;
+    border-right: none;
+    border-bottom: 1px solid var(--sb-border-medium);
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 12px;
+  }
+
+  .filter-group {
+    min-width: 140px;
+  }
+
+  .camera-angle-footer {
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .camera-angle-actions {
+    justify-content: flex-end;
+  }
+}
+
+/* ============================================================================
+   Scrollbar Styling
+   ============================================================================ */
+
+.camera-angle-filters::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.camera-angle-filters::-webkit-scrollbar-track {
+  background: var(--sb-bg-medium);
+  border-radius: 4px;
+}
+
+.camera-angle-filters::-webkit-scrollbar-thumb {
+  background: var(--sb-border-medium);
+  border-radius: 4px;
+}
+
+.camera-angle-filters::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-border-strong);
+}

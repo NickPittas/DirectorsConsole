@@ -1,0 +1,195 @@
+{
+  "meta": {
+    "name": "Flux Schnell",
+    "description": "",
+    "author": "",
+    "version": "1.0.0",
+    "engine": "flux",
+    "categories": [
+      "generation"
+    ],
+    "supports_angles": false,
+    "supports_next_scene": false,
+    "requires_images": false
+  },
+  "parameters": [
+    {
+      "name": "positive_prompt",
+      "type": "prompt",
+      "node_id": "6",
+      "input_name": "text",
+      "display_name": "Positive Prompt",
+      "description": "Positive prompt (what to generate)",
+      "default": ""
+    },
+    {
+      "name": "negative_prompt",
+      "type": "prompt",
+      "node_id": "33",
+      "input_name": "text",
+      "display_name": "Negative Prompt",
+      "description": "Negative prompt (things to avoid)",
+      "default": ""
+    },
+    {
+      "name": "steps",
+      "type": "integer",
+      "node_id": "31",
+      "input_name": "steps",
+      "display_name": "Sampling Steps",
+      "description": "Number of denoising steps",
+      "default": 4,
+      "constraints": {
+        "min": 1,
+        "max": 150,
+        "step": 1
+      }
+    },
+    {
+      "name": "cfg_scale",
+      "type": "float",
+      "node_id": "31",
+      "input_name": "cfg",
+      "display_name": "CFG Scale",
+      "description": "Classifier-free guidance scale",
+      "default": 1.0,
+      "constraints": {
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.5
+      }
+    },
+    {
+      "name": "seed",
+      "type": "seed",
+      "node_id": "31",
+      "input_name": "seed",
+      "display_name": "Seed",
+      "description": "Random seed (-1 for random)",
+      "default": 899934911070563
+    },
+    {
+      "name": "denoise",
+      "type": "float",
+      "node_id": "31",
+      "input_name": "denoise",
+      "display_name": "Denoise Strength",
+      "description": "Denoising strength (img2img)",
+      "default": 1.0,
+      "constraints": {
+        "min": 0.1,
+        "max": 1.0,
+        "step": 0.05
+      }
+    }
+  ],
+  "loras": [],
+  "inputs": [],
+  "workflow": {
+    "6": {
+      "inputs": {
+        "text": "",
+        "clip": [
+          "30",
+          1
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Positive Prompt)"
+      }
+    },
+    "8": {
+      "inputs": {
+        "samples": [
+          "31",
+          0
+        ],
+        "vae": [
+          "30",
+          2
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "9": {
+      "inputs": {
+        "filename_prefix": "Fux Schnell",
+        "images": [
+          "8",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    },
+    "27": {
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      },
+      "class_type": "EmptySD3LatentImage",
+      "_meta": {
+        "title": "EmptySD3LatentImage"
+      }
+    },
+    "30": {
+      "inputs": {
+        "ckpt_name": "flux1-schnell-fp8.safetensors"
+      },
+      "class_type": "CheckpointLoaderSimple",
+      "_meta": {
+        "title": "Load Checkpoint"
+      }
+    },
+    "31": {
+      "inputs": {
+        "seed": 899934911070563,
+        "steps": 4,
+        "cfg": 1,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1,
+        "model": [
+          "30",
+          0
+        ],
+        "positive": [
+          "6",
+          0
+        ],
+        "negative": [
+          "33",
+          0
+        ],
+        "latent_image": [
+          "27",
+          0
+        ]
+      },
+      "class_type": "KSampler",
+      "_meta": {
+        "title": "KSampler"
+      }
+    },
+    "33": {
+      "inputs": {
+        "text": "",
+        "clip": [
+          "30",
+          1
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Negative Prompt)"
+      }
+    }
+  }
+}
