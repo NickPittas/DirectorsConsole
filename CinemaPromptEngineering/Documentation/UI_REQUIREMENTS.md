@@ -111,7 +111,7 @@
 
 ## 5. IMPLEMENTATION PRIORITY
 
-1. **System Prompts**: Add all missing generative AI models to `system_prompts.py`
+1. **System Prompts**: Add all missing generative AI models to prompt files in `api/providers/system_prompts/model_prompts/` and keep shared rules in `api/providers/system_prompts/general.md`
 2. **Target Model Dropdown**: Add all models with correct casing
 3. **Prompt Section Redesign**: Implement new layout with side-by-side outputs
 4. **Button Styling**: Fix to match theme
@@ -122,7 +122,7 @@
 
 ## 6. FILES TO MODIFY
 
-- `api/providers/system_prompts.py` - Add all target model prompts
+- `api/providers/system_prompts/` - Model prompt files (`model_prompts/`) + shared rules (`general.md`)
 - `frontend/src/App.tsx` - Main UI restructure
 - `frontend/src/components/` - May need new components for:
   - Collapsible panel

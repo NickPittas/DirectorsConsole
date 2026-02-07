@@ -2188,6 +2188,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             request.user_prompt,
             request.config,
             request.project_type.value,
+            request.target_model,
         )
         
         # Create credentials object

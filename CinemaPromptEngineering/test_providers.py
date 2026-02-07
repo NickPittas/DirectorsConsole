@@ -179,7 +179,7 @@ async def test_prompt_enhancement(provider: str, model: str, creds: LLMCredentia
     from api.providers.system_prompts import get_system_prompt, build_enhancement_prompt
     
     system_prompt = get_system_prompt("sora")  # Use Sora as target
-    full_prompt = build_enhancement_prompt(TEST_PROMPT, TEST_CONFIG, "live_action")
+    full_prompt = build_enhancement_prompt(TEST_PROMPT, TEST_CONFIG, "live_action", "sora")
     
     print(f"   📝 User prompt: {TEST_PROMPT[:60]}...")
     
