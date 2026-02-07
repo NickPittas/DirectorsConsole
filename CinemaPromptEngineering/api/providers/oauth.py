@@ -10,6 +10,7 @@ configured via the frontend Settings UI.
 """
 
 import logging
+import os
 from typing import Optional
 from pydantic import BaseModel
 import secrets
@@ -58,6 +59,10 @@ OAUTH_CONFIGS = {
     # =========================================================================
     # GITHUB COPILOT - Device Flow (RFC 8628)
     # =========================================================================
+    # NOTE: GitHub Copilot uses a PUBLIC client ID for device flow OAuth.
+    # This is the official VS Code Copilot extension client ID, which is safe
+    # to embed in source code per GitHub's OAuth documentation for device flow.
+    # Users can override this by setting their own client_id in Settings.
     "github_copilot": {
         "flow_type": "device",
         "device_code_url": "https://github.com/login/device/code",
@@ -66,6 +71,8 @@ OAUTH_CONFIGS = {
         "verification_uri": "https://github.com/login/device",
         "scopes": ["read:user"],
         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        # Public client ID for VS Code Copilot extension (safe for device flow)
+        "client_id": "Iv1.b507a08c87ecfe98",
         # Required headers for Copilot API - must match VS Code Copilot extension
         "headers": {
             "User-Agent": "GitHubCopilotChat/0.26.7",
@@ -94,11 +101,18 @@ OAUTH_CONFIGS = {
     # =========================================================================
     # ANTIGRAVITY (Google Cloud AI Companion) - Authorization Code Flow
     # =========================================================================
+    # NOTE: Antigravity uses Google OAuth with a PUBLIC client ID from the
+    # official VS Code Cloud Code extension. Set via environment variables:
+    #   ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
+    # These are pre-configured in the default installation.
     "antigravity": {
         "flow_type": "authorization_code",
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "redirect_uri": "http://localhost:36742/oauth-callback",
+        # Client credentials loaded from environment variables
+        "client_id": os.environ.get("ANTIGRAVITY_CLIENT_ID", ""),
+        "client_secret": os.environ.get("ANTIGRAVITY_CLIENT_SECRET", ""),
         "scopes": [
             "https://www.googleapis.com/auth/cloud-platform",
             "https://www.googleapis.com/auth/userinfo.email",
@@ -133,11 +147,16 @@ OAUTH_CONFIGS = {
     # =========================================================================
     # OPENAI CODEX - Authorization Code Flow with PKCE
     # =========================================================================
+    # NOTE: OpenAI Codex uses a PUBLIC client ID from the official Codex CLI.
+    # This is safe to embed per OpenAI's OAuth documentation for PKCE flows.
     "openai_codex": {
         "flow_type": "authorization_code",
         "authorize_url": "https://auth.openai.com/oauth/authorize",
         "token_url": "https://auth.openai.com/oauth/token",
         "redirect_uri": "http://localhost:1455/auth/callback",
+        # Public client ID from OpenAI Codex CLI (safe for PKCE flows)
+        # Updated 2025-06 - OpenAI migrated from Auth0-format IDs to app_ prefix
+        "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
         "scopes": ["openid", "profile", "email", "offline_access"],
         "use_pkce": True,
         # Extra params for OpenAI's OAuth

@@ -1107,7 +1107,7 @@ _oauth_states: dict[str, dict] = {}
 
 class OAuthInitRequest(BaseModel):
     """Request to initiate OAuth flow."""
-    client_id: str
+    client_id: str | None = None  # Optional - built-in client ID used if not provided
     redirect_uri: str
 
 
@@ -1115,7 +1115,7 @@ class OAuthCallbackRequest(BaseModel):
     """Request body for OAuth callback."""
     code: str
     state: str
-    client_id: str
+    client_id: str | None = None  # Optional - built-in client ID used if not provided
     client_secret: str | None = None
     redirect_uri: str
 
@@ -1161,14 +1161,20 @@ async def initiate_oauth(provider_id: str, request: OAuthInitRequest) -> dict:
     if provider_id not in OAUTH_CONFIGS:
         raise HTTPException(status_code=404, detail=f"OAuth provider '{provider_id}' not found")
     
+    config = OAUTH_CONFIGS[provider_id]
+    
     try:
-        # Resolve client_id: use request value, then credential storage
+        # Resolve client_id: request > credential storage > built-in config
         client_id = request.client_id
         if not client_id:
             storage = get_credential_storage()
             creds = storage.get_credentials(provider_id)
             if creds and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
+        
+        # Fall back to built-in client_id if provider has one
+        if not client_id and config.get("client_id"):
+            client_id = config["client_id"]
         
         if not client_id:
             raise HTTPException(
@@ -1184,7 +1190,6 @@ async def initiate_oauth(provider_id: str, request: OAuthInitRequest) -> dict:
         )
         
         # Get the actual redirect_uri that was used (may be built-in, not what was requested)
-        config = OAUTH_CONFIGS[provider_id]
         actual_redirect_uri = config.get("redirect_uri") or request.redirect_uri
         
         # Store state for verification
@@ -1291,6 +1296,7 @@ async def get_oauth_flow_type(provider_id: str) -> dict:
         "flow_type": flow_type,
         "models": config.get("models", []),
         "requires_subscription": config.get("requires_subscription"),
+        "has_builtin_client": bool(config.get("client_id")),  # True if provider has built-in client ID
     }
     
     if flow_type == "device":
@@ -1328,13 +1334,17 @@ async def request_device_code_endpoint(provider_id: str, request: DeviceCodeRequ
         )
     
     try:
-        # Resolve client_id: request > credential storage
+        # Resolve client_id: request > credential storage > built-in config
         client_id = request.client_id
         if not client_id:
             storage = get_credential_storage()
             creds = storage.get_credentials(provider_id)
             if creds and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
+        
+        # Fall back to built-in client_id if provider has one (e.g., GitHub Copilot)
+        if not client_id and config.get("client_id"):
+            client_id = config["client_id"]
         
         if not client_id:
             raise HTTPException(
@@ -1403,13 +1413,17 @@ async def poll_device_token_endpoint(provider_id: str, request: DeviceCodePollRe
         )
     
     try:
-        # Resolve client_id: request > credential storage
+        # Resolve client_id: request > credential storage > built-in config
         client_id = request.client_id
         if not client_id:
             storage = get_credential_storage()
             creds = storage.get_credentials(provider_id)
             if creds and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
+        
+        # Fall back to built-in client_id if provider has one (e.g., GitHub Copilot)
+        if not client_id and config.get("client_id"):
+            client_id = config["client_id"]
         
         if not client_id:
             raise HTTPException(

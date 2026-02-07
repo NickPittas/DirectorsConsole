@@ -750,6 +750,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   } | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollingError, setPollingError] = useState<string | null>(null);
+  
+  // Track if current OAuth provider has a built-in client ID
+  const [hasBuiltinClient, setHasBuiltinClient] = useState(false);
 
   // Helper to refresh OAuth tokens for providers that need it
   const refreshExpiredTokens = async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
@@ -931,6 +934,24 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   
   // Get credentials for the selected provider
   const currentCredentials = activeProvider ? credentials[activeProvider] || {} : {};
+  
+  // Fetch OAuth flow type info when OAuth provider is selected
+  useEffect(() => {
+    if (!activeProvider || selectedProvider?.type !== 'oauth') {
+      setHasBuiltinClient(false);
+      return;
+    }
+    
+    // Fetch flow type to check if provider has built-in client
+    api.getOAuthFlowType(activeProvider)
+      .then((flowInfo) => {
+        setHasBuiltinClient(flowInfo.has_builtin_client || false);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch OAuth flow type:', err);
+        setHasBuiltinClient(false);
+      });
+  }, [activeProvider, selectedProvider?.type]);
 
   // Handle provider selection change
   const handleProviderChange = useCallback((providerId: string) => {
@@ -1696,45 +1717,10 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                       </div>
                     ) : (
                       <>
-                        {/* OAuth Client Credentials */}
-                        <div style={{ marginBottom: '1rem' }}>
-                          <div style={styles.inputGroup}>
-                            <label style={styles.inputLabel} htmlFor="oauth-client-id">
-                              Client ID
-                            </label>
-                            <input
-                              id="oauth-client-id"
-                              type="text"
-                              style={styles.input}
-                              placeholder="Enter OAuth client ID"
-                              value={currentCredentials.oauthClientId || ''}
-                              onChange={(e) => updateCredential('oauthClientId', e.target.value)}
-                              autoComplete="off"
-                            />
-                          </div>
-                          {/* Only show client secret for providers that need it (e.g., Antigravity) */}
-                          {activeProvider === 'antigravity' && (
-                            <div style={{ ...styles.inputGroup, marginTop: '0.5rem' }}>
-                              <label style={styles.inputLabel} htmlFor="oauth-client-secret">
-                                Client Secret
-                              </label>
-                              <input
-                                id="oauth-client-secret"
-                                type="password"
-                                style={styles.input}
-                                placeholder="Enter OAuth client secret"
-                                value={currentCredentials.oauthClientSecret || ''}
-                                onChange={(e) => updateCredential('oauthClientSecret', e.target.value)}
-                                autoComplete="off"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        
                         <button
                           style={{ ...styles.button, ...styles.buttonOAuth }}
                           onClick={handleOAuthConnect}
-                          disabled={isPolling || !currentCredentials.oauthClientId}
+                          disabled={isPolling}
                         >
                           {activeProvider === 'github_copilot' ? (
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
