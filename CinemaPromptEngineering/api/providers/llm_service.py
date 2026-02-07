@@ -364,6 +364,15 @@ class LLMService:
         default_endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["ollama"])
         endpoint = credentials.endpoint or default_endpoint
         
+        # Normalize endpoint - strip trailing slash
+        endpoint = endpoint.rstrip("/")
+        
+        # For LM Studio, handle both "http://host:port" and "http://host:port/v1" formats
+        if provider == "lmstudio":
+            if not endpoint.endswith("/v1"):
+                endpoint = f"{endpoint}/v1"
+            endpoint = f"{endpoint}/chat/completions"
+        
         if provider == "ollama":
             # Ollama uses its own API format
             payload = {
@@ -1401,10 +1410,18 @@ class LLMService:
         """Fetch available models from local providers (Ollama, LM Studio)."""
         if provider == "ollama":
             endpoint = credentials.endpoint or "http://localhost:11434"
+            # Strip trailing slash
+            endpoint = endpoint.rstrip("/")
             models_url = f"{endpoint}/api/tags"
         else:  # lmstudio
             endpoint = credentials.endpoint or "http://localhost:1234"
-            models_url = f"{endpoint}/v1/models"
+            # Strip trailing slash
+            endpoint = endpoint.rstrip("/")
+            # Handle both "http://host:port" and "http://host:port/v1" formats
+            if endpoint.endswith("/v1"):
+                models_url = f"{endpoint}/models"
+            else:
+                models_url = f"{endpoint}/v1/models"
         
         async with aiohttp.ClientSession() as session:
             try:
