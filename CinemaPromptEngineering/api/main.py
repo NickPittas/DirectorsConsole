@@ -1107,7 +1107,7 @@ _oauth_states: dict[str, dict] = {}
 
 class OAuthInitRequest(BaseModel):
     """Request to initiate OAuth flow."""
-    client_id: str
+    client_id: str | None = None  # Optional - built-in client ID used if not provided
     redirect_uri: str
 
 
@@ -1115,7 +1115,7 @@ class OAuthCallbackRequest(BaseModel):
     """Request body for OAuth callback."""
     code: str
     state: str
-    client_id: str
+    client_id: str | None = None  # Optional - built-in client ID used if not provided
     client_secret: str | None = None
     redirect_uri: str
 
