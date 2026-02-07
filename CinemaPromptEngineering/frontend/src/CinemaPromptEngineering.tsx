@@ -1962,7 +1962,7 @@ function getPresetImagePath(presetId: string): string | null {
     'the_social_network': null,
     'joker': null,
     'drive': null,
-    'solaris': null,
+    'solaris': 'solaris',
     // 'the_mirror' has an image now
     // Animation presets without images
     'spirited_away': null,
@@ -1972,12 +1972,12 @@ function getPresetImagePath(presetId: string): string | null {
     'paprika': null,
     'toy_story': null,
     'wall_e': null,
-    'spider_verse': null,
+    'spider_verse': 'spider-verse',
     'ratatouille': null,
     'finding_nemo': null,
-    'arcane': null,
+    'arcane': 'arcane',
     'love_death_robots': null,
-    'into_the_spider_verse': null,
+    'into_the_spider_verse': 'spider-verse',
     'studio_ghibli_generic': null,
   };
 
@@ -2416,7 +2416,8 @@ function App() {
 
     const handleMouseMove = (e: MouseEvent) => {
       const newWidth = window.innerWidth - e.clientX;
-      const clampedWidth = Math.max(280, Math.min(600, newWidth));
+      const maxWidth = Math.max(280, window.innerWidth - 40);
+      const clampedWidth = Math.max(280, Math.min(maxWidth, newWidth));
       setPresetPanelWidth(clampedWidth);
     };
 
