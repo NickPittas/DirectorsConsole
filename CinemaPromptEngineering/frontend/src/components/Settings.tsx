@@ -1717,50 +1717,10 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                       </div>
                     ) : (
                       <>
-                        {/* OAuth Client Credentials */}
-                        <div style={{ marginBottom: '1rem' }}>
-                          <div style={styles.inputGroup}>
-                            <label style={styles.inputLabel} htmlFor="oauth-client-id">
-                              Client ID
-                            </label>
-                            <input
-                              id="oauth-client-id"
-                              type="text"
-                              style={styles.input}
-                              placeholder={hasBuiltinClient ? "(Using built-in client ID)" : "Enter OAuth client ID"}
-                              value={currentCredentials.oauthClientId || ''}
-                              onChange={(e) => updateCredential('oauthClientId', e.target.value)}
-                              autoComplete="off"
-                            />
-                            {hasBuiltinClient && !currentCredentials.oauthClientId && (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>
-                                Optional - a default client ID will be used if not provided
-                              </span>
-                            )}
-                          </div>
-                          {/* Only show client secret for providers that need it (e.g., Antigravity) */}
-                          {activeProvider === 'antigravity' && (
-                            <div style={{ ...styles.inputGroup, marginTop: '0.5rem' }}>
-                              <label style={styles.inputLabel} htmlFor="oauth-client-secret">
-                                Client Secret
-                              </label>
-                              <input
-                                id="oauth-client-secret"
-                                type="password"
-                                style={styles.input}
-                                placeholder="Enter OAuth client secret"
-                                value={currentCredentials.oauthClientSecret || ''}
-                                onChange={(e) => updateCredential('oauthClientSecret', e.target.value)}
-                                autoComplete="off"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        
                         <button
                           style={{ ...styles.button, ...styles.buttonOAuth }}
                           onClick={handleOAuthConnect}
-                          disabled={isPolling || (!currentCredentials.oauthClientId && !hasBuiltinClient)}
+                          disabled={isPolling}
                         >
                           {activeProvider === 'github_copilot' ? (
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
