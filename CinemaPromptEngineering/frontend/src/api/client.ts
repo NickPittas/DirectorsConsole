@@ -526,6 +526,7 @@ class ApiClient {
     negative_prompt?: string;
     tokens_used?: number;
     model_used?: string;
+    warnings?: string[];
     error?: string;
   }> {
     return this.fetch('/enhance-prompt', {

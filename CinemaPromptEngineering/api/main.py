@@ -1978,7 +1978,11 @@ async def import_credentials(request: ImportRequest) -> dict[str, Any]:
 # =============================================================================
 
 from api.providers.llm_service import llm_service, LLMCredentials
-from api.providers.system_prompts import get_system_prompt, build_enhancement_prompt
+from api.providers.system_prompts import (
+    get_system_prompt,
+    build_enhancement_prompt,
+    is_video_model,
+)
 
 
 class FetchModelsRequest(BaseModel):
@@ -2120,6 +2124,7 @@ class EnhancePromptResponse(BaseModel):
     negative_prompt: str | None = None
     tokens_used: int = 0
     model_used: str = ""
+    warnings: list[str] = []
     error: str | None = None
 
 
@@ -2182,6 +2187,22 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
         # Get system prompt for target model and project type
         # Animation projects use animation-specific prompts without camera references
         system_prompt = get_system_prompt(request.target_model, request.project_type.value)
+
+        warnings: list[str] = []
+        if not is_video_model(request.target_model):
+            movement = request.config.get("movement", {})
+            motion_style = request.config.get("motion", {}).get("motion_style")
+            has_motion = (
+                movement.get("equipment") and movement.get("equipment") != "Static"
+            ) or (
+                movement.get("movement_type") and movement.get("movement_type") != "Static"
+            ) or (
+                motion_style and motion_style != "None"
+            )
+            if has_motion:
+                warnings.append(
+                    "Movement settings are ignored for image models; only framing and composition are used."
+                )
         
         # Build the full prompt with cinematic context
         full_prompt = build_enhancement_prompt(
@@ -2216,6 +2237,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
                 enhanced_prompt=enhanced,
                 tokens_used=result.tokens_used,
                 model_used=result.model_used,
+                warnings=warnings,
             )
         else:
             return EnhancePromptResponse(

@@ -56,6 +56,10 @@ TARGET_MODELS: List[Dict[str, str]] = [
     {"id": "qwen_vl", "name": "Qwen VL", "category": "Video"},
 ]
 
+MODEL_CATEGORY_BY_ID: dict[str, str] = {
+    entry["id"]: entry["category"] for entry in TARGET_MODELS
+}
+
 
 # =============================================================================
 # TARGET MODEL ALIASES
@@ -97,6 +101,29 @@ def _read_prompt_file(path: Path) -> str:
         return ""
 
 
+def get_model_category(target_model: str) -> str | None:
+    """Get the category for a target model.
+
+    Args:
+        target_model: The target image/video model (e.g., 'midjourney', 'runway')
+
+    Returns:
+        The category name or None if unknown.
+    """
+    model_key = _normalize_target_model(target_model)
+    return MODEL_CATEGORY_BY_ID.get(model_key)
+
+
+def is_video_model(target_model: str) -> bool:
+    """Return True if the target model is a video generator."""
+    return get_model_category(target_model) == "Video"
+
+
+def is_image_model(target_model: str) -> bool:
+    """Return True if the target model is an image generator."""
+    return get_model_category(target_model) == "Image"
+
+
 def get_system_prompt(target_model: str, project_type: str = "live_action") -> str:
     """Get the system prompt for a specific target model and project type.
 
@@ -120,7 +147,11 @@ def get_system_prompt(target_model: str, project_type: str = "live_action") -> s
     return general_prompt
 
 
-def format_config_context(config: dict, project_type: str) -> str:
+def format_config_context(
+    config: dict,
+    project_type: str,
+    target_model: str | None = None,
+) -> str:
     """Format the cinematic configuration into context for the LLM.
 
     Args:
@@ -130,12 +161,16 @@ def format_config_context(config: dict, project_type: str) -> str:
     Returns:
         A formatted string describing the cinematic settings.
     """
+    include_motion = True
+    if target_model and is_image_model(target_model):
+        include_motion = False
+
     if project_type == "live_action":
-        return _format_live_action_context(config)
-    return _format_animation_context(config)
+        return _format_live_action_context(config, include_motion=include_motion)
+    return _format_animation_context(config, include_motion=include_motion)
 
 
-def _format_live_action_context(config: dict) -> str:
+def _format_live_action_context(config: dict, include_motion: bool) -> str:
     """Format live-action configuration for LLM context.
 
     Equipment names are translated to perspective/motion language to prevent
@@ -169,62 +204,63 @@ def _format_live_action_context(config: dict) -> str:
     if visual.get("composition"):
         parts.append(f"Composition: {visual['composition'].replace('_', ' ')}")
 
-    # Movement - translate equipment to perspective language
-    equipment_to_perspective = {
-        "Crane": "elevated perspective with smooth vertical motion",
-        "Jib": "elevated perspective with smooth vertical motion",
-        "Technocrane": "elevated perspective with extended reach and smooth motion",
-        "Dolly": "gliding perspective moving through the scene",
-        "Slider": "subtle lateral perspective shift",
-        "Steadicam": "fluid, stabilized following perspective",
-        "Gimbal": "smooth, stabilized perspective",
-        "Handheld": "organic, slightly textured perspective movement",
-        "Drone": "aerial elevated perspective",
-        "Cable_Cam": "elevated perspective gliding overhead",
-        "Motion_Control": "precisely controlled, repeatable perspective motion",
-        "Vehicle_Mount": "perspective traveling with the scene",
-        "Static": None,
-    }
+    if include_motion:
+        # Movement - translate equipment to perspective language
+        equipment_to_perspective = {
+            "Crane": "elevated perspective with smooth vertical motion",
+            "Jib": "elevated perspective with smooth vertical motion",
+            "Technocrane": "elevated perspective with extended reach and smooth motion",
+            "Dolly": "gliding perspective moving through the scene",
+            "Slider": "subtle lateral perspective shift",
+            "Steadicam": "fluid, stabilized following perspective",
+            "Gimbal": "smooth, stabilized perspective",
+            "Handheld": "organic, slightly textured perspective movement",
+            "Drone": "aerial elevated perspective",
+            "Cable_Cam": "elevated perspective gliding overhead",
+            "Motion_Control": "precisely controlled, repeatable perspective motion",
+            "Vehicle_Mount": "perspective traveling with the scene",
+            "Static": None,
+        }
 
-    movement_type_to_description = {
-        "Crane_Up": "the view rises smoothly",
-        "Crane_Down": "the view descends smoothly",
-        "Dolly_In": "the perspective glides closer",
-        "Dolly_Out": "the perspective glides away",
-        "Track_Left": "the perspective glides left",
-        "Track_Right": "the perspective glides right",
-        "Pan_Left": "the view sweeps left",
-        "Pan_Right": "the view sweeps right",
-        "Tilt_Up": "the view tilts upward",
-        "Tilt_Down": "the view tilts downward",
-        "Arc_Left": "the perspective orbits left around the subject",
-        "Arc_Right": "the perspective orbits right around the subject",
-        "Push_In": "the perspective pushes closer",
-        "Pull_Out": "the perspective pulls away",
-        "Dolly_Zoom": "perspective compression effect (subject stays same size while background shifts)",
-        "Roll": "the frame rotates",
-        "Boom_Up": "the perspective rises vertically",
-        "Boom_Down": "the perspective descends vertically",
-        "Static": None,
-    }
+        movement_type_to_description = {
+            "Crane_Up": "the view rises smoothly",
+            "Crane_Down": "the view descends smoothly",
+            "Dolly_In": "the perspective glides closer",
+            "Dolly_Out": "the perspective glides away",
+            "Track_Left": "the perspective glides left",
+            "Track_Right": "the perspective glides right",
+            "Pan_Left": "the view sweeps left",
+            "Pan_Right": "the view sweeps right",
+            "Tilt_Up": "the view tilts upward",
+            "Tilt_Down": "the view tilts downward",
+            "Arc_Left": "the perspective orbits left around the subject",
+            "Arc_Right": "the perspective orbits right around the subject",
+            "Push_In": "the perspective pushes closer",
+            "Pull_Out": "the perspective pulls away",
+            "Dolly_Zoom": "perspective compression effect (subject stays same size while background shifts)",
+            "Roll": "the frame rotates",
+            "Boom_Up": "the perspective rises vertically",
+            "Boom_Down": "the perspective descends vertically",
+            "Static": None,
+        }
 
-    equip_key = movement.get("equipment", "")
-    motion_type = movement.get("movement_type", "")
+        equip_key = movement.get("equipment", "")
+        motion_type = movement.get("movement_type", "")
 
-    if equip_key and equip_key != "Static" and equip_key in equipment_to_perspective:
-        perspective_desc = equipment_to_perspective[equip_key]
-        if perspective_desc:
-            parts.append(f"Perspective: {perspective_desc}")
+        if equip_key and equip_key != "Static" and equip_key in equipment_to_perspective:
+            perspective_desc = equipment_to_perspective[equip_key]
+            if perspective_desc:
+                parts.append(f"Perspective: {perspective_desc}")
 
-    if motion_type and motion_type != "Static" and motion_type in movement_type_to_description:
-        motion_desc = movement_type_to_description[motion_type]
-        if motion_desc:
-            parts.append(f"Motion: {motion_desc}")
-    elif motion_type and motion_type != "Static":
-        parts.append(f"Motion: {motion_type.replace('_', ' ').lower()}")
+        if motion_type and motion_type != "Static" and motion_type in movement_type_to_description:
+            motion_desc = movement_type_to_description[motion_type]
+            if motion_desc:
+                parts.append(f"Motion: {motion_desc}")
+        elif motion_type and motion_type != "Static":
+            parts.append(f"Motion: {motion_type.replace('_', ' ').lower()}")
 
-    if movement.get("timing") and movement.get("timing") != "Static":
-        parts.append(f"Pace: {movement['timing']}")
+        if movement.get("timing") and movement.get("timing") != "Static":
+            parts.append(f"Pace: {movement['timing']}")
 
     # Lighting - describe quality, not fixtures
     if lighting.get("time_of_day"):
@@ -255,7 +291,7 @@ def _format_live_action_context(config: dict) -> str:
     return "CINEMATOGRAPHY:\n" + "\n".join(f"- {p}" for p in parts)
 
 
-def _format_animation_context(config: dict) -> str:
+def _format_animation_context(config: dict, include_motion: bool) -> str:
     """Format animation configuration for LLM context."""
     rendering = config.get("rendering", {})
     motion = config.get("motion", {})
@@ -275,10 +311,11 @@ def _format_animation_context(config: dict) -> str:
     if rendering.get("lighting_model"):
         parts.append(f"Lighting: {rendering['lighting_model'].replace('_', ' ')}")
 
-    if motion.get("motion_style") and motion.get("motion_style") != "None":
-        parts.append(f"Animation: {motion['motion_style']}")
-    if motion.get("virtual_camera"):
-        parts.append(f"Camera: {motion['virtual_camera'].replace('_', ' ')}")
+    if include_motion:
+        if motion.get("motion_style") and motion.get("motion_style") != "None":
+            parts.append(f"Animation: {motion['motion_style']}")
+        if motion.get("virtual_camera"):
+            parts.append(f"Camera: {motion['virtual_camera'].replace('_', ' ')}")
 
     if visual.get("shot_size"):
         parts.append(f"Shot: {visual['shot_size']}")
@@ -306,7 +343,7 @@ def build_enhancement_prompt(
     Returns:
         The formatted prompt for the LLM
     """
-    config_context = format_config_context(config, project_type)
+    config_context = format_config_context(config, project_type, target_model)
 
     return f"""TARGET MODEL:
 {target_model}
@@ -317,8 +354,8 @@ USER'S SCENE IDEA:
 {config_context}
 
 CONSTRAINTS (MUST FOLLOW):
-- Use the CPE configuration values as authoritative; do not invent replacements.
-- Do not contradict the user's scene; reconcile conflicts in favor of CPE constraints.
+- Use the provided configuration context as authoritative; do not invent replacements.
+- Do not contradict the user's scene; reconcile conflicts in favor of the provided configuration.
 - If a detail is not provided, do not add it unless required by the model guide.
 - Follow the system prompt's output format and structure for the target model.
 

@@ -31,8 +31,8 @@ from .system_prompts import (
     get_system_prompt,
     build_enhancement_prompt,
     get_target_models,
-    SYSTEM_PROMPTS,
     TARGET_MODELS,
+    is_video_model,
 )
 
 __all__ = [
@@ -64,6 +64,6 @@ __all__ = [
     "get_system_prompt",
     "build_enhancement_prompt",
     "get_target_models",
-    "SYSTEM_PROMPTS",
     "TARGET_MODELS",
+    "is_video_model",
 ]

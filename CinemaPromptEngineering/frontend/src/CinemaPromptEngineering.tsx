@@ -2622,6 +2622,251 @@ function App() {
       {/* Settings Modal */}
       <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
+      {/* Prompt Generation Panel */}
+      <div className="output-panel">
+        {/* Section Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            Prompt Generation
+            <span 
+              title="This panel generates AI prompts from your cinematography settings. Use 'Generate' for a simple prompt based on settings, or 'Enhance with AI' to have an LLM create a more detailed, professional prompt."
+              style={{ 
+                cursor: 'help', 
+                fontSize: '0.75rem', 
+                color: 'var(--text-muted)',
+                backgroundColor: 'var(--bg-light)',
+                borderRadius: '50%',
+                width: '18px',
+                height: '18px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >?</span>
+          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {isValidating && (
+              <span className="status-badge validating">validating...</span>
+            )}
+            {validationResult && !isValidating && (
+              <span className={`status-badge ${validationResult.status}`}>
+                {validationResult.status}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Validation Messages - at top of panel */}
+        {validationResult && validationResult.messages.length > 0 && (
+          <div className="validation-messages" style={{ marginBottom: '0.75rem' }}>
+            {validationResult.messages.map((msg, idx) => (
+              <div key={idx} className={`validation-message ${getSeverityClass(msg.severity)}`}>
+                <strong>{msg.rule_id}:</strong> {msg.message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Output areas side by side with copy buttons */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: '1fr 1fr', 
+          gap: '1rem', 
+          marginBottom: '1rem',
+        }}>
+          {/* Left: Simple Prompt */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label 
+              style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}
+              title="Basic prompt generated from your cinematography settings."
+            >
+              Simple Prompt <span style={{ cursor: 'help' }}>(?)</span>
+            </label>
+            <textarea
+              readOnly
+              value={generatedPrompt || 'Click "Generate" to create a prompt from your settings...'}
+              style={{
+                width: '100%',
+                minHeight: '150px',
+                padding: '0.75rem',
+                fontSize: '0.85rem',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-medium)',
+                color: generatedPrompt ? 'var(--text-primary)' : 'var(--text-muted)',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+                flex: 1,
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button 
+                className="secondary" 
+                onClick={handleCopyPrompt} 
+                disabled={!generatedPrompt}
+                title="Copy simple prompt to clipboard"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  borderRadius: '5px',
+                  border: '1px solid var(--border-medium)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-secondary)',
+                  cursor: generatedPrompt ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Copy Simple Prompt
+              </button>
+              <button 
+                className="secondary" 
+                onClick={() => setCpePromptForStoryboard(generatedPrompt)}
+                disabled={!generatedPrompt}
+                title="Send this prompt to the Storyboard panel"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  borderRadius: '5px',
+                  border: '1px solid var(--accent-primary)',
+                  backgroundColor: 'var(--accent-primary)',
+                  color: 'white',
+                  cursor: generatedPrompt ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.15s ease',
+                  opacity: generatedPrompt ? 1 : 0.5,
+                }}
+              >
+                📋 Send to Storyboard
+              </button>
+            </div>
+          </div>
+
+          {/* Right: AI-Enhanced Prompt */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label 
+              style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}
+              title="Your prompt enhanced by AI with professional cinematography language."
+            >
+              AI-Enhanced Prompt <span style={{ cursor: 'help' }}>(?)</span>
+            </label>
+            <textarea
+              readOnly
+              value={enhancedPrompt || 'Click "Enhance with AI" to generate an enhanced prompt...'}
+              style={{
+                width: '100%',
+                minHeight: '150px',
+                padding: '0.75rem',
+                fontSize: '0.85rem',
+                borderRadius: '6px',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-medium)',
+                color: enhancedPrompt ? 'var(--text-primary)' : 'var(--text-muted)',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+                flex: 1,
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button 
+                className="secondary" 
+                onClick={() => navigator.clipboard.writeText(enhancedPrompt)}
+                disabled={!enhancedPrompt}
+                title="Copy enhanced prompt to clipboard"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  borderRadius: '5px',
+                  border: '1px solid var(--border-medium)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  color: 'var(--text-secondary)',
+                  cursor: enhancedPrompt ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Copy Enhanced Prompt
+              </button>
+              <button 
+                className="secondary" 
+                onClick={() => setCpePromptForStoryboard(enhancedPrompt)}
+                disabled={!enhancedPrompt}
+                title="Send this prompt to the Storyboard panel"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  borderRadius: '5px',
+                  border: '1px solid var(--accent-primary)',
+                  backgroundColor: 'var(--accent-primary)',
+                  color: 'white',
+                  cursor: enhancedPrompt ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.15s ease',
+                  opacity: enhancedPrompt ? 1 : 0.5,
+                }}
+              >
+                📋 Send to Storyboard
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Negative Prompt - always visible */}
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+            Negative Prompt
+          </label>
+          <textarea
+            readOnly
+            value={negativePrompt || 'Generated negative prompt will appear here...'}
+            style={{
+              width: '100%',
+              minHeight: '50px',
+              padding: '0.75rem',
+              fontSize: '0.85rem',
+              borderRadius: '6px',
+              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'var(--bg-medium)',
+              color: negativePrompt ? 'var(--text-primary)' : 'var(--text-muted)',
+              resize: 'vertical',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {/* Enhancement Error */}
+        {enhanceError && (
+          <p style={{ 
+            fontSize: '0.8rem', 
+            color: 'var(--error)', 
+            marginBottom: '0.75rem',
+            padding: '0.5rem',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            borderRadius: '4px',
+          }}>
+            {enhanceError}
+          </p>
+        )}
+
+        {/* No providers configured message */}
+        {configuredProviders.length === 0 && (
+          <p style={{ 
+            fontSize: '0.8rem', 
+            color: 'var(--text-muted)', 
+            marginBottom: '0.75rem',
+            textAlign: 'center',
+            padding: '0.5rem',
+            backgroundColor: 'var(--bg-medium)',
+            borderRadius: '4px',
+          }}>
+            Click the gear icon to configure an AI provider for prompt enhancement
+          </p>
+        )}
+      </div>
+
       {/* Mode Toggle */}
       <div className="mode-toggle">
         <button
@@ -3755,256 +4000,6 @@ function App() {
         )}
       </div>
 
-      {/* Prompt Generation Panel */}
-      <div className="output-panel">
-        {/* Section Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Prompt Generation
-            <span 
-              title="This panel generates AI prompts from your cinematography settings. Use 'Generate' for a simple prompt based on settings, or 'Enhance with AI' to have an LLM create a more detailed, professional prompt."
-              style={{ 
-                cursor: 'help', 
-                fontSize: '0.75rem', 
-                color: 'var(--text-muted)',
-                backgroundColor: 'var(--bg-light)',
-                borderRadius: '50%',
-                width: '18px',
-                height: '18px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >?</span>
-          </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {isValidating && (
-              <span className="status-badge validating">validating...</span>
-            )}
-            {validationResult && !isValidating && (
-              <span className={`status-badge ${validationResult.status}`}>
-                {validationResult.status}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Validation Messages - at top of panel */}
-        {validationResult && validationResult.messages.length > 0 && (
-          <div className="validation-messages" style={{ marginBottom: '0.75rem' }}>
-            {validationResult.messages.map((msg, idx) => (
-              <div key={idx} className={`validation-message ${getSeverityClass(msg.severity)}`}>
-                <strong>{msg.rule_id}:</strong> {msg.message}
-              </div>
-            ))}
-          </div>
-        )}
-
-
-
-
-
-        {/* Output areas side by side with copy buttons */}
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: '1fr 1fr', 
-          gap: '1rem', 
-          marginBottom: '1rem',
-        }}>
-          {/* Left: Simple Prompt */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label 
-              style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}
-              title="Basic prompt generated from your cinematography settings."
-            >
-              Simple Prompt <span style={{ cursor: 'help' }}>(?)</span>
-            </label>
-            <textarea
-              readOnly
-              value={generatedPrompt || 'Click "Generate" to create a prompt from your settings...'}
-              style={{
-                width: '100%',
-                minHeight: '150px',
-                padding: '0.75rem',
-                fontSize: '0.85rem',
-                borderRadius: '6px',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-medium)',
-                color: generatedPrompt ? 'var(--text-primary)' : 'var(--text-muted)',
-                resize: 'vertical',
-                fontFamily: 'inherit',
-                boxSizing: 'border-box',
-                flex: 1,
-              }}
-            />
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button 
-                className="secondary" 
-                onClick={handleCopyPrompt} 
-                disabled={!generatedPrompt}
-                title="Copy simple prompt to clipboard"
-                style={{
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 500,
-                  borderRadius: '5px',
-                  border: '1px solid var(--border-medium)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  color: 'var(--text-secondary)',
-                  cursor: generatedPrompt ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                Copy Simple Prompt
-              </button>
-              <button 
-                className="secondary" 
-                onClick={() => setCpePromptForStoryboard(generatedPrompt)}
-                disabled={!generatedPrompt}
-                title="Send this prompt to the Storyboard panel"
-                style={{
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 500,
-                  borderRadius: '5px',
-                  border: '1px solid var(--accent-primary)',
-                  backgroundColor: 'var(--accent-primary)',
-                  color: 'white',
-                  cursor: generatedPrompt ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.15s ease',
-                  opacity: generatedPrompt ? 1 : 0.5,
-                }}
-              >
-                📋 Send to Storyboard
-              </button>
-            </div>
-          </div>
-
-          {/* Right: AI-Enhanced Prompt */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label 
-              style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}
-              title="Your prompt enhanced by AI with professional cinematography language."
-            >
-              AI-Enhanced Prompt <span style={{ cursor: 'help' }}>(?)</span>
-            </label>
-            <textarea
-              readOnly
-              value={enhancedPrompt || 'Click "Enhance with AI" to generate an enhanced prompt...'}
-              style={{
-                width: '100%',
-                minHeight: '150px',
-                padding: '0.75rem',
-                fontSize: '0.85rem',
-                borderRadius: '6px',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-medium)',
-                color: enhancedPrompt ? 'var(--text-primary)' : 'var(--text-muted)',
-                resize: 'vertical',
-                fontFamily: 'inherit',
-                boxSizing: 'border-box',
-                flex: 1,
-              }}
-            />
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button 
-                className="secondary" 
-                onClick={() => navigator.clipboard.writeText(enhancedPrompt)}
-                disabled={!enhancedPrompt}
-                title="Copy enhanced prompt to clipboard"
-                style={{
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 500,
-                  borderRadius: '5px',
-                  border: '1px solid var(--border-medium)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  color: 'var(--text-secondary)',
-                  cursor: enhancedPrompt ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                Copy Enhanced Prompt
-              </button>
-              <button 
-                className="secondary" 
-                onClick={() => setCpePromptForStoryboard(enhancedPrompt)}
-                disabled={!enhancedPrompt}
-                title="Send this prompt to the Storyboard panel"
-                style={{
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 500,
-                  borderRadius: '5px',
-                  border: '1px solid var(--accent-primary)',
-                  backgroundColor: 'var(--accent-primary)',
-                  color: 'white',
-                  cursor: enhancedPrompt ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.15s ease',
-                  opacity: enhancedPrompt ? 1 : 0.5,
-                }}
-              >
-                📋 Send to Storyboard
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Negative Prompt - always visible */}
-        <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-            Negative Prompt
-          </label>
-          <textarea
-            readOnly
-            value={negativePrompt || 'Generated negative prompt will appear here...'}
-            style={{
-              width: '100%',
-              minHeight: '50px',
-              padding: '0.75rem',
-              fontSize: '0.85rem',
-              borderRadius: '6px',
-              border: '1px solid var(--border-subtle)',
-              backgroundColor: 'var(--bg-medium)',
-              color: negativePrompt ? 'var(--text-primary)' : 'var(--text-muted)',
-              resize: 'vertical',
-              fontFamily: 'inherit',
-              boxSizing: 'border-box',
-            }}
-          />
-        </div>
-
-        {/* Enhancement Error */}
-        {enhanceError && (
-          <p style={{ 
-            fontSize: '0.8rem', 
-            color: 'var(--error)', 
-            marginBottom: '0.75rem',
-            padding: '0.5rem',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            borderRadius: '4px',
-          }}>
-            {enhanceError}
-          </p>
-        )}
-
-        {/* No providers configured message */}
-        {configuredProviders.length === 0 && (
-          <p style={{ 
-            fontSize: '0.8rem', 
-            color: 'var(--text-muted)', 
-            marginBottom: '0.75rem',
-            textAlign: 'center',
-            padding: '0.5rem',
-            backgroundColor: 'var(--bg-medium)',
-            borderRadius: '4px',
-          }}>
-            Click the gear icon to configure an AI provider for prompt enhancement
-          </p>
-        )}
-
-
-      </div>
     </div>
   );
 }

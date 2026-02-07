@@ -1288,12 +1288,12 @@ input:focus-visible {
 
 /* Main app content offset when panel is open */
 .app-with-panel {
-  margin-right: var(--preset-panel-width, 360px);
-  transition: margin-right 0.3s ease;
+  padding-right: var(--preset-panel-width, 360px);
+  transition: padding-right 0.3s ease;
 }
 
 .app-with-panel.panel-collapsed {
-  margin-right: 40px;
+  padding-right: 40px;
 }
 
 /* Responsive - hide panel on mobile */
