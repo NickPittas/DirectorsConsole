@@ -2215,14 +2215,9 @@ function App() {
     if (projectType === 'live_action') {
       const movement = liveActionConfig.movement;
       if (!movement) return false;
-      return movement.equipment !== 'Static'
-        || movement.movement_type !== 'Static'
-        || movement.movement_timing !== 'Static';
+      return movement.movement_type !== 'Static';
     }
-    const motion = animationConfig.motion;
-    if (!motion) return false;
-    return motion.motion_style !== 'None'
-      || motion.virtual_camera !== 'Locked';
+    return false;
   }, [projectType, liveActionConfig, animationConfig]);
   
   // Preset panel state (right-docked collapsible panel) - with localStorage persistence
