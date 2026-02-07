@@ -213,6 +213,12 @@ const TARGET_MODEL_NAMES: Record<string, string> = {
   'qwen_vl': 'Qwen VL',
 };
 
+const IMAGE_MODEL_IDS = new Set([
+  'midjourney', 'flux.1', 'flux.1_pro', 'flux_kontext', 'flux_krea',
+  'dall-e_3', 'gpt-image', 'ideogram_2.0', 'leonardo_ai',
+  'sdxl', 'stable_diffusion_3', 'z-image_turbo', 'qwen_image',
+]);
+
 // Shot size abbreviation to full name mapping
 const SHOT_SIZE_NAMES: Record<string, string> = {
   'EWS': 'Extreme Wide Shot (EWS)',
@@ -2191,10 +2197,33 @@ function App() {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
   const [enhancedPrompt, setEnhancedPrompt] = useState<string>('');
+  const [enhanceWarnings, setEnhanceWarnings] = useState<string[]>([]);
   
   // Target AI models (fetched from API)
   const [availableTargetModels, setAvailableTargetModels] = useState<Array<{id: string, name: string, category: string}>>([]);
   const [isLoadingTargetModels, setIsLoadingTargetModels] = useState(false);
+
+  const isImageModel = useMemo(() => {
+    const apiModel = availableTargetModels.find(model => model.id === targetModel);
+    if (apiModel) {
+      return apiModel.category === 'Image';
+    }
+    return IMAGE_MODEL_IDS.has(targetModel);
+  }, [availableTargetModels, targetModel]);
+
+  const hasMovementSelection = useMemo(() => {
+    if (projectType === 'live_action') {
+      const movement = liveActionConfig.movement;
+      if (!movement) return false;
+      return movement.equipment !== 'Static'
+        || movement.movement_type !== 'Static'
+        || movement.movement_timing !== 'Static';
+    }
+    const motion = animationConfig.motion;
+    if (!motion) return false;
+    return motion.motion_style !== 'None'
+      || motion.virtual_camera !== 'Locked';
+  }, [projectType, liveActionConfig, animationConfig]);
   
   // Preset panel state (right-docked collapsible panel) - with localStorage persistence
   const [isPresetPanelOpen, setIsPresetPanelOpen] = useState(() => {
@@ -2460,6 +2489,7 @@ function App() {
 
   const handleGenerate = useCallback(async () => {
     setIsGenerating(true);
+    setEnhanceWarnings([]);
     try {
       const result = projectType === 'live_action'
         ? await api.generateLiveActionPrompt(liveActionConfig, targetModel)
@@ -2482,6 +2512,7 @@ function App() {
 
   // Handle LLM prompt enhancement
   const handleEnhancePrompt = useCallback(async () => {
+    setEnhanceWarnings([]);
     if (!userPrompt.trim()) {
       setEnhanceError('Please enter a prompt idea to enhance');
       return;
@@ -2519,6 +2550,7 @@ function App() {
       if (result.success) {
         // Set the enhanced prompt separately from the simple generated prompt
         setEnhancedPrompt(result.enhanced_prompt);
+        setEnhanceWarnings(result.warnings ?? []);
 
       } else {
         setEnhanceError(result.error || 'Enhancement failed');
@@ -2526,6 +2558,7 @@ function App() {
     } catch (error) {
       console.error('Failed to enhance prompt:', error);
       setEnhanceError(error instanceof Error ? error.message : 'Enhancement failed');
+      setEnhanceWarnings([]);
     } finally {
       setIsEnhancing(false);
     }
@@ -2621,6 +2654,22 @@ function App() {
 
       {/* Settings Modal */}
       <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
+      {isImageModel && hasMovementSelection && (
+        <div
+          style={{
+            margin: '0.75rem 1.25rem',
+            padding: '0.6rem 0.8rem',
+            borderRadius: '6px',
+            backgroundColor: 'rgba(245, 158, 11, 0.12)',
+            color: 'var(--text-primary)',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            fontSize: '0.85rem',
+          }}
+        >
+          Motion settings are ignored for image models. Switch to a video model or set movement to Static.
+        </div>
+      )}
 
       {/* Prompt Generation Panel */}
       <div className="output-panel">
@@ -2836,6 +2885,28 @@ function App() {
             }}
           />
         </div>
+
+        {/* Enhancement Warnings */}
+        {enhanceWarnings.length > 0 && (
+          <div
+            style={{
+              fontSize: '0.8rem',
+              color: 'var(--text-primary)',
+              marginBottom: '0.75rem',
+              padding: '0.5rem',
+              backgroundColor: 'rgba(245, 158, 11, 0.12)',
+              borderRadius: '4px',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+            }}
+          >
+            <strong>Note:</strong>
+            <ul style={{ margin: '0.35rem 0 0 1rem' }}>
+              {enhanceWarnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Enhancement Error */}
         {enhanceError && (
