@@ -693,6 +693,10 @@ def kill_orphaned_processes() -> None:
     """Kill any orphaned DirectorsConsole processes before starting fresh."""
     if platform.system() != "Windows":
         return
+
+    if not shutil.which("wmic"):
+        log("CLEANUP", "Skipping orphan cleanup (wmic not available)", Colors.YELLOW)
+        return
     
     log("CLEANUP", "Checking for orphaned processes...", Colors.YELLOW)
     
