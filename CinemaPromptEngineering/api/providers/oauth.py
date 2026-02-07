@@ -102,17 +102,18 @@ OAUTH_CONFIGS = {
     # ANTIGRAVITY (Google Cloud AI Companion) - Authorization Code Flow
     # =========================================================================
     # NOTE: Antigravity uses Google OAuth with a PUBLIC client ID from the
-    # official VS Code Cloud Code extension. Set via environment variables:
-    #   ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
-    # These are pre-configured in the default installation.
+    # official VS Code Cloud Code extension. Google considers client secrets
+    # for installed/desktop applications to be non-confidential (see:
+    # https://developers.google.com/identity/protocols/oauth2/native-app).
+    # Override via ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET env vars.
     "antigravity": {
         "flow_type": "authorization_code",
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "redirect_uri": "http://localhost:36742/oauth-callback",
-        # Client credentials loaded from environment variables
-        "client_id": os.environ.get("ANTIGRAVITY_CLIENT_ID", ""),
-        "client_secret": os.environ.get("ANTIGRAVITY_CLIENT_SECRET", ""),
+        # Public client credentials from VS Code Cloud Code extension (non-confidential per Google OAuth docs)
+        "client_id": os.environ.get("ANTIGRAVITY_CLIENT_ID") or "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+        "client_secret": os.environ.get("ANTIGRAVITY_CLIENT_SECRET") or "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",
         "scopes": [
             "https://www.googleapis.com/auth/cloud-platform",
             "https://www.googleapis.com/auth/userinfo.email",
