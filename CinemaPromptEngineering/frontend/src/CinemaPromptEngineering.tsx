@@ -2256,6 +2256,7 @@ function App() {
     return 'browser';
   });
   const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const presetPanelRef = useRef<HTMLDivElement | null>(null);
   
   // Ref to track if this is the first render (skip initial validation)
   const isFirstRender = useRef(true);
@@ -2410,6 +2411,17 @@ function App() {
     e.preventDefault();
     setIsResizingPanel(true);
   }, []);
+
+  const handlePanelMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isPresetPanelOpen) return;
+    const panel = presetPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const edgeThreshold = 12;
+    if (e.clientX - rect.left <= edgeThreshold) {
+      handlePanelResizeStart(e);
+    }
+  }, [isPresetPanelOpen, handlePanelResizeStart]);
 
   useEffect(() => {
     if (!isResizingPanel) return;
@@ -2954,6 +2966,8 @@ function App() {
       <div 
         className={`preset-panel ${isPresetPanelOpen ? 'open' : 'collapsed'} ${isResizingPanel ? 'resizing' : ''}`}
         style={{ width: isPresetPanelOpen ? presetPanelWidth : 40 }}
+        ref={presetPanelRef}
+        onMouseDown={handlePanelMouseDown}
       >
         {/* Resize Handle */}
         <div 
