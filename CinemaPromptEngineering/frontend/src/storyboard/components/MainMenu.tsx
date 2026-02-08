@@ -80,6 +80,9 @@ export function MainMenu({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const mod = isMac ? '⌘' : 'Ctrl';
+
   return (
     <div className="main-menu" ref={menuRef}>
       <button 
@@ -105,19 +108,20 @@ export function MainMenu({
             >
               <FilePlus size={16} />
               <span>New Project</span>
-              <span className="menu-shortcut">Ctrl+N</span>
+              <span className="menu-shortcut">{mod}+N</span>
             </button>
 
             <button
               className="menu-item"
               onClick={() => {
-                onProjectSettings();
+                onLoadProject();
                 setIsOpen(false);
               }}
+              disabled={isLoading}
             >
-              <Settings size={16} />
-              <span>Project Settings</span>
-              <span className="menu-shortcut">Ctrl+,</span>
+              <FolderInput size={16} />
+              <span>{isLoading ? 'Loading...' : 'Load Project'}</span>
+              <span className="menu-shortcut">{mod}+O</span>
             </button>
 
             <button
@@ -130,7 +134,7 @@ export function MainMenu({
             >
               <Save size={16} />
               <span>{isSaving ? 'Saving...' : 'Save Project'}</span>
-              <span className="menu-shortcut">Ctrl+S</span>
+              <span className="menu-shortcut">{mod}+S</span>
             </button>
 
             {onSaveProjectAs && (
@@ -144,21 +148,20 @@ export function MainMenu({
               >
                 <SaveAll size={16} />
                 <span>Save As...</span>
-                <span className="menu-shortcut">Ctrl+Shift+S</span>
+                <span className="menu-shortcut">{mod}+⇧+S</span>
               </button>
             )}
 
             <button
               className="menu-item"
               onClick={() => {
-                onLoadProject();
+                onProjectSettings();
                 setIsOpen(false);
               }}
-              disabled={isLoading}
             >
-              <FolderInput size={16} />
-              <span>{isLoading ? 'Loading...' : 'Load Project'}</span>
-              <span className="menu-shortcut">Ctrl+O</span>
+              <Settings size={16} />
+              <span>Project Settings</span>
+              <span className="menu-shortcut">{mod}+,</span>
             </button>
 
             {onPrintStoryboard && (
@@ -171,7 +174,7 @@ export function MainMenu({
               >
                 <Printer size={16} />
                 <span>Print Storyboard</span>
-                <span className="menu-shortcut">Ctrl+P</span>
+                <span className="menu-shortcut">{mod}+P</span>
               </button>
             )}
           </div>

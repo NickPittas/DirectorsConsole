@@ -60,7 +60,7 @@
   background-color: var(--sb-bg-dark);
   border-bottom: 1px solid var(--sb-border-medium);
   gap: 10px;
-  z-index: 100;
+  z-index: 300;
   position: sticky;
   top: 0;
   flex-shrink: 0;

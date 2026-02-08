@@ -2586,8 +2586,24 @@ export function StoryboardUI() {
                       const url = allImages[idx];
                       const version = nextVersion + idx;
                       
+                      // Get panel workflow info for metadata (avoid stale closure — read from panels state)
+                      const panelWorkflowId = await new Promise<string>(resolve => {
+                        setPanels(prev => {
+                          const p = prev.find(p => p.id === panelId);
+                          resolve(p?.workflowId || '');
+                          return prev;
+                        });
+                      });
+                      const panelParams = await new Promise<Record<string, unknown>>(resolve => {
+                        setPanels(prev => {
+                          const p = prev.find(p => p.id === panelId);
+                          resolve((p?.parameterValues || {}) as Record<string, unknown>);
+                          return prev;
+                        });
+                      });
+                      
                       const entry = projectManager.createHistoryEntry(
-                        url, panelId, version, '', 'Unknown', {}, {}, generationTime
+                        url, panelId, version, panelWorkflowId, panelWorkflowId || 'Unknown', {}, panelParams, generationTime
                       );
                       
                       addLog('info', `Saving v${version} from URL: ${url}`);
@@ -3969,6 +3985,19 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept shortcuts when typing in input/textarea/select elements
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+        return;
+      }
+
+      // Ctrl+Shift+S - Save Project As (check BEFORE Ctrl+S since it's a superset)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault();
+        handleSaveProjectAs();
+        return;
+      }
+
       // Ctrl+N - New Project
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
@@ -3977,7 +4006,7 @@ export function StoryboardUI() {
       }
 
       // Ctrl+S - Save Project
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 's') {
         e.preventDefault();
         handleSaveProject();
         return;
@@ -3990,10 +4019,10 @@ export function StoryboardUI() {
         return;
       }
 
-      // Ctrl+Shift+S - Save Project As
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
+      // Ctrl+, - Project Settings
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
-        handleSaveProjectAs();
+        setShowProjectSettings(true);
         return;
       }
 
@@ -4009,7 +4038,7 @@ export function StoryboardUI() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleNewProject, handleSaveProject, handleLoadProject]);
+  }, [handleNewProject, handleSaveProject, handleSaveProjectAs, handleLoadProject]);
   
   return (
     <div className="storyboard-ui">
@@ -4674,34 +4703,68 @@ export function StoryboardUI() {
                             
                             const promptData = pngMeta.prompt as Record<string, { inputs?: Record<string, unknown>; class_type?: string }>;
                             
-                            // Step 1: Find workflow name from SaveImage.filename_prefix
-                            let workflowName: string | null = null;
-                            for (const node of Object.values(promptData)) {
-                              if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
-                                workflowName = node.inputs.filename_prefix as string;
-                                break;
+                            // Step 1: Match workflow by structural comparison (node IDs + class_types)
+                            // This is far more reliable than filename_prefix matching since workflows
+                            // built from templates preserve the same node IDs and class_types.
+                            let matchedWorkflow: typeof workflows[number] | undefined;
+                            
+                            const promptNodeIds = Object.keys(promptData).filter(k => k !== 'meta' && k !== 'version');
+                            let bestScore = 0;
+                            
+                            for (const wf of workflows) {
+                              const templateNodeIds = Object.keys(wf.workflow).filter(k => k !== 'meta' && k !== 'version');
+                              let matches = 0;
+                              
+                              for (const nodeId of promptNodeIds) {
+                                if (wf.workflow[nodeId]) {
+                                  const promptClassType = promptData[nodeId]?.class_type;
+                                  const templateClassType = (wf.workflow[nodeId] as { class_type?: string })?.class_type;
+                                  if (promptClassType && promptClassType === templateClassType) {
+                                    matches++;
+                                  }
+                                }
+                              }
+                              
+                              // Score: ratio of matching nodes, accounting for both prompt and template size
+                              const score = promptNodeIds.length > 0
+                                ? matches / Math.max(promptNodeIds.length, templateNodeIds.length)
+                                : 0;
+                              
+                              if (score > bestScore && score > 0.5) {
+                                bestScore = score;
+                                matchedWorkflow = wf;
                               }
                             }
                             
-                            // Step 2: Match workflow name to our loaded workflows
-                            let matchedWorkflow = workflows.find(w => w.id === workflowName);
-                            if (!matchedWorkflow && workflowName) {
-                              // Fuzzy match: normalize names (remove underscores, spaces, lowercase)
-                              const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
-                              const normalizedTarget = normalize(workflowName);
-                              matchedWorkflow = workflows.find(w => 
-                                normalize(w.id).includes(normalizedTarget) || 
-                                normalizedTarget.includes(normalize(w.id)) ||
-                                normalize(w.name || '').includes(normalizedTarget) ||
-                                normalizedTarget.includes(normalize(w.name || ''))
-                              );
+                            // Fallback: try filename_prefix matching if structural match failed
+                            if (!matchedWorkflow) {
+                              let workflowName: string | null = null;
+                              for (const node of Object.values(promptData)) {
+                                if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
+                                  workflowName = node.inputs.filename_prefix as string;
+                                  break;
+                                }
+                              }
+                              if (workflowName) {
+                                matchedWorkflow = workflows.find(w => w.id === workflowName);
+                                if (!matchedWorkflow) {
+                                  const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
+                                  const normalizedTarget = normalize(workflowName);
+                                  matchedWorkflow = workflows.find(w => 
+                                    normalize(w.id).includes(normalizedTarget) || 
+                                    normalizedTarget.includes(normalize(w.id)) ||
+                                    normalize(w.name || '').includes(normalizedTarget) ||
+                                    normalizedTarget.includes(normalize(w.name || ''))
+                                  );
+                                }
+                              }
                             }
                             
                             if (!matchedWorkflow) {
-                              showWarning(`Could not find matching workflow for "${workflowName}". Extracting parameters only.`);
+                              showWarning('Could not find matching workflow. Extracting parameters only.');
                             }
                             
-                            // Step 3: Extract parameters using workflow's parameter definitions
+                            // Step 2: Extract parameters using workflow's parameter definitions
                             const extractedParams: Record<string, unknown> = {};
                             const extractedImages: Record<string, string> = {};
                             
@@ -4776,7 +4839,7 @@ export function StoryboardUI() {
                               }
                             }
                             
-                            // Step 4: Apply the restored data
+                            // Step 3: Apply the restored data
                             let restoredCount = 0;
                             
                             // Switch workflow if matched
@@ -5694,31 +5757,62 @@ export function StoryboardUI() {
                 
                 const promptData = pngMeta.prompt as Record<string, { inputs?: Record<string, unknown>; class_type?: string }>;
                 
-                // Find workflow name from SaveImage.filename_prefix
-                let workflowName: string | null = null;
-                for (const node of Object.values(promptData)) {
-                  if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
-                    workflowName = node.inputs.filename_prefix as string;
-                    break;
+                // Match workflow by structural comparison (node IDs + class_types)
+                let matchedWorkflow: typeof workflows[number] | undefined;
+                
+                const promptNodeIds = Object.keys(promptData).filter(k => k !== 'meta' && k !== 'version');
+                let bestScore = 0;
+                
+                for (const wf of workflows) {
+                  const templateNodeIds = Object.keys(wf.workflow).filter(k => k !== 'meta' && k !== 'version');
+                  let matches = 0;
+                  
+                  for (const nodeId of promptNodeIds) {
+                    if (wf.workflow[nodeId]) {
+                      const promptClassType = promptData[nodeId]?.class_type;
+                      const templateClassType = (wf.workflow[nodeId] as { class_type?: string })?.class_type;
+                      if (promptClassType && promptClassType === templateClassType) {
+                        matches++;
+                      }
+                    }
+                  }
+                  
+                  const score = promptNodeIds.length > 0
+                    ? matches / Math.max(promptNodeIds.length, templateNodeIds.length)
+                    : 0;
+                  
+                  if (score > bestScore && score > 0.5) {
+                    bestScore = score;
+                    matchedWorkflow = wf;
                   }
                 }
                 
-                // Match workflow name to our loaded workflows
-                let matchedWorkflow = workflows.find(w => w.id === workflowName);
-                if (!matchedWorkflow && workflowName) {
-                  // Fuzzy match: normalize names
-                  const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
-                  const normalizedTarget = normalize(workflowName);
-                  matchedWorkflow = workflows.find(w => 
-                    normalize(w.id).includes(normalizedTarget) || 
-                    normalizedTarget.includes(normalize(w.id)) ||
-                    normalize(w.name || '').includes(normalizedTarget) ||
-                    normalizedTarget.includes(normalize(w.name || ''))
-                  );
+                // Fallback: try filename_prefix matching
+                if (!matchedWorkflow) {
+                  let workflowName: string | null = null;
+                  for (const node of Object.values(promptData)) {
+                    if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
+                      workflowName = node.inputs.filename_prefix as string;
+                      break;
+                    }
+                  }
+                  if (workflowName) {
+                    matchedWorkflow = workflows.find(w => w.id === workflowName);
+                    if (!matchedWorkflow) {
+                      const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
+                      const normalizedTarget = normalize(workflowName);
+                      matchedWorkflow = workflows.find(w => 
+                        normalize(w.id).includes(normalizedTarget) || 
+                        normalizedTarget.includes(normalize(w.id)) ||
+                        normalize(w.name || '').includes(normalizedTarget) ||
+                        normalizedTarget.includes(normalize(w.name || ''))
+                      );
+                    }
+                  }
                 }
                 
                 if (!matchedWorkflow) {
-                  showWarning(`Could not find matching workflow for "${workflowName}". Extracting parameters only.`);
+                  showWarning('Could not find matching workflow. Extracting parameters only.');
                 }
                 
                 // Extract parameters using workflow's parameter definitions
