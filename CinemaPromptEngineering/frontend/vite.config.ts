@@ -26,11 +26,23 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:9800',
-        changeOrigin: true,
-        // Do NOT rewrite — CPE backend routes include /api prefix for some endpoints
-      },
+      // Proxy all CPE backend route prefixes to the backend server.
+      // In production the frontend is served by the same origin so no proxy is needed.
+      // These entries are ONLY used by the Vite dev server during development.
+      '/api': { target: 'http://localhost:9800', changeOrigin: true },
+      '/enums': { target: 'http://localhost:9800', changeOrigin: true },
+      '/validate': { target: 'http://localhost:9800', changeOrigin: true },
+      '/generate-prompt': { target: 'http://localhost:9800', changeOrigin: true },
+      '/options': { target: 'http://localhost:9800', changeOrigin: true },
+      '/cameras': { target: 'http://localhost:9800', changeOrigin: true },
+      '/film-stocks': { target: 'http://localhost:9800', changeOrigin: true },
+      '/aspect-ratios': { target: 'http://localhost:9800', changeOrigin: true },
+      '/lenses': { target: 'http://localhost:9800', changeOrigin: true },
+      '/preset': { target: 'http://localhost:9800', changeOrigin: true },
+      '/presets': { target: 'http://localhost:9800', changeOrigin: true },
+      '/apply-preset': { target: 'http://localhost:9800', changeOrigin: true },
+      '/settings': { target: 'http://localhost:9800', changeOrigin: true },
+      '/credentials': { target: 'http://localhost:9800', changeOrigin: true },
     },
   },
 });
