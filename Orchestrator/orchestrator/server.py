@@ -7,7 +7,7 @@ Usage:
     python -m orchestrator.server
     
     Or with custom host/port:
-    python -m orchestrator.server --host 0.0.0.0 --port 8000
+    python -m orchestrator.server --host 0.0.0.0 --port 9800
     
 Environment:
     LOG_LEVEL: Set logging level (DEBUG, INFO, WARNING, ERROR)
@@ -48,8 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port to bind to (default: 8000)",
+        default=9800,
+        help="Port to bind to (default: 9800)",
     )
     parser.add_argument(
         "--reload",

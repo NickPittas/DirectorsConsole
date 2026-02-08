@@ -12,7 +12,7 @@ import type {
 // =============================================================================
 
 const ORCHESTRATOR_URL =
-  import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:8020';
+  import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:9820';
 
 // =============================================================================
 // HTTP API Functions

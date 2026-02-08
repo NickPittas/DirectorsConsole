@@ -3,8 +3,8 @@
     Director's Console - Unified Launcher
 .DESCRIPTION
     Starts all three components of the Director's Console ecosystem:
-    1. Orchestrator API (port 8020) - Job queue/render farm manager
-    2. CPE Backend (port 8000) - Cinema Prompt Engineering API
+    1. Orchestrator API (port 9820) - Job queue/render farm manager
+    2. CPE Backend (port 9800) - Cinema Prompt Engineering API
     3. CPE Frontend (port 5173) - React UI
     
     All services run in the same window with colored output prefixes.
@@ -14,8 +14,8 @@
 #>
 
 param(
-    [int]$OrchestratorPort = 8020,
-    [int]$BackendPort = 8000,
+    [int]$OrchestratorPort = 9820,
+    [int]$BackendPort = 9800,
     [int]$FrontendPort = 5173,
     [switch]$NoOrchestrator,
     [switch]$NoFrontend,
@@ -30,8 +30,8 @@ Director's Console - Unified Launcher
 Usage: .\start-all.ps1 [options]
 
 Options:
-    -OrchestratorPort <int>   Orchestrator API port (default: 8020)
-    -BackendPort <int>        CPE Backend port (default: 8000)
+    -OrchestratorPort <int>   Orchestrator API port (default: 9820)
+    -BackendPort <int>        CPE Backend port (default: 9800)
     -FrontendPort <int>       CPE Frontend port (default: 5173)
     -NoOrchestrator           Skip starting Orchestrator
     -NoFrontend               Skip starting Frontend (backend only)

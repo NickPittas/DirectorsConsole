@@ -117,7 +117,7 @@ export class ComfyUIClient {
     this.timeout = config.timeout ?? 300000; // 5 minutes default
     this.maxRetries = config.maxRetries ?? 3;
     this.useOrchestrator = config.useOrchestrator ?? false;
-    this.orchestratorUrl = config.orchestratorUrl ?? 'http://localhost:8020';
+    this.orchestratorUrl = config.orchestratorUrl ?? 'http://localhost:9820';
     this.clientId = this.generateClientId();
   }
 

@@ -27,7 +27,7 @@ from cinema_rules.presets.cinematography_styles import CINEMATOGRAPHY_STYLES
 engine = RuleEngine()
 
 # Backend server configuration
-BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:9800")
 logger = logging.getLogger(__name__)
 
 # Helper for JSON response
@@ -515,7 +515,7 @@ async def handle_save_options(request):
 
 
 # NOTE: Routes are NOT auto-registered anymore.
-# The frontend connects directly to the standalone backend at localhost:8000.
+# The frontend connects directly to the standalone backend at localhost:9800.
 # This file is kept for potential future use but is not loaded by default.
 # To re-enable, import and call register_routes() from __init__.py
 

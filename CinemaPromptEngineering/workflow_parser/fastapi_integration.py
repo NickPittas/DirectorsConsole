@@ -307,16 +307,16 @@ To integrate these endpoints into your existing FastAPI app:
 4. Test the endpoints:
 
     # Parse a workflow
-    curl -X POST "http://localhost:8000/api/workflow/parse" \
+    curl -X POST "http://localhost:9800/api/workflow/parse" \
       -H "Content-Type: application/json" \
       -d '{"workflow": {...}}'
     
     # Upload and parse
-    curl -X POST "http://localhost:8000/api/workflow/upload-parse" \
+    curl -X POST "http://localhost:9800/api/workflow/upload-parse" \
       -F "file=@my_workflow.json"
     
     # Modify parameters
-    curl -X POST "http://localhost:8000/api/workflow/modify-parameters" \
+    curl -X POST "http://localhost:9800/api/workflow/modify-parameters" \
       -H "Content-Type: application/json" \
       -d '{"workflow": {...}, "modifications": {...}}'
 

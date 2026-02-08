@@ -1143,7 +1143,7 @@ export function StoryboardUI() {
     const fetchPngMetadata = async () => {
       setIsLoadingPngMetadata(true);
       try {
-        const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:8020';
+        const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
         const response = await fetch(
           `${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(imagePath)}`
         );
@@ -1330,7 +1330,7 @@ export function StoryboardUI() {
     }
     
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:9800';
       const response = await fetch(`${apiBase}/api/open-explorer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3394,7 +3394,7 @@ export function StoryboardUI() {
 
       // Build panels from scanned folders
       // Each folder becomes a panel, named after the folder
-      const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:8020';
+      const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
       const restoredPanels: Panel[] = [];
       let panelId = 1;
 
@@ -4561,7 +4561,7 @@ export function StoryboardUI() {
                           }
                           
                           try {
-                            const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:8020';
+                            const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
                             const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
                             const pngMeta = await response.json();
                             
@@ -5374,7 +5374,7 @@ export function StoryboardUI() {
                   // Create a new panel
                   const newPanelId = Math.max(...panels.map(p => p.id), 0) + 1;
                   const panelName = `Panel_${String(newPanelId).padStart(2, '0')}`;
-                  const orchestratorUrl = projectSettings.orchestratorUrl || 'http://localhost:8020';
+                  const orchestratorUrl = projectSettings.orchestratorUrl || 'http://localhost:9820';
                   
                   // First scan the folder for images
                   try {
@@ -5580,7 +5580,7 @@ export function StoryboardUI() {
               }
               
               try {
-                const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:8020';
+                const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
                 const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
                 const pngMeta = await response.json();
                 

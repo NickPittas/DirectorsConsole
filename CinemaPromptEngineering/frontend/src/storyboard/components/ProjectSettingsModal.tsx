@@ -20,7 +20,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
   const [path, setPath] = useState(settings.path);
   const [namingTemplate, setNamingTemplate] = useState(settings.namingTemplate);
   const [autoSave, setAutoSave] = useState(settings.autoSave);
-  const [orchestratorUrl, setOrchestratorUrl] = useState(settings.orchestratorUrl || 'http://localhost:8020');
+  const [orchestratorUrl, setOrchestratorUrl] = useState(settings.orchestratorUrl || 'http://localhost:9820');
   const [orchestratorStatus, setOrchestratorStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [pathValidation, setPathValidation] = useState<{
@@ -37,7 +37,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
       setPath(settings.path);
       setNamingTemplate(settings.namingTemplate);
       setAutoSave(settings.autoSave);
-      setOrchestratorUrl(settings.orchestratorUrl || 'http://localhost:8000');
+      setOrchestratorUrl(settings.orchestratorUrl || 'http://localhost:9800');
     }
   }, [isOpen, settings]);
   
@@ -170,7 +170,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
               type="text"
               value={orchestratorUrl}
               onChange={(e) => setOrchestratorUrl(e.target.value)}
-              placeholder="http://localhost:8020"
+              placeholder="http://localhost:9820"
             />
             <small className="help-text">
               URL of the Director's Console Orchestrator API (for auto-save to filesystem).

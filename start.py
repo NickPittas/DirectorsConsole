@@ -3,8 +3,8 @@
 Director's Console - Unified Launcher
 
 A robust Python launcher for all Director's Console services:
-1. Orchestrator API (port 8020) - Job queue/render farm manager
-2. CPE Backend (port 8000) - Cinema Prompt Engineering API  
+1. Orchestrator API (port 9820) - Job queue/render farm manager
+2. CPE Backend (port 9800) - Cinema Prompt Engineering API  
 3. CPE Frontend (port 5173) - React UI
 
 Features:
@@ -957,10 +957,10 @@ Examples:
     python start.py --no-browser       # Don't open browser
 """
     )
-    parser.add_argument("--orchestrator-port", type=int, default=8020,
-                        help="Orchestrator API port (default: 8020)")
-    parser.add_argument("--backend-port", type=int, default=8000,
-                        help="CPE Backend port (default: 8000)")
+    parser.add_argument("--orchestrator-port", type=int, default=9820,
+                        help="Orchestrator API port (default: 9820)")
+    parser.add_argument("--backend-port", type=int, default=9800,
+                        help="CPE Backend port (default: 9800)")
     parser.add_argument("--frontend-port", type=int, default=5173,
                         help="CPE Frontend port (default: 5173)")
     parser.add_argument("--no-orchestrator", action="store_true",

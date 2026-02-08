@@ -18,7 +18,7 @@ import type {
 } from '@/types';
 
 // API base URL:
-// - In development (Vite dev server): '/api' is proxied to localhost:8000
+// - In development (Vite dev server): '/api' is proxied to localhost:9800
 // - In production/ComfyUI: Use absolute URL to backend server
 // Set VITE_API_BASE in .env.production for ComfyUI builds
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';

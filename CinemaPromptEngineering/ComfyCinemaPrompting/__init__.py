@@ -313,7 +313,7 @@ class CinemaPromptLiveAction:
             import os
             
             # Backend server URL (same as in api_routes.py)
-            BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:8000")
+            BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:9800")
             
             # Helper to run async in sync context
             def run_async(coro):
@@ -353,14 +353,14 @@ class CinemaPromptLiveAction:
                     selected_model = settings.get("selected_model")
                     
                     if not active_provider:
-                        return None, "No LLM provider configured. Open http://localhost:8000 to set up."
+                        return None, "No LLM provider configured. Open http://localhost:9800 to set up."
                     if not selected_model:
-                        return None, "No model selected. Open http://localhost:8000 to configure."
+                        return None, "No model selected. Open http://localhost:9800 to configure."
                     
                     # Get credentials for the active provider
                     async with session.get(f"{BACKEND_URL}/credentials/{active_provider}", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                         if resp.status == 404:
-                            return None, f"Credentials not found for {active_provider}. Open http://localhost:8000 to authenticate."
+                            return None, f"Credentials not found for {active_provider}. Open http://localhost:9800 to authenticate."
                         if resp.status != 200:
                             text = await resp.text()
                             return None, f"Failed to get credentials: {text}"
@@ -396,7 +396,7 @@ class CinemaPromptLiveAction:
                             guidance = result.get("guidance", "")
                             # Add user-friendly guidance for auth errors
                             if any(word in error.lower() for word in ["token", "auth", "expired", "invalid"]):
-                                guidance = "Authentication expired. Please re-authenticate at http://localhost:8000"
+                                guidance = "Authentication expired. Please re-authenticate at http://localhost:9800"
                             return None, f"{error}. {guidance}".strip()
             
             if cached_enhanced_prompt:
@@ -416,7 +416,7 @@ class CinemaPromptLiveAction:
             if "Cannot connect" in error_msg or "Connection refused" in error_msg:
                 guidance = "Backend server not running. Start it with: python -m api.main"
             else:
-                guidance = "Open http://localhost:8000 to check configuration."
+                guidance = "Open http://localhost:9800 to check configuration."
             enhanced_prompt = f"{final_prompt} [Enhancement Failed: {error_msg}. {guidance}]"
         
         # Build validation status string
@@ -563,7 +563,7 @@ class CinemaPromptAnimation:
             import os
             
             # Backend server URL (same as in api_routes.py)
-            BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:8000")
+            BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:9800")
             
             # Helper to run async in sync context
             def run_async(coro):
@@ -603,14 +603,14 @@ class CinemaPromptAnimation:
                     selected_model = settings.get("selected_model")
                     
                     if not active_provider:
-                        return None, "No LLM provider configured. Open http://localhost:8000 to set up."
+                        return None, "No LLM provider configured. Open http://localhost:9800 to set up."
                     if not selected_model:
-                        return None, "No model selected. Open http://localhost:8000 to configure."
+                        return None, "No model selected. Open http://localhost:9800 to configure."
                     
                     # Get credentials for the active provider
                     async with session.get(f"{BACKEND_URL}/credentials/{active_provider}", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                         if resp.status == 404:
-                            return None, f"Credentials not found for {active_provider}. Open http://localhost:8000 to authenticate."
+                            return None, f"Credentials not found for {active_provider}. Open http://localhost:9800 to authenticate."
                         if resp.status != 200:
                             text = await resp.text()
                             return None, f"Failed to get credentials: {text}"
@@ -646,7 +646,7 @@ class CinemaPromptAnimation:
                             guidance = result.get("guidance", "")
                             # Add user-friendly guidance for auth errors
                             if any(word in error.lower() for word in ["token", "auth", "expired", "invalid"]):
-                                guidance = "Authentication expired. Please re-authenticate at http://localhost:8000"
+                                guidance = "Authentication expired. Please re-authenticate at http://localhost:9800"
                             return None, f"{error}. {guidance}".strip()
             
             if cached_enhanced_prompt:
@@ -666,7 +666,7 @@ class CinemaPromptAnimation:
             if "Cannot connect" in error_msg or "Connection refused" in error_msg:
                 guidance = "Backend server not running. Start it with: python -m api.main"
             else:
-                guidance = "Open http://localhost:8000 to check configuration."
+                guidance = "Open http://localhost:9800 to check configuration."
             enhanced_prompt = f"{final_prompt} [Enhancement Failed: {error_msg}. {guidance}]"
         
         # Build validation status string

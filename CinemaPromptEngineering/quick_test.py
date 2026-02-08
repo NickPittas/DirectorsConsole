@@ -16,7 +16,7 @@ import json
 import urllib.request
 import urllib.error
 
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:9800"
 
 def test_provider(provider: str, oauth_token: str, test_prompt: str | None = None):
     """Test a provider via the API."""

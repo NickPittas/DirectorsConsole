@@ -1,8 +1,8 @@
 # Kill existing uvicorn processes and restart backend
 Write-Host "Stopping existing backend processes..." -ForegroundColor Yellow
 
-# Get processes listening on port 8000
-$connections = netstat -ano | Select-String ":8000.*LISTENING"
+# Get processes listening on port 9800
+$connections = netstat -ano | Select-String ":9800.*LISTENING"
 $pids = @()
 foreach ($conn in $connections) {
     $parts = $conn.Line -split '\s+'
@@ -21,6 +21,6 @@ foreach ($processId in $pids) {
 
 Start-Sleep -Seconds 2
 
-Write-Host "Starting backend on port 8000..." -ForegroundColor Green
+Write-Host "Starting backend on port 9800..." -ForegroundColor Green
 Set-Location $PSScriptRoot
-python -m uvicorn api.main:app --reload --port 8000
+python -m uvicorn api.main:app --reload --port 9800

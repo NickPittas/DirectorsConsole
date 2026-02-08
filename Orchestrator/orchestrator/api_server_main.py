@@ -17,7 +17,7 @@ Usage:
 
 Environment Variables:
     ORCHESTRATOR_CONFIG: Path to config.yaml (default: ./config.yaml)
-    ORCHESTRATOR_PORT: API server port (default: 8020)
+    ORCHESTRATOR_PORT: API server port (default: 9820)
     ORCHESTRATOR_HOST: API server host (default: 0.0.0.0)
     ORCHESTRATOR_INBOX: Path to Inbox folder for watchdog (optional)
 """
@@ -219,7 +219,7 @@ async def main() -> None:
 
     # Get server config from environment
     host = os.getenv("ORCHESTRATOR_HOST", "0.0.0.0")
-    port = int(os.getenv("ORCHESTRATOR_PORT", "8020"))
+    port = int(os.getenv("ORCHESTRATOR_PORT", "9820"))
 
     logger.info("=" * 80)
     logger.info(f"Starting API server on {host}:{port}")

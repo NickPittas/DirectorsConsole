@@ -42,7 +42,7 @@ export interface ProjectSettings {
   path: string; // File system path (e.g., "Z:/Projects/MyFilm/renders")
   namingTemplate: string; // e.g., "{project}_{panel}_{version}" or "{shot}_{take}_{timestamp}"
   autoSave: boolean;
-  orchestratorUrl: string; // URL to Orchestrator API (e.g., "http://localhost:8000")
+  orchestratorUrl: string; // URL to Orchestrator API (e.g., "http://localhost:9800")
   created: Date;
   lastModified: Date;
 }
@@ -118,7 +118,7 @@ const DEFAULT_PROJECT: ProjectSettings = {
   path: '',
   namingTemplate: '{project}_Panel{panel}_{version}',
   autoSave: false,
-  orchestratorUrl: 'http://localhost:8020',
+  orchestratorUrl: 'http://localhost:9820',
   created: new Date(),
   lastModified: new Date(),
 };
@@ -1175,7 +1175,7 @@ class ProjectManager {
     error?: string;
   }> {
     // Use orchestratorUrl from project settings, fallback to default
-    const orchestratorUrl = this.currentProject.orchestratorUrl || 'http://localhost:8020';
+    const orchestratorUrl = this.currentProject.orchestratorUrl || 'http://localhost:9820';
     
     console.log('[ProjectManager] deleteImage called with path:', imagePath);
     console.log('[ProjectManager] Using orchestratorUrl:', orchestratorUrl);

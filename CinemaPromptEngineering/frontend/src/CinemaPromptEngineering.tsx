@@ -2406,10 +2406,17 @@ function App() {
     saveTargetModel(targetModel);
   }, [targetModel]);
 
-  // Handle panel resize
-  const handlePanelResizeStart = useCallback((e: React.MouseEvent) => {
+  // Handle panel resize — uses pointer events for cross-platform support (mouse + touch + pen on Windows)
+  const handlePanelResizeStart = useCallback((e: React.MouseEvent | React.PointerEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+    // Capture pointer for reliable tracking on Windows
+    const target = e.currentTarget as HTMLElement;
+    if ('pointerId' in e && target.setPointerCapture) {
+      try { target.setPointerCapture((e as React.PointerEvent).pointerId); } catch { /* ignore */ }
+    }
     setIsResizingPanel(true);
+    document.body.classList.add('preset-panel-resizing');
   }, []);
 
   const handlePanelMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -2426,23 +2433,33 @@ function App() {
   useEffect(() => {
     if (!isResizingPanel) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handlePointerMove = (e: PointerEvent | MouseEvent) => {
+      e.preventDefault();
       const newWidth = window.innerWidth - e.clientX;
       const maxWidth = Math.max(280, window.innerWidth - 40);
       const clampedWidth = Math.max(280, Math.min(maxWidth, newWidth));
       setPresetPanelWidth(clampedWidth);
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
       setIsResizingPanel(false);
+      document.body.classList.remove('preset-panel-resizing');
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    // Listen on both pointer and mouse events for maximum compatibility
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+    document.addEventListener('pointercancel', handlePointerUp);
+    document.addEventListener('mousemove', handlePointerMove);
+    document.addEventListener('mouseup', handlePointerUp);
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+      document.removeEventListener('pointercancel', handlePointerUp);
+      document.removeEventListener('mousemove', handlePointerMove);
+      document.removeEventListener('mouseup', handlePointerUp);
+      document.body.classList.remove('preset-panel-resizing');
     };
   }, [isResizingPanel]);
 
@@ -2973,6 +2990,7 @@ function App() {
         <div 
           className="panel-resize-handle" 
           onMouseDown={handlePanelResizeStart}
+          onPointerDown={handlePanelResizeStart}
         />
         
         {/* Collapse Toggle Button */}

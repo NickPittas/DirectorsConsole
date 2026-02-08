@@ -257,10 +257,10 @@ app = FastAPI(
 _ALLOWED_ORIGINS = [
     "http://localhost:3000",      # Vite dev server
     "http://localhost:5173",      # Vite default port
-    "http://localhost:8000",      # CPE backend (serves frontend)
+    "http://localhost:9800",      # CPE backend (serves frontend)
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
-    "http://127.0.0.1:8000",
+    "http://127.0.0.1:9800",
     "http://localhost:8188",      # ComfyUI server
     "http://127.0.0.1:8188",
 ]
@@ -1132,7 +1132,7 @@ class ProjectSettings(BaseModel):
     name: str = Field(..., description="Project name (e.g., 'Demo')")
     path: str = Field(..., description="Output folder path (e.g., 'W:\\Demo')")
     naming_template: str = Field(..., description="Filename template with tokens")
-    orchestrator_url: str = Field(default="http://localhost:8020", description="Orchestrator URL")
+    orchestrator_url: str = Field(default="http://localhost:9820", description="Orchestrator URL")
     auto_save: bool = Field(default=True, description="Auto-save on generation")
     
     # Optional fields
