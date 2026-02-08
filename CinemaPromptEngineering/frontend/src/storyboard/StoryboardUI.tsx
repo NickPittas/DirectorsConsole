@@ -2597,10 +2597,11 @@ export function StoryboardUI() {
                       
                       if (result.success) {
                         addLog('info', `Saved: ${result.savedPath}`);
+                        // Match by URL since entry.id differs between auto-save and UI state entries
                         setPanels(prev => prev.map(p => {
                           if (p.id !== panelId) return p;
                           const updatedHistory = p.imageHistory.map(h =>
-                            h.id === entry.id
+                            h.url === url && !h.metadata.savedPath
                               ? { ...h, metadata: { ...h.metadata, savedPath: result.savedPath } }
                               : h
                           );
@@ -2825,11 +2826,11 @@ export function StoryboardUI() {
                         
                          if (result.success) {
                            addLog('info', `Saved: ${result.savedPath}`);
-                           // CRITICAL FIX: Update the history entry with savedPath so delete works
+                           // Match by URL since entry.id differs between auto-save and UI state entries
                            setPanels(prev => prev.map(p => {
                              if (p.id !== panelId) return p;
                              const updatedHistory = p.imageHistory.map(h =>
-                               h.id === entry.id
+                               h.url === url && !h.metadata.savedPath
                                  ? { ...h, metadata: { ...h.metadata, savedPath: result.savedPath } }
                                  : h
                              );
