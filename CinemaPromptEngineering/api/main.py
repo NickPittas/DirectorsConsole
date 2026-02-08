@@ -2809,18 +2809,18 @@ def _is_url_safe_for_fetch(url: str) -> tuple[bool, str]:
         # Check if it's an IP address
         try:
             ip = ipaddress.ip_address(hostname)
-            # Block cloud metadata endpoints
-            if hostname == "169.254.169.254":
-                return False, "Cloud metadata endpoint blocked"
-            # For private IPs, check allowlist
-            if ip.is_private or ip.is_loopback or ip.is_link_local:
-                if hostname not in _CPE_ALLOWED_URL_HOSTS:
-                    return False, f"Private/internal IP {hostname} not in allowed hosts. Set CPE_ALLOWED_FETCH_HOSTS env var."
+            # Block cloud metadata endpoints (AWS/GCP/Azure)
+            if ip.is_link_local:
+                return False, "Link-local/metadata endpoint blocked"
+            # Allow private/LAN IPs — this is a local desktop tool and
+            # ComfyUI render nodes live on the user's LAN by design.
+            if ip.is_private or ip.is_loopback:
+                return True, ""
         except ValueError:
             # Not an IP, it's a hostname - must be in allowlist
             pass
         
-        # Final check: hostname must be in allowlist
+        # Final check: non-private hostnames must be in allowlist
         if hostname not in _CPE_ALLOWED_URL_HOSTS:
             return False, f"Host '{hostname}' not in allowed hosts. Set CPE_ALLOWED_FETCH_HOSTS env var."
         
