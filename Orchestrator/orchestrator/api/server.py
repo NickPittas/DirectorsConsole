@@ -1549,7 +1549,7 @@ async def browse_folders(path: str = "") -> dict[str, Any]:
                         })
                     return {"success": True, "current": "", "items": items, "parent": None}
                 
-                # Return drives on Windows, root on other systems
+                # Return drives on Windows, mounted volumes on macOS, root on Linux
                 if platform.system() == "Windows":
                     import string
                     drives = []
@@ -1562,6 +1562,31 @@ async def browse_folders(path: str = "") -> dict[str, Any]:
                                 "type": "drive"
                             })
                     return {"success": True, "current": "", "items": drives, "parent": None}
+                elif platform.system() == "Darwin":
+                    # macOS: Show mounted volumes + home directory as top-level entries
+                    items = []
+                    volumes_dir = Path("/Volumes")
+                    if volumes_dir.exists():
+                        for vol in sorted(volumes_dir.iterdir()):
+                            if vol.is_dir() and not vol.name.startswith('.'):
+                                items.append({
+                                    "name": vol.name,
+                                    "path": str(vol),
+                                    "type": "drive"
+                                })
+                    # Also add user home directory for convenience
+                    home = Path.home()
+                    if home.exists():
+                        items.append({
+                            "name": f"Home ({home.name})",
+                            "path": str(home),
+                            "type": "drive"
+                        })
+                    if not items:
+                        # Fallback to root
+                        path_to_browse = "/"
+                    else:
+                        return {"success": True, "current": "", "items": items, "parent": None}
                 else:
                     path_to_browse = "/"
             else:

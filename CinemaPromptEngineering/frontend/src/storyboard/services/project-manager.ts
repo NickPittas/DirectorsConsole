@@ -42,7 +42,7 @@ export interface ProjectSettings {
   path: string; // File system path (e.g., "Z:/Projects/MyFilm/renders")
   namingTemplate: string; // e.g., "{project}_{panel}_{version}" or "{shot}_{take}_{timestamp}"
   autoSave: boolean;
-  orchestratorUrl: string; // URL to Orchestrator API (e.g., "http://localhost:9800")
+  orchestratorUrl: string; // URL to Orchestrator API (e.g., "http://localhost:9820")
   created: Date;
   lastModified: Date;
 }
@@ -250,14 +250,17 @@ class ProjectManager {
     }
 
     try {
-      const response = await fetch(`${orchestratorUrl}/api/browse-folders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
+      const response = await fetch(
+        `${orchestratorUrl}/api/browse-folders?path=${encodeURIComponent(path)}`
+      );
 
       if (!response.ok) {
         return { valid: false, exists: false, message: 'Path does not exist' };
+      }
+
+      const data = await response.json();
+      if (data.success === false) {
+        return { valid: false, exists: false, message: data.error || 'Path does not exist' };
       }
 
       return { valid: true, exists: true, message: 'Path is valid' };

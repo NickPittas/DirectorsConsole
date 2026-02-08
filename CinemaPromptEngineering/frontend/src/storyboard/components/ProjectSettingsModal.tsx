@@ -37,7 +37,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
       setPath(settings.path);
       setNamingTemplate(settings.namingTemplate);
       setAutoSave(settings.autoSave);
-      setOrchestratorUrl(settings.orchestratorUrl || 'http://localhost:9800');
+      setOrchestratorUrl(settings.orchestratorUrl || 'http://localhost:9820');
     }
   }, [isOpen, settings]);
   

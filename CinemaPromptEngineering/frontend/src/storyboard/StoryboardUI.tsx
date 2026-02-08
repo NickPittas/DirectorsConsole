@@ -2544,29 +2544,116 @@ export function StoryboardUI() {
           if (history[promptId]) {
             const outputs = history[promptId].outputs;
             
-            // Find output images
+            // Collect ALL output images (matching WebSocket path behavior)
+            const allImages: string[] = [];
             for (const nodeId in outputs) {
               const nodeOutput = outputs[nodeId];
               if (nodeOutput.images && nodeOutput.images.length > 0) {
-                // Load the first image
-                const image = nodeOutput.images[0];
-                const imageUrl = `${targetUrl}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder || '')}&type=${image.type}`;
-                
-                setPanels(prev => prev.map(p => 
-                  p.id === panelId ? { 
-                    ...p, 
-                    status: 'complete', 
-                    progress: 100,
-                    image: imageUrl,
-                    images: [imageUrl],
-                    currentImageIndex: 0
-                  } : p
-                ));
-                
-                addLog('comfyui', `Generation complete for panel ${panelId}`);
-                activePollsRef.current.delete(pollKey);
-                return;
+                for (const img of nodeOutput.images) {
+                  const imageUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
+                  allImages.push(imageUrl);
+                }
               }
+            }
+            
+            if (allImages.length > 0) {
+              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} image(s)`);
+              activePollsRef.current.delete(pollKey);
+              
+              // Auto-save if enabled - read from singleton to avoid stale closure
+              const currentSettings = projectManager.getProject();
+              if (currentSettings.autoSave && currentSettings.path) {
+                addLog('info', `Auto-saving ${allImages.length} image(s) to ${currentSettings.path}...`);
+                
+                const startTime = generationStartTimes.current.get(panelId);
+                const generationTime = startTime ? (Date.now() - startTime) / 1000 : undefined;
+                
+                (async () => {
+                  try {
+                    // Get panel info from current state
+                    const panelName = await new Promise<string>(resolve => {
+                      setPanels(prev => {
+                        const p = prev.find(p => p.id === panelId);
+                        resolve(p?.name || `Panel_${String(panelId).padStart(2, '0')}`);
+                        return prev; // No mutation
+                      });
+                    });
+                    
+                    const nextVersion = await projectManager.getNextVersion(panelName, []);
+                    addLog('info', `Starting from version ${nextVersion}`);
+                    
+                    for (let idx = 0; idx < allImages.length; idx++) {
+                      const url = allImages[idx];
+                      const version = nextVersion + idx;
+                      
+                      const entry = projectManager.createHistoryEntry(
+                        url, panelId, version, '', 'Unknown', {}, {}, generationTime
+                      );
+                      
+                      addLog('info', `Saving v${version} from URL: ${url}`);
+                      const result = await projectManager.saveToProjectFolder(
+                        url, panelId, version, entry.metadata, panelName
+                      );
+                      
+                      if (result.success) {
+                        addLog('info', `Saved: ${result.savedPath}`);
+                        setPanels(prev => prev.map(p => {
+                          if (p.id !== panelId) return p;
+                          const updatedHistory = p.imageHistory.map(h =>
+                            h.id === entry.id
+                              ? { ...h, metadata: { ...h.metadata, savedPath: result.savedPath } }
+                              : h
+                          );
+                          return { ...p, imageHistory: updatedHistory };
+                        }));
+                      } else {
+                        addLog('error', `Auto-save failed for v${version}: ${result.error}`);
+                      }
+                    }
+                  } catch (err) {
+                    addLog('error', `Auto-save exception: ${err}`);
+                  }
+                })();
+              } else if (currentSettings.autoSave && !currentSettings.path) {
+                addLog('warning', 'Auto-save enabled but no project folder configured');
+              } else if (!currentSettings.autoSave) {
+                addLog('info', 'Auto-save is disabled. Enable it in Project Settings to save images automatically.');
+              }
+              
+              // Calculate generation time
+              const genStartTime = generationStartTimes.current.get(panelId);
+              const genTime = genStartTime ? (Date.now() - genStartTime) / 1000 : undefined;
+              generationStartTimes.current.delete(panelId);
+              
+              // Update state with history entries
+              setPanels(prevPanels => {
+                const currentPanel = prevPanels.find(p => p.id === panelId);
+                const currentHistoryLength = currentPanel?.imageHistory?.length || 0;
+                
+                const historyEntries = allImages.map((url: string, idx: number) => 
+                  projectManager.createHistoryEntry(
+                    url, panelId, currentHistoryLength + idx + 1,
+                    currentPanel?.workflowId || '', 'Unknown', {}, 
+                    currentPanel?.parameterValues || {}, genTime
+                  )
+                );
+                
+                return prevPanels.map(p => {
+                  if (p.id !== panelId) return p;
+                  const newHistory = [...p.imageHistory, ...historyEntries];
+                  return {
+                    ...p,
+                    status: 'complete' as const,
+                    progress: 100,
+                    image: allImages[allImages.length - 1],
+                    images: allImages,
+                    currentImageIndex: 0,
+                    imageHistory: newHistory,
+                    historyIndex: newHistory.length - 1,
+                  };
+                });
+              });
+              return;
             }
           }
         }
@@ -2632,6 +2719,13 @@ export function StoryboardUI() {
       async (_promptId, _outputs) => {
         addLog('comfyui', `Generation complete for panel ${panelId}`);
         
+        // CRITICAL FIX: Read project settings directly from the singleton to avoid
+        // stale closure issues. The React state `projectSettings` captured in this
+        // useCallback closure can be stale because `panels` changes frequently
+        // (every progress update), but already-registered WebSocket callbacks
+        // still hold the old closure values.
+        const currentSettings = projectManager.getProject();
+        
         // SKIP if this panel has parallel jobs - they're handled by saveIndividualParallelResult
         const panel = panels.find(p => p.id === panelId);
         if (panel?.parallelJobs && panel.parallelJobs.length > 0) {
@@ -2682,8 +2776,9 @@ export function StoryboardUI() {
                 addLog('comfyui', `Total: ${allImages.length} images from ${Object.keys(nodeOutputMap).length} output node(s)`);
                 
                  // Auto-save if enabled - scan filesystem for correct version number
-                 if (projectSettings.autoSave && projectSettings.path) {
-                   addLog('info', `Auto-saving ${allImages.length} image(s) to ${projectSettings.path}...`);
+                 // Uses currentSettings from singleton (not stale closure)
+                 if (currentSettings.autoSave && currentSettings.path) {
+                   addLog('info', `Auto-saving ${allImages.length} image(s) to ${currentSettings.path}...`);
                    
                    // Calculate generation time
                    const startTime = generationStartTimes.current.get(panelId);
@@ -2748,10 +2843,11 @@ export function StoryboardUI() {
                        addLog('error', `Auto-save exception: ${err}`);
                      }
                    })();
-                  }
-                 } else if (projectSettings.autoSave && !projectSettings.path) {
-                  addLog('warning', 'Auto-save enabled but no project folder configured');
-                }
+                 } else if (currentSettings.autoSave && !currentSettings.path) {
+                   addLog('warning', 'Auto-save enabled but no project folder configured');
+                 } else if (!currentSettings.autoSave) {
+                   addLog('info', 'Auto-save is disabled. Enable it in Project Settings to save images automatically.');
+                 }
                 
                 // Calculate generation time BEFORE setPanels (refs shouldn't be read inside setState)
                 const genStartTime = generationStartTimes.current.get(panelId);
@@ -2815,7 +2911,7 @@ export function StoryboardUI() {
         ));
       }
     );
-  }, [addLog, showError, pollForResult, projectSettings, panels]);
+  }, [addLog, showError, pollForResult, panels]);
   
   // ---------------------------------------------------------------------------
   // Functions - Parallel Job Tracking (fixes race condition)
@@ -2909,7 +3005,9 @@ export function StoryboardUI() {
       addLog('info', `✓ Result from ${job.nodeName} saved to history (v${nextVersion})`);
 
       // Auto-save to filesystem if enabled
-      if (projectSettings.autoSave && projectSettings.path) {
+      // Read from singleton to avoid stale closure issues
+      const currentSettings = projectManager.getProject();
+      if (currentSettings.autoSave && currentSettings.path) {
         addLog('info', `Auto-saving ${job.nodeName} result to folder...`);
 
         const result = await projectManager.saveToProjectFolder(
@@ -2936,13 +3034,15 @@ export function StoryboardUI() {
         } else {
           addLog('error', `✗ Save failed for ${job.nodeName}: ${result.error}`);
         }
+      } else if (currentSettings.autoSave && !currentSettings.path) {
+        addLog('warning', 'Auto-save enabled but no project folder configured');
       }
     } catch (err) {
       console.error(`[Parallel] Failed to save result from ${job.nodeName}:`, err);
       addLog('error', `Failed to save result from ${job.nodeName}: ${err}`);
       // Don't throw - let other jobs continue
     }
-  }, [panels, projectSettings, workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
+  }, [panels, workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
 
   /**
    * Track a parallel job via WebSocket - updates individual job progress
