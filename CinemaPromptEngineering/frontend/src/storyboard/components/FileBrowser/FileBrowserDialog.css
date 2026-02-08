@@ -699,6 +699,34 @@
   gap: 4px;
 }
 
+/* Selected path display for select-folder mode */
+.file-browser-selected-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--sb-text-secondary);
+  overflow: hidden;
+}
+
+.selected-path-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--sb-text-muted);
+}
+
+.selected-path-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sb-accent-primary, #d4a855);
+  font-family: monospace;
+  font-size: 11px;
+}
+
 .file-browser-actions button {
   padding: 5px 12px;
   border-radius: 4px;

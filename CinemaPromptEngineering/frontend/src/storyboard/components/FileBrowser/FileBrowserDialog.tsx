@@ -18,12 +18,14 @@ import './FileBrowserDialog.css';
 export interface FileBrowserDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  mode: 'open' | 'save';
+  mode: 'open' | 'save' | 'select-folder';
   orchestratorUrl: string;
   initialPath?: string;
   projectName?: string; // For save mode - default filename
+  title?: string; // Custom dialog title (used in select-folder mode)
   onOpenProject: (projectPath: string) => void;
   onSaveProject?: (folderPath: string, projectName: string) => void;
+  onSelectFolder?: (folderPath: string) => void; // For select-folder mode
 }
 
 // ============================================================================
@@ -37,8 +39,10 @@ export function FileBrowserDialog({
   orchestratorUrl,
   initialPath = '',
   projectName: defaultProjectName = '',
+  title,
   onOpenProject,
   onSaveProject,
+  onSelectFolder,
 }: FileBrowserDialogProps) {
   // -------------------------------------------------------------------------
   // State
@@ -87,7 +91,9 @@ export function FileBrowserDialog({
       // Enter - Open/Confirm
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (mode === 'open' && state.selectedItem?.type === 'project') {
+        if (mode === 'select-folder' && state.currentPath) {
+          handlePrimaryAction();
+        } else if (mode === 'open' && state.selectedItem?.type === 'project') {
           handlePrimaryAction();
         } else if (mode === 'save' && saveFileName.trim()) {
           handlePrimaryAction();
@@ -146,7 +152,20 @@ export function FileBrowserDialog({
   );
 
   const handlePrimaryAction = () => {
-    if (mode === 'open') {
+    if (mode === 'select-folder') {
+      // Select the currently selected folder item, or the current path
+      const folderPath = (state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
+        ? state.selectedItem.path
+        : state.currentPath;
+      if (!folderPath) {
+        setError('Please select a folder');
+        return;
+      }
+      if (onSelectFolder) {
+        onSelectFolder(folderPath);
+      }
+      onClose();
+    } else if (mode === 'open') {
       if (state.selectedItem?.type === 'project') {
         onOpenProject(state.selectedItem.path);
       } else if (state.selectedItem?.type === 'folder') {
@@ -209,23 +228,34 @@ export function FileBrowserDialog({
   // -------------------------------------------------------------------------
 
   const getDialogTitle = () => {
+    if (mode === 'select-folder') {
+      return (
+        <>
+          <FolderOpen size={18} />
+          <span>{title || 'Select Folder'}</span>
+        </>
+      );
+    }
     if (mode === 'open') {
       return (
         <>
           <FolderOpen size={18} />
-          <span>Load Project</span>
+          <span>{title || 'Load Project'}</span>
         </>
       );
     }
     return (
       <>
         <Save size={18} />
-        <span>Save Project As</span>
+        <span>{title || 'Save Project As'}</span>
       </>
     );
   };
 
   const getPrimaryButtonText = () => {
+    if (mode === 'select-folder') {
+      return 'Select Folder';
+    }
     if (mode === 'open') {
       return state.selectedItem?.type === 'project' ? 'Open Project' : 'Select Folder';
     }
@@ -233,6 +263,11 @@ export function FileBrowserDialog({
   };
 
   const isPrimaryButtonDisabled = () => {
+    if (mode === 'select-folder') {
+      // Allow selecting the current path or a selected folder item
+      const hasFolder = (state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive') || !!state.currentPath;
+      return !hasFolder;
+    }
     if (mode === 'open') {
       return state.selectedItem?.type !== 'project' && state.selectedItem?.type !== 'folder';
     }
@@ -356,6 +391,21 @@ export function FileBrowserDialog({
             <FolderPlus size={16} />
             <span>New Folder</span>
           </button>
+
+          {mode === 'select-folder' && state.currentPath && (
+            <div className="file-browser-selected-path" title={
+              (state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
+                ? state.selectedItem.path
+                : state.currentPath
+            }>
+              <span className="selected-path-label">Selected:</span>
+              <span className="selected-path-value">
+                {(state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
+                  ? state.selectedItem.path
+                  : state.currentPath}
+              </span>
+            </div>
+          )}
 
           <div className="file-browser-actions">
             <button className="cancel-btn" onClick={onClose}>

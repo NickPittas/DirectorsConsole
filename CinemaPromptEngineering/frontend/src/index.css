@@ -1141,22 +1141,48 @@ input:focus-visible {
   user-select: none;
 }
 
-/* Resize handle */
-.panel-resize-handle {
+/* Resize handle - scoped to .preset-panel to avoid collision with Storyboard panel handles */
+.preset-panel > .panel-resize-handle {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
   width: 12px;
   cursor: ew-resize;
-  background: rgba(255, 255, 255, 0.02);
+  background: transparent;
   z-index: 10;
   transition: background 0.15s ease;
+  /* Reset properties that may leak from DraggablePanel.css / PanelHeader.css */
+  right: auto;
+  height: auto;
+  opacity: 1;
+  border-radius: 0;
 }
 
-.panel-resize-handle:hover,
-.preset-panel.resizing .panel-resize-handle {
+/* Visible thin indicator line on the left edge */
+.preset-panel > .panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 48px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+  transition: all 0.2s ease;
+}
+
+.preset-panel > .panel-resize-handle:hover::after,
+.preset-panel.resizing > .panel-resize-handle::after {
+  height: 100%;
   background: var(--accent-primary);
+  opacity: 0.8;
+}
+
+.preset-panel > .panel-resize-handle:hover,
+.preset-panel.resizing > .panel-resize-handle {
+  background: rgba(var(--accent-primary-rgb, 212, 168, 85), 0.08);
 }
 
 /* Collapse toggle */

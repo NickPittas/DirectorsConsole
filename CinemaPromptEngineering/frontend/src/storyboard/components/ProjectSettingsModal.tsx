@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { FolderOpen, CheckCircle, XCircle } from 'lucide-react';
 import { ProjectSettings, projectManager } from '../services/project-manager';
-import { FolderBrowserModal } from './FolderBrowserModal';
+import { FileBrowserDialog } from './FileBrowser/FileBrowserDialog';
 import './ProjectSettingsModal.css';
 
 interface ProjectSettingsModalProps {
@@ -263,14 +263,19 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
         </div>
       </div>
       
-      {/* Folder Browser Modal */}
-      <FolderBrowserModal
+      {/* Folder Browser Dialog (Tree-based) */}
+      <FileBrowserDialog
         isOpen={showFolderBrowser}
         onClose={() => setShowFolderBrowser(false)}
-        onSelect={(selectedPath) => setPath(selectedPath)}
+        mode="select-folder"
         orchestratorUrl={orchestratorUrl}
         initialPath={path}
         title="Select Output Folder"
+        onOpenProject={() => {}}
+        onSelectFolder={(selectedPath) => {
+          setPath(selectedPath);
+          setShowFolderBrowser(false);
+        }}
       />
     </div>
   );
