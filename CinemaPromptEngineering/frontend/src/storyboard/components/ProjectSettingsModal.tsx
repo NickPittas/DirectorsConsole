@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { FolderOpen, CheckCircle, XCircle } from 'lucide-react';
-import { ProjectSettings, projectManager } from '../services/project-manager';
+import { ProjectSettings, projectManager, getDefaultOrchestratorUrl } from '../services/project-manager';
 import { FileBrowserDialog } from './FileBrowser/FileBrowserDialog';
 import './ProjectSettingsModal.css';
 
@@ -20,7 +20,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
   const [path, setPath] = useState(settings.path);
   const [namingTemplate, setNamingTemplate] = useState(settings.namingTemplate);
   const [autoSave, setAutoSave] = useState(settings.autoSave);
-  const [orchestratorUrl, setOrchestratorUrl] = useState(settings.orchestratorUrl || 'http://localhost:9820');
+  const [orchestratorUrl, setOrchestratorUrl] = useState(settings.orchestratorUrl || getDefaultOrchestratorUrl());
   const [orchestratorStatus, setOrchestratorStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [pathValidation, setPathValidation] = useState<{
@@ -37,7 +37,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
       setPath(settings.path);
       setNamingTemplate(settings.namingTemplate);
       setAutoSave(settings.autoSave);
-      setOrchestratorUrl(settings.orchestratorUrl || 'http://localhost:9820');
+      setOrchestratorUrl(settings.orchestratorUrl || getDefaultOrchestratorUrl());
     }
   }, [isOpen, settings]);
   

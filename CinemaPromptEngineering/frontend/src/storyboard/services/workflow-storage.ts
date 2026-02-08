@@ -8,9 +8,6 @@
  * could lose all workflow data on browser cache clear.
  */
 
-// Use same base as api/client.ts
-const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-
 export interface WorkflowStorageInfo {
   storage_path: string;
   workflow_count: number;
@@ -19,7 +16,9 @@ export interface WorkflowStorageInfo {
 }
 
 class WorkflowStorageService {
-  private baseUrl = `${API_BASE}/workflows`;
+  // The workflow storage router is mounted at /api/workflows on the CPE backend.
+  // Use relative path — works in both dev (Vite proxy) and production (same origin).
+  private baseUrl = '/api/workflows';
 
   /**
    * Load all workflows from persistent storage.

@@ -6,13 +6,16 @@ import type {
   JobGroupStatusResponse,
   JobGroupEvent,
 } from '@/types/jobGroup';
+import { projectManager } from '@/storyboard/services/project-manager';
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
-const ORCHESTRATOR_URL =
-  import.meta.env.VITE_ORCHESTRATOR_URL || 'http://localhost:9820';
+/** Get Orchestrator URL dynamically from project settings (never hardcoded). */
+function getOrchestratorUrl(): string {
+  return projectManager.getProject().orchestratorUrl;
+}
 
 // =============================================================================
 // HTTP API Functions
@@ -26,7 +29,7 @@ const ORCHESTRATOR_URL =
 export async function submitJobGroup(
   request: JobGroupRequest
 ): Promise<JobGroupResponse> {
-  const response = await fetch(`${ORCHESTRATOR_URL}/api/job-group`, {
+  const response = await fetch(`${getOrchestratorUrl()}/api/job-group`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
@@ -48,7 +51,7 @@ export async function submitJobGroup(
 export async function getJobGroupStatus(
   groupId: string
 ): Promise<JobGroupStatusResponse> {
-  const response = await fetch(`${ORCHESTRATOR_URL}/api/job-groups/${groupId}`);
+  const response = await fetch(`${getOrchestratorUrl()}/api/job-groups/${groupId}`);
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -66,7 +69,7 @@ export async function getJobGroupStatus(
  * @param groupId - Job group ID to cancel
  */
 export async function cancelJobGroup(groupId: string): Promise<void> {
-  const response = await fetch(`${ORCHESTRATOR_URL}/api/job-groups/${groupId}`, {
+  const response = await fetch(`${getOrchestratorUrl()}/api/job-groups/${groupId}`, {
     method: 'DELETE',
   });
 
@@ -107,7 +110,7 @@ export function createJobGroupWebSocket(
   groupId: string,
   handlers: WebSocketHandlers = {}
 ): WebSocket {
-  const wsUrl = ORCHESTRATOR_URL.replace(/^http/, 'ws');
+  const wsUrl = getOrchestratorUrl().replace(/^http/, 'ws');
   const ws = new WebSocket(`${wsUrl}/ws/job-groups/${groupId}`);
 
   ws.onopen = () => {

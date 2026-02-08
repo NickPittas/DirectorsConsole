@@ -113,12 +113,21 @@ export interface ScanProjectPanelsResponse {
 // {seed} - Generation seed
 // {workflow} - Workflow name
 
+// Dynamic default: derive Orchestrator URL from current hostname.
+// The Orchestrator runs on port 9820 on the same host as the CPE backend.
+export function getDefaultOrchestratorUrl(): string {
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:9820`;
+  }
+  return 'http://localhost:9820';
+}
+
 const DEFAULT_PROJECT: ProjectSettings = {
   name: 'Untitled Project',
   path: '',
   namingTemplate: '{project}_Panel{panel}_{version}',
   autoSave: false,
-  orchestratorUrl: 'http://localhost:9820',
+  orchestratorUrl: getDefaultOrchestratorUrl(),
   created: new Date(),
   lastModified: new Date(),
 };
@@ -1178,7 +1187,7 @@ class ProjectManager {
     error?: string;
   }> {
     // Use orchestratorUrl from project settings, fallback to default
-    const orchestratorUrl = this.currentProject.orchestratorUrl || 'http://localhost:9820';
+    const orchestratorUrl = this.currentProject.orchestratorUrl || getDefaultOrchestratorUrl();
     
     console.log('[ProjectManager] deleteImage called with path:', imagePath);
     console.log('[ProjectManager] Using orchestratorUrl:', orchestratorUrl);

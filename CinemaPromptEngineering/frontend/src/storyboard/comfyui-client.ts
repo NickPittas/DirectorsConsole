@@ -117,7 +117,7 @@ export class ComfyUIClient {
     this.timeout = config.timeout ?? 300000; // 5 minutes default
     this.maxRetries = config.maxRetries ?? 3;
     this.useOrchestrator = config.useOrchestrator ?? false;
-    this.orchestratorUrl = config.orchestratorUrl ?? 'http://localhost:9820';
+    this.orchestratorUrl = config.orchestratorUrl ?? `${window.location.protocol}//${window.location.hostname}:9820`;
     this.clientId = this.generateClientId();
   }
 
@@ -594,7 +594,7 @@ export class ComfyUIClient {
 
 export function createComfyUIClient(config: Partial<ComfyUIConfig> = {}): ComfyUIClient {
   return new ComfyUIClient({
-    serverUrl: config.serverUrl ?? 'http://localhost:8188',
+    serverUrl: config.serverUrl ?? `${window.location.protocol}//${window.location.hostname}:8188`,
     timeout: config.timeout,
     maxRetries: config.maxRetries,
     useOrchestrator: config.useOrchestrator,

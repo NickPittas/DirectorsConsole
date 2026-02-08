@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, ComfyUIWebSocket } from './services/comfyui-websocket';
-import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings } from './services/project-manager';
+import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { FileBrowserDialog } from './components/FileBrowser';
@@ -353,7 +353,7 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   // State - Connection
   // ---------------------------------------------------------------------------
-  const [comfyUrl, setComfyUrl] = useState('http://localhost:8188');
+  const [comfyUrl, setComfyUrl] = useState(`${window.location.protocol}//${window.location.hostname}:8188`);
   const [connectionStatus, _setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [systemStats, _setSystemStats] = useState<any>(null);
   
@@ -1143,7 +1143,7 @@ export function StoryboardUI() {
     const fetchPngMetadata = async () => {
       setIsLoadingPngMetadata(true);
       try {
-        const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
+        const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
         const response = await fetch(
           `${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(imagePath)}`
         );
@@ -1330,7 +1330,7 @@ export function StoryboardUI() {
     }
     
     try {
-      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:9800';
+      const apiBase = '';
       const response = await fetch(`${apiBase}/api/open-explorer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2892,6 +2892,7 @@ export function StoryboardUI() {
                 return;
               }
             }
+          }
         } catch (error) {
           addLog('error', `Error fetching result: ${error}`);
         }
@@ -3494,7 +3495,7 @@ export function StoryboardUI() {
 
       // Build panels from scanned folders
       // Each folder becomes a panel, named after the folder
-      const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
+      const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
       const restoredPanels: Panel[] = [];
       let panelId = 1;
 
@@ -4661,7 +4662,7 @@ export function StoryboardUI() {
                           }
                           
                           try {
-                            const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
+                            const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
                             const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
                             const pngMeta = await response.json();
                             
@@ -5474,7 +5475,7 @@ export function StoryboardUI() {
                   // Create a new panel
                   const newPanelId = Math.max(...panels.map(p => p.id), 0) + 1;
                   const panelName = `Panel_${String(newPanelId).padStart(2, '0')}`;
-                  const orchestratorUrl = projectSettings.orchestratorUrl || 'http://localhost:9820';
+                  const orchestratorUrl = projectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
                   
                   // First scan the folder for images
                   try {
@@ -5680,7 +5681,7 @@ export function StoryboardUI() {
               }
               
               try {
-                const orchestratorUrl = projectManager.getProject().orchestratorUrl || 'http://localhost:9820';
+                const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
                 const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
                 const pngMeta = await response.json();
                 

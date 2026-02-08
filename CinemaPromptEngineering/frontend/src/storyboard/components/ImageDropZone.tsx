@@ -279,7 +279,7 @@ export function ImageDropZone({
     // Try to parse as JSON (from canvas drag with url + filePath)
     try {
       const parsed = JSON.parse(droppedData);
-      const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:9800';
+      const apiBase = '';
       
       // Case 1: Has URL - try direct fetch first, fallback to CPE proxy if CORS fails
       if (parsed.url && typeof parsed.url === 'string') {
