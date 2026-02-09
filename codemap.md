@@ -1125,11 +1125,30 @@ interface Panel {
   height: number;               // Panel height (resizable)
   image: string | null;         // Current displayed image
   images: string[];             // All panel images
-  imageHistory: ImageHistoryEntry[];
+  imageHistory: ImageHistoryEntry[];  // Images AND videos
   status: 'empty' | 'generating' | 'complete' | 'error';
+  progress: number;             // 0-100 progress percentage
+  progressPhase?: string;       // e.g., "Phase 1/2" for multi-KSampler
+  progressNodeName?: string;    // Currently executing node type (e.g., "KSampler")
+  progressNodesExecuted?: number; // How many workflow nodes have completed
+  progressTotalNodes?: number;  // Total number of workflow nodes
   notes?: string;               // Markdown notes
   workflowId?: string;
   parameterValues: Record<string, any>;
+  parallelJobs?: Array<{        // Per-render-node tracking
+    nodeId: string;             // ComfyUI backend ID
+    nodeName: string;           // Human-readable render node name
+    promptId: string;           // ComfyUI prompt ID
+    seed: number;
+    progress: number;           // 0-100
+    status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled';
+    resultUrl?: string;
+    stuckSince?: number;        // Timestamp when detected as stuck
+    currentNodeName?: string;   // ComfyUI class_type being executed
+    progressPhase?: string;     // e.g., "Phase 1/2"
+    nodesExecuted?: number;     // Workflow step counter
+    totalNodes?: number;        // Total workflow node count
+  }>;
 }
 ```
 
@@ -1186,6 +1205,34 @@ interface PanelHeaderProps {
 - Page settings: A4/Letter, Portrait/Landscape
 - Preview of panels to be printed
 - Uses `window.print()` with `@media print` CSS
+
+#### GenerationProgress.tsx
+**Location**: `CinemaPromptEngineering/frontend/src/storyboard/components/GenerationProgress.tsx`
+
+**Purpose**: Sidebar component showing detailed per-node generation progress, replacing the old overlay-on-panel approach.
+
+**Props**:
+```typescript
+interface GenerationProgressProps {
+  panels: Panel[];                                    // All panels (filters to generating)
+  onCancelSingle?: (panelId: number) => void;        // Cancel single-node generation
+  onCancelParallelJob?: (panelId: number, nodeId: string) => void; // Cancel parallel job
+}
+```
+
+**Features**:
+- Groups progress by panel, then by render node
+- Shows per-node workflow stage (e.g., "CheckpointLoaderSimple", "KSampler", "VAEDecode")
+- Displays multi-KSampler phases (e.g., "Phase 1/2")
+- Step counter: "Step 5/14" showing workflow execution progress
+- Progress bars per job with color-coded status
+- Cancel buttons for individual jobs
+- Auto-hides when no generations are active
+
+**Internal Components**:
+- `JobRow`: Renders a single progress row with node name, stage text, progress bar
+  - Combines phase + currentNode + nodeCounter into descriptive line
+  - Example: "Phase 1/2 · KSampler · Step 5/14"
 
 ### 8.4 Drag and Move System
 
@@ -1287,6 +1334,102 @@ const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
 
 **Backend**:
 - `Orchestrator/orchestrator/api/server.py`: Panel folder scanning (by name not ID), version extraction
+
+### 8.11 Video Generation Pipeline
+
+**File**: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-client.ts`
+
+**Video Output Retrieval**:
+```typescript
+extractMediaOutputs(historyOutput: Record<string, any>): MediaOutput[]
+// Checks output.images, output.gifs, output.videos keys from ComfyUI history
+// Returns unified array of {filename, subfolder, type} entries
+
+isVideoUrl(url: string): boolean
+// Checks filename param, direct URL extension, and path query parameter
+// Detects: .mp4, .mov, .avi, .webm, .mkv, .gif
+
+detectMediaType(url: string): 'image' | 'video' | 'animated'
+// Returns media type based on file extension
+```
+
+**Dynamic File Extension** (`project-manager.ts`):
+```typescript
+getExtensionFromUrl(url: string): string
+// Extracts extension from ComfyUI URL filename param
+// Used instead of hardcoded .png to save videos correctly
+```
+
+**Backend Video Support** (`server.py`):
+- `scan_project_panels`: Extensions `{'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.avi', '.webm', '.mkv'}`
+- `scan_folder_images`: Same extended set
+- `scan_project_images`: Same extended set
+- `serve_image`: Maps `.mp4→video/mp4`, `.mov→video/quicktime`, `.avi→video/x-msvideo`, `.webm→video/webm`, `.mkv→video/x-matroska`
+
+### 8.12 WebSocket Progress Architecture
+
+**File**: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-websocket.ts`
+
+**Key Interfaces**:
+```typescript
+interface ProgressData {
+  value: number;             // Current step within sampler
+  max: number;               // Total steps in sampler
+  promptId: string;
+  nodeId?: string;
+  overallPercent?: number;   // Combined multi-phase progress (0-100)
+  currentPhase?: number;     // Current sampler phase (1-indexed)
+  totalPhases?: number;      // Total sampler phases in workflow
+  currentNodeName?: string;  // ComfyUI class_type (e.g., "KSampler", "VAEDecode")
+  nodesExecuted?: number;    // Workflow nodes completed so far
+  totalNodes?: number;       // Total workflow node count
+}
+
+interface WorkflowProgressInfo {
+  totalNodes: number;        // Total nodes in workflow JSON
+  samplerNodeIds: string[];  // Node IDs of KSampler/SamplerCustom nodes
+  nodeTypes: Record<string, string>; // Maps every node ID → class_type string
+}
+```
+
+**Multi-Phase Progress Tracking**:
+```
+handleProgress(data):
+  1. Build PendingPrompt with executionState tracking 
+  2. Count completed sampler phases from executionState.completedSamplerPhases
+  3. Calculate accumulated progress: overallPercent = ((completedPhases × steps) + currentStep) / (totalPhases × steps) × 100
+  4. Send ProgressData with overallPercent, currentPhase, totalPhases, currentNodeName
+
+handleExecuting(data):
+  1. Fires for each workflow node start (node ID) and completion (null)
+  2. Tracks executedNodes count → nodesExecuted
+  3. Sends currentNodeName from wfInfo.nodeTypes[node]
+  4. When node === null → execution complete → call completion callback
+```
+
+**Stage Tracking Data Flow** (Single-Node):
+```
+ComfyUI WebSocket → handleProgress/handleExecuting
+  → ProgressData { currentNodeName, progressPhase, nodesExecuted, totalNodes }
+  → trackWithWebSocket callback in StoryboardUI.tsx
+  → Panel state { progressNodeName, progressPhase, progressNodesExecuted, progressTotalNodes }
+  → GenerationProgress.tsx sidebar display
+```
+
+**Stage Tracking Data Flow** (Parallel Jobs):
+```
+ComfyUI WebSocket → handleProgress/handleExecuting
+  → ProgressData { currentNodeName, progressPhase, nodesExecuted, totalNodes }
+  → trackParallelJobWithWebSocket callback in StoryboardUI.tsx
+  → parallelJobs[i] { currentNodeName, progressPhase, nodesExecuted, totalNodes }
+  → GenerationProgress.tsx sidebar display (per-node rows)
+```
+
+**`buildWorkflowProgressInfo()`** (StoryboardUI.tsx):
+- Scans workflow JSON before submission
+- Maps ALL node IDs to their `class_type` strings
+- Identifies sampler nodes (KSampler, SamplerCustom, etc.)
+- Passed to `trackPrompt()` for rich progress reporting
 
 ---
 
@@ -1490,4 +1633,4 @@ orchestrator/api/server.py  ← ACTUAL CODE LOCATION
 ---
 
 *End of Code Map - Director's Console Project Eliot*
-*Last Updated: January 30, 2026 - Project Settings & Architecture Fixes*
+*Last Updated: February 9, 2026 - Video pipeline, progress sidebar, per-node stage tracking*
