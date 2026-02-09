@@ -3525,8 +3525,43 @@ export function StoryboardUI() {
       // Each folder becomes a panel, named after the folder
       const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
       const restoredPanels: Panel[] = [];
-      let panelId = 1;
+      const usedIds = new Set<number>();
 
+      // Helper to get next unique ID
+      const getNextUniqueId = (): number => {
+        let nextId = 1;
+        while (usedIds.has(nextId)) nextId++;
+        usedIds.add(nextId);
+        return nextId;
+      };
+
+      // STEP 1: Match scanned folders to saved panels by name
+      const savedPanels = result.state.panels as Panel[];
+      const matchedSavedNames = new Set<string>();
+      const matchedFolderNames = new Set<string>();
+
+      // First pass: exact name matches
+      for (const panelFolder of scanResult.panels) {
+        const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name);
+        if (savedPanel && savedPanel.name) {
+          matchedSavedNames.add(savedPanel.name);
+          matchedFolderNames.add(panelFolder.panel_name);
+        }
+      }
+
+      // STEP 2: For unmatched folders and unmatched saved panels, pair by sorted order
+      // This handles the rename case: if you renamed "Panel_01" to "Hero_Shot",
+      // the unmatched saved "Panel_01" gets paired with unmatched folder "Hero_Shot"
+      const unmatchedFolders = scanResult.panels.filter(pf => !matchedFolderNames.has(pf.panel_name));
+      const unmatchedSaved = savedPanels.filter(p => !matchedSavedNames.has(p.name ?? ''));
+      const fallbackPairs = new Map<string, Panel>(); // folder name -> saved panel
+      for (let i = 0; i < unmatchedFolders.length && i < unmatchedSaved.length; i++) {
+        fallbackPairs.set(unmatchedFolders[i].panel_name, unmatchedSaved[i]);
+        matchedSavedNames.add(unmatchedSaved[i].name ?? ''); // Mark as consumed
+        console.log(`[Load] Paired renamed folder "${unmatchedFolders[i].panel_name}" with saved panel "${unmatchedSaved[i].name}"`);
+      }
+
+      // STEP 3: Build panels from scanned folders
       for (const panelFolder of scanResult.panels) {
         // Filter out deleted images
         const validImages = panelFolder.images.filter(
@@ -3538,10 +3573,10 @@ export function StoryboardUI() {
           continue;
         }
 
-        // Try to find saved panel data by name
-        const savedPanel = result.state.panels.find(
-          (p: unknown) => (p as Panel).name === panelFolder.panel_name
-        ) as Panel | undefined;
+        // Try to find saved panel data: first by exact name, then by fallback pair
+        const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name)
+          || fallbackPairs.get(panelFolder.panel_name)
+          || undefined;
 
         // DEBUG: Log what we found
         console.log('[Load] Panel folder:', panelFolder.panel_name, 'Saved panel found:', savedPanel ? {
@@ -3549,7 +3584,6 @@ export function StoryboardUI() {
           notes: savedPanel.notes,
           imageRatings: (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings,
         } : 'NOT FOUND');
-        console.log('[Load] All saved panels:', result.state.panels.map((p: unknown) => (p as Panel).name));
 
         // Get saved image ratings for this panel
         const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
@@ -3573,14 +3607,21 @@ export function StoryboardUI() {
           } as ImageMetadata
         }));
 
-        // Use saved panel ID if available, otherwise use next available ID
-        const usePanelId = savedPanel?.id ?? panelId;
+        // Use saved panel ID if available and not already taken, otherwise assign unique
+        let usePanelId: number;
+        if (savedPanel?.id && !usedIds.has(savedPanel.id)) {
+          usePanelId = savedPanel.id;
+          usedIds.add(usePanelId);
+        } else {
+          usePanelId = getNextUniqueId();
+        }
 
+        const panelIndex = restoredPanels.length;
         restoredPanels.push({
           id: usePanelId,
           name: panelFolder.panel_name,
-          x: savedPanel?.x ?? calculateNewPanelX(panelId, panelId),
-          y: savedPanel?.y ?? calculateNewPanelY(panelId, panelId),
+          x: savedPanel?.x ?? calculateNewPanelX(panelIndex + 1, panelIndex + 1),
+          y: savedPanel?.y ?? calculateNewPanelY(panelIndex + 1, panelIndex + 1),
           width: savedPanel?.width ?? 300,
           height: savedPanel?.height ?? 300,
           notes: savedPanel?.notes ?? '',
@@ -3597,17 +3638,23 @@ export function StoryboardUI() {
           locked: savedPanel?.locked ?? false,
           selected: false,
         });
-
-        panelId++;
       }
 
-      // Also restore any saved panels that don't have folders (empty panels)
-      for (const savedPanel of result.state.panels as Panel[]) {
-        const hasFolder = scanResult.panels.some(pf => pf.panel_name === savedPanel.name);
-        if (!hasFolder && savedPanel.name) {
+      // STEP 4: Restore saved panels that have no folder AND weren't paired with renamed folders
+      for (const savedPanel of savedPanels) {
+        if (!savedPanel.name) continue;
+        if (matchedSavedNames.has(savedPanel.name)) continue; // Already matched or paired
           // Panel exists in save file but has no folder - restore it empty
+          // Use saved ID if not already taken, otherwise assign unique
+          let emptyPanelId: number;
+          if (savedPanel.id && !usedIds.has(savedPanel.id)) {
+            emptyPanelId = savedPanel.id;
+            usedIds.add(emptyPanelId);
+          } else {
+            emptyPanelId = getNextUniqueId();
+          }
           restoredPanels.push({
-            id: savedPanel.id,
+            id: emptyPanelId,
             name: savedPanel.name,
             x: savedPanel.x,
             y: savedPanel.y,
@@ -3627,7 +3674,6 @@ export function StoryboardUI() {
             locked: false,
             selected: false,
           });
-        }
       }
 
       // Sort panels by ID for consistent ordering
@@ -3712,17 +3758,166 @@ export function StoryboardUI() {
     const result = await projectManager.loadProjectState(projectPath);
     
     if (result.success && result.state) {
-      // Restore panels with all their history, but reset generation state
-      const restoredPanels = (result.state.panels as typeof panels).map(panel => {
-        const newStatus = panel.image ? 'complete' : 'empty';
-        return {
-          ...panel,
-          status: newStatus as 'empty' | 'complete',
-          progress: panel.image ? 100 : 0,
-          parallelJobs: undefined,
+      // Get deleted images from saved state
+      const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
+      setDeletedImages(savedDeletedImages);
+      
+      // Scan the filesystem for current folder/image state
+      // This handles renamed folders and images since the project was last saved
+      const scanResult = await projectManager.scanProjectPanels();
+      
+      if (scanResult.success && scanResult.panels.length > 0) {
+        // Re-initialize panels from filesystem scan, merging saved metadata
+        const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+        const restoredPanels: Panel[] = [];
+        const usedIds = new Set<number>();
+        
+        const getNextUniqueId = (): number => {
+          let nextId = 1;
+          while (usedIds.has(nextId)) nextId++;
+          usedIds.add(nextId);
+          return nextId;
         };
-      });
-      setPanels(restoredPanels);
+        
+        // Match scanned folders to saved panels by name, then pair unmatched by order
+        const savedPanels2 = result.state.panels as Panel[];
+        const matchedSavedNames2 = new Set<string>();
+        const matchedFolderNames2 = new Set<string>();
+        
+        for (const pf of scanResult.panels) {
+          const sp = savedPanels2.find(p => p.name === pf.panel_name);
+          if (sp && sp.name) { matchedSavedNames2.add(sp.name); matchedFolderNames2.add(pf.panel_name); }
+        }
+        
+        const unmatchedFolders2 = scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name));
+        const unmatchedSaved2 = savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? ''));
+        const fallbackPairs2 = new Map<string, Panel>();
+        for (let i = 0; i < unmatchedFolders2.length && i < unmatchedSaved2.length; i++) {
+          fallbackPairs2.set(unmatchedFolders2[i].panel_name, unmatchedSaved2[i]);
+          matchedSavedNames2.add(unmatchedSaved2[i].name ?? '');
+        }
+        
+        for (const panelFolder of scanResult.panels) {
+          const validImages = panelFolder.images.filter(
+            img => !savedDeletedImages.has(img.image_path)
+          );
+          
+          if (validImages.length === 0) continue;
+          
+          // Try to match by folder name, then fallback pair
+          const savedPanel = savedPanels2.find(p => p.name === panelFolder.panel_name)
+            || fallbackPairs2.get(panelFolder.panel_name)
+            || undefined;
+          
+          const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
+
+          const imageHistory: ImageHistoryEntry[] = validImages.map((img, index) => ({
+            id: `${panelFolder.panel_name}_v${index + 1}`,
+            url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
+            metadata: {
+              timestamp: new Date(img.modified_time * 1000),
+              workflowId: '',
+              workflowName: 'Loaded',
+              seed: 0,
+              promptSummary: '',
+              parameters: {},
+              workflow: {},
+              sourceUrl: '',
+              savedPath: img.image_path,
+              version: index + 1,
+              rating: savedImageRatings[img.image_path],
+            } as ImageMetadata
+          }));
+          
+          let usePanelId: number;
+          if (savedPanel?.id && !usedIds.has(savedPanel.id)) {
+            usePanelId = savedPanel.id;
+            usedIds.add(usePanelId);
+          } else {
+            usePanelId = getNextUniqueId();
+          }
+          
+          const panelIndex = restoredPanels.length;
+          restoredPanels.push({
+            id: usePanelId,
+            name: panelFolder.panel_name,
+            x: savedPanel?.x ?? calculateNewPanelX(panelIndex + 1, panelIndex + 1),
+            y: savedPanel?.y ?? calculateNewPanelY(panelIndex + 1, panelIndex + 1),
+            width: savedPanel?.width ?? 300,
+            height: savedPanel?.height ?? 300,
+            notes: savedPanel?.notes ?? '',
+            workflowId: savedPanel?.workflowId,
+            parameterValues: savedPanel?.parameterValues,
+            nodeId: savedPanel?.nodeId,
+            imageHistory,
+            historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
+            image: imageHistory.length > 0 ? imageHistory[imageHistory.length - 1]?.url ?? null : null,
+            images: [],
+            currentImageIndex: 0,
+            status: imageHistory.length > 0 ? 'complete' : 'empty',
+            progress: imageHistory.length > 0 ? 100 : 0,
+            locked: savedPanel?.locked ?? false,
+            selected: false,
+          });
+        }
+        
+        // Restore saved panels that have no folder AND weren't paired
+        for (const savedPanel of savedPanels2) {
+          if (!savedPanel.name) continue;
+          if (matchedSavedNames2.has(savedPanel.name)) continue;
+            let emptyPanelId: number;
+            if (savedPanel.id && !usedIds.has(savedPanel.id)) {
+              emptyPanelId = savedPanel.id;
+              usedIds.add(emptyPanelId);
+            } else {
+              emptyPanelId = getNextUniqueId();
+            }
+            restoredPanels.push({
+              id: emptyPanelId,
+              name: savedPanel.name,
+              x: savedPanel.x,
+              y: savedPanel.y,
+              width: savedPanel.width ?? 300,
+              height: savedPanel.height ?? 300,
+              notes: savedPanel.notes ?? '',
+              workflowId: savedPanel.workflowId,
+              parameterValues: savedPanel.parameterValues,
+              nodeId: savedPanel.nodeId,
+              imageHistory: [],
+              historyIndex: -1,
+              image: null,
+              images: [],
+              currentImageIndex: 0,
+              status: 'empty',
+              progress: 0,
+              locked: false,
+              selected: false,
+            });
+        }
+        
+        restoredPanels.sort((a, b) => a.id - b.id);
+        setPanels(restoredPanels);
+      } else {
+        // Fallback: no scan results, restore from save file with deduplicated IDs
+        const usedIds = new Set<number>();
+        const restoredPanels = (result.state.panels as typeof panels).map(panel => {
+          let panelId = panel.id;
+          if (usedIds.has(panelId)) {
+            panelId = 1;
+            while (usedIds.has(panelId)) panelId++;
+          }
+          usedIds.add(panelId);
+          const newStatus = panel.image ? 'complete' : 'empty';
+          return {
+            ...panel,
+            id: panelId,
+            status: newStatus as 'empty' | 'complete',
+            progress: panel.image ? 100 : 0,
+            parallelJobs: undefined,
+          };
+        });
+        setPanels(restoredPanels);
+      }
       // Workflows are NOT restored from project files — they are managed
       // independently via the persistent workflow storage backend
       // Restore parameter values if available
