@@ -41,6 +41,7 @@ import { PanelNotes } from './components/PanelNotes';
 import { PanelHeader } from './components/PanelHeader';
 import { StarRating } from './components/StarRating';
 import { PrintDialog } from './components/PrintDialog';
+import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
 import { getSelectedLlmSettings, getConfiguredProviders } from '../components/Settings';
 import { api } from '../api/client';
@@ -5346,47 +5347,19 @@ export function StoryboardUI() {
                     </div>
                   )}
                   
-                  {/* Progress indicator with bar for single node generation */}
+                  {/* Minimal generating indicator — thin bottom bar + small badge */}
                   {panel.status === 'generating' && (
-                    <div className="panel-generating-indicator">
-                      <div className="progress-content">
-                        <div className="progress-spinner" />
-                        <div className="progress-text-container">
-                          <span className="progress-percentage">{panel.progress}%</span>
-                          {panel.progressPhase && (
-                            <span className="progress-phase">{panel.progressPhase}</span>
-                          )}
-                          {panel.progressNodeName && !panel.progressPhase && (
-                            <span className="progress-phase">{panel.progressNodeName}</span>
-                          )}
-                          <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar-fill"
-                              style={{ width: `${panel.progress}%` }}
-                            />
-                          </div>
-                        </div>
+                    <div className="panel-generating-mini">
+                      <div className="panel-gen-mini-bar">
+                        <div
+                          className="panel-gen-mini-bar-fill"
+                          style={{ width: `${panel.progress}%` }}
+                        />
                       </div>
-                      <button
-                        className="cancel-generation-btn"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (wsRef.current) {
-                            const success = await wsRef.current.cancelGeneration();
-                            if (success) {
-                              setPanels(prev => prev.map(p =>
-                                p.id === panel.id ? { ...p, status: 'empty', progress: 0, parallelJobs: undefined } : p
-                              ));
-                              showWarning('Generation cancelled');
-                            } else {
-                              showError('Failed to cancel generation');
-                            }
-                          }
-                        }}
-                        title="Cancel generation"
-                      >
-                        ✕
-                      </button>
+                      <span className="panel-gen-mini-badge">
+                        <span className="panel-gen-mini-spinner" />
+                        {panel.progress}%
+                      </span>
                     </div>
                   )}
                   
@@ -5510,6 +5483,35 @@ export function StoryboardUI() {
         {/* Right Sidebar - Stats */}
         <aside className="stats-panel" style={{ width: rightPanelWidth }}>
           <div className="stats-header">System Stats</div>
+          
+          {/* Generation Progress — shows when any panel is generating */}
+          <GenerationProgress
+            panels={panels}
+            onCancelSingle={async (panelId) => {
+              if (wsRef.current) {
+                const success = await wsRef.current.cancelGeneration();
+                if (success) {
+                  setPanels(prev => prev.map(p =>
+                    p.id === panelId ? { ...p, status: 'empty', progress: 0, parallelJobs: undefined } : p
+                  ));
+                  showWarning('Generation cancelled');
+                } else {
+                  showError('Failed to cancel generation');
+                }
+              }
+            }}
+            onCancelParallelJob={async (_panelId, nodeId) => {
+              const node = renderNodes.find(n => n.id === nodeId);
+              if (node) {
+                try {
+                  await fetch(`${node.url}/interrupt`, { method: 'POST' });
+                  showWarning(`Cancelled generation on ${node.name}`);
+                } catch (err) {
+                  showError(`Failed to cancel on ${node.name}: ${err}`);
+                }
+              }
+            }}
+          />
           
           {/* Multi-Node Selector */}
           {renderNodes.length > 0 && (
