@@ -67,12 +67,11 @@ def _add_allowed_host(host: str) -> None:
 
 
 def _is_url_safe(url: str) -> tuple[bool, str]:
-    """Validate URL to prevent SSRF attacks.
+    """Validate URL for basic safety.
     
-    Only allows URLs to:
-    - Registered ComfyUI backend hosts
-    - localhost/127.0.0.1
-    - HTTP/HTTPS schemes only
+    This is a local desktop application — users connect to their own
+    ComfyUI render nodes on LAN, VPN (Tailscale), or other networks.
+    We only enforce scheme validation and block cloud metadata endpoints.
     
     Args:
         url: The URL to validate
@@ -91,27 +90,23 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
         if not hostname:
             return False, "URL has no hostname"
         
-        # Check if hostname is in allowlist
+        # Check if hostname is in allowlist (fast path)
         if hostname in _ALLOWED_URL_HOSTS:
             return True, ""
         
         # Check if it's an IP address
         try:
             ip = ipaddress.ip_address(hostname)
-            # Block cloud metadata endpoints (AWS/GCP/Azure)
+            # Block cloud metadata endpoints (AWS/GCP/Azure 169.254.x.x)
             if ip.is_link_local:
                 return False, "Link-local/metadata endpoint blocked"
-            # Allow private/LAN IPs — this is a local desktop tool and
-            # ComfyUI render nodes live on the user's LAN by design.
-            if ip.is_private or ip.is_loopback:
-                return True, ""
+            # Allow ALL other IPs — this is a local desktop tool.
+            # ComfyUI render nodes may be on LAN, Tailscale (CGNAT 100.64.0.0/10),
+            # or any other reachable network.
+            return True, ""
         except ValueError:
-            # Not an IP, it's a hostname - must be in allowlist
+            # Not an IP, it's a hostname — allow it for desktop use
             pass
-        
-        # Final check: non-private hostnames must be in allowlist
-        if hostname not in _ALLOWED_URL_HOSTS:
-            return False, f"Host '{hostname}' not in allowed hosts. Only registered ComfyUI backends are allowed."
         
         return True, ""
         
@@ -252,27 +247,11 @@ app = FastAPI(
 )
 
 # Add CORS middleware for frontend access
-# Security: Restrict to known frontend origins instead of wildcard
-_ALLOWED_ORIGINS = [
-    "http://localhost:3000",      # Vite dev server
-    "http://localhost:5173",      # Vite default port
-    "http://localhost:9800",      # CPE backend (serves frontend)
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:9800",
-    "http://localhost:8188",      # ComfyUI server
-    "http://127.0.0.1:8188",
-]
-
-# Allow additional origins from environment variable (comma-separated)
-_extra_origins = os.getenv("ORCHESTRATOR_CORS_ORIGINS", "")
-if _extra_origins:
-    _ALLOWED_ORIGINS.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
-
+# Desktop app - allow all origins for LAN/VPN/Tailscale access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],
