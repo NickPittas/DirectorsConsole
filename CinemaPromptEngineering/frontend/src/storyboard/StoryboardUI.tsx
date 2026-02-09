@@ -382,10 +382,12 @@ export function StoryboardUI() {
   // Refs to always have access to latest state values in callbacks (avoids stale closures)
   const parameterValuesRef = useRef<Record<string, any>>(parameterValues);
   const selectedPanelIdRef = useRef<number | null>(selectedPanelId);
+  const panelsRef = useRef(panels);
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
+  panelsRef.current = panels;
 
   // Phase 2: Resize handlers
   const handleResizeStart = useCallback((panelId: number, e: React.MouseEvent) => {
@@ -1966,9 +1968,12 @@ export function StoryboardUI() {
         };
       });
       
-      // Initialize atomic version counter for this panel
-      const currentVersion = panel?.imageHistory?.length || 0;
-      nextVersionRef.current.set(panelId, currentVersion + 1);
+      // Initialize atomic version counter for this panel using filesystem scan
+      // This prevents version collisions when multiple parallel jobs save concurrently
+      const panelName = panel?.name || `Panel_${String(panelId).padStart(2, '0')}`;
+      const currentHistory = panel?.imageHistory || [];
+      const startVersion = await projectManager.getNextVersion(panelName, currentHistory);
+      nextVersionRef.current.set(panelId, startVersion);
       
       // Update panel to show it's generating with parallel jobs tracking
       setPanels(prev => prev.map(p =>
@@ -2744,8 +2749,10 @@ export function StoryboardUI() {
         const currentSettings = projectManager.getProject();
         
         // SKIP if this panel has parallel jobs - they're handled by saveIndividualParallelResult
-        const panel = panels.find(p => p.id === panelId);
-        if (panel?.parallelJobs && panel.parallelJobs.length > 0) {
+        // CRITICAL: Use panelsRef.current to avoid stale closure - panels captured in this
+        // callback go stale because it's registered once via ws.trackPrompt and never updated
+        const panelNow = panelsRef.current.find(p => p.id === panelId);
+        if (panelNow?.parallelJobs && panelNow.parallelJobs.length > 0) {
           addLog('comfyui', `Skipping single-node save - panel has parallel jobs, handled by parallel tracker`);
           return;
         }
@@ -2802,8 +2809,8 @@ export function StoryboardUI() {
                    const generationTime = startTime ? (Date.now() - startTime) / 1000 : undefined;
                    
                    // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
-                   // Capture panels state NOW to avoid stale closure
-                   const panelsSnapshot = [...panels];
+                   // Use panelsRef.current to avoid stale closure from WebSocket callback
+                   const panelsSnapshot = [...panelsRef.current];
                    (async () => {
                      try {
                         // Get the panel to determine its current history
@@ -2943,7 +2950,9 @@ export function StoryboardUI() {
     panelId: number,
     job: { nodeId: string; nodeName: string; resultUrl: string; seed: number }
   ) => {
-    const panel = panels.find(p => p.id === panelId);
+    // CRITICAL: Use panelsRef.current to avoid stale closure issues
+    // The panels captured in this closure go stale as parallel jobs complete and update state
+    const panel = panelsRef.current.find(p => p.id === panelId);
     if (!panel || !job.resultUrl) return;
 
     // Prevent duplicate saves for the same job
@@ -2973,11 +2982,12 @@ export function StoryboardUI() {
         seed: job.seed,
       };
 
-      // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
-      // CRITICAL FIX #2: Use panel NAME (not ID) to match folder structure
-      const currentHistory = panel.imageHistory || [];
+      // CRITICAL FIX: Use atomic version counter to prevent version collisions
+      // Multiple parallel jobs completing concurrently would all get the same version
+      // from getNextVersion() because filesystem scan returns same result before any save completes
       const panelName = panel?.name || `Panel_${String(panelId).padStart(2, '0')}`;
-      const nextVersion = await projectManager.getNextVersion(panelName, currentHistory);
+      const nextVersion = nextVersionRef.current.get(panelId) || 1;
+      nextVersionRef.current.set(panelId, nextVersion + 1);
 
       // Create history entry for this single job
       const entry = projectManager.createHistoryEntry(
@@ -3060,12 +3070,13 @@ export function StoryboardUI() {
       addLog('error', `Failed to save result from ${job.nodeName}: ${err}`);
       // Don't throw - let other jobs continue
     }
-  }, [panels, workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
+  }, [workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
 
   /**
    * Track a parallel job via WebSocket - updates individual job progress
    * and batches saves when ALL jobs complete to avoid race conditions
    */
+  // Note: panels removed from deps - uses panelsRef.current instead to avoid stale closures
   const trackParallelJobWithWebSocket = useCallback((
     promptId: string,
     panelId: number,

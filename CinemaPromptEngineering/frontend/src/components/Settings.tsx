@@ -752,7 +752,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   const [pollingError, setPollingError] = useState<string | null>(null);
   
   // Track if current OAuth provider has a built-in client ID
-  const [hasBuiltinClient, setHasBuiltinClient] = useState(false);
+  const [_hasBuiltinClient, setHasBuiltinClient] = useState(false);
 
   // Helper to refresh OAuth tokens for providers that need it
   const refreshExpiredTokens = async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
