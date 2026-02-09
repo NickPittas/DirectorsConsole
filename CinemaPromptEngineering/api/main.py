@@ -2837,10 +2837,16 @@ async def read_image_as_base64(path: str) -> dict[str, Any]:
     def _read_sync():
         image_path = Path(path)
         if not image_path.exists():
-            return (False, f"Image not found: {path}")
+            return (False, f"File not found: {path}")
         suffix = image_path.suffix.lower()
-        mime_types = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif'}
-        mime_type = mime_types.get(suffix, 'image/png')
+        mime_types = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+            '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+            '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.flv': 'video/x-flv',
+            '.wmv': 'video/x-ms-wmv',
+        }
+        mime_type = mime_types.get(suffix, 'application/octet-stream')
         with open(image_path, 'rb') as f:
             image_data = f.read()
         return (True, f"data:{mime_type};base64,{base64.b64encode(image_data).decode('utf-8')}")

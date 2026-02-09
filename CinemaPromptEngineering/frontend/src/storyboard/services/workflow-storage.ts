@@ -24,7 +24,9 @@ class WorkflowStorageService {
    * Load all workflows from persistent storage.
    */
   async loadAll(): Promise<{ workflows: unknown[]; count: number; storage_path: string }> {
-    const response = await fetch(this.baseUrl);
+    const response = await fetch(this.baseUrl, {
+      signal: AbortSignal.timeout(10000),
+    });
     if (!response.ok) {
       throw new Error(`Failed to load workflows: HTTP ${response.status}`);
     }
@@ -61,6 +63,7 @@ class WorkflowStorageService {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflows }),
+      signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));

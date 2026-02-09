@@ -9,6 +9,18 @@ export interface ProgressData {
   max: number;
   promptId: string;
   nodeId?: string;
+  /** Overall progress percentage (0-100) accounting for all sampler phases */
+  overallPercent?: number;
+  /** Current sampler phase index (1-based) */
+  currentPhase?: number;
+  /** Total number of sampler phases in this workflow */
+  totalPhases?: number;
+  /** Name/type of the currently executing node */
+  currentNodeName?: string;
+  /** Total nodes executed so far (including non-sampler nodes) */
+  nodesExecuted?: number;
+  /** Total nodes in workflow */
+  totalNodes?: number;
 }
 
 export interface ExecutionStatus {
@@ -44,12 +56,41 @@ type ErrorCallback = (promptId: string, error: string) => void;
 type StatusCallback = (status: ExecutionStatus) => void;
 type KayToolMetricsCallback = (metrics: KayToolMetrics) => void;
 
+/**
+ * Info about the workflow being executed, used to calculate multi-phase progress.
+ */
+export interface WorkflowProgressInfo {
+  /** Total node count in the workflow */
+  totalNodes: number;
+  /** Node IDs of nodes that report step-by-step progress (KSampler, SamplerCustom, etc.) */
+  samplerNodeIds: string[];
+  /** Map of node ID -> class_type for display purposes */
+  nodeTypes: Record<string, string>;
+}
+
 interface PendingPrompt {
   promptId: string;
   panelId: number;
   onProgress: ProgressCallback;
   onCompleted: CompletedCallback;
   onError: ErrorCallback;
+  /** Workflow info for multi-phase progress tracking */
+  workflowInfo?: WorkflowProgressInfo;
+  /** Execution tracking state */
+  executionState: {
+    /** Node IDs that have started executing (in order) */
+    executedNodes: string[];
+    /** Node IDs of samplers that have completed their progress phase */
+    completedSamplerPhases: string[];
+    /** The sampler node currently reporting progress */
+    currentSamplerNodeId: string | null;
+    /** Accumulated completed steps from previous sampler phases */
+    completedSteps: number;
+    /** Total steps across all sampler phases (sum of all max values seen) */
+    totalStepsEstimate: number;
+    /** Max value of the current sampler phase */
+    currentPhaseMax: number;
+  };
 }
 
 export class ComfyUIWebSocket {
@@ -270,26 +311,70 @@ export class ComfyUIWebSocket {
     const { value, max, prompt_id, node } = data;
     
     console.log('[ComfyUI WS] Progress:', prompt_id, value, '/', max, 'node:', node);
-    console.log('[ComfyUI WS] Pending prompts:', Array.from(this.pendingPrompts.keys()));
     
     const pending = this.pendingPrompts.get(prompt_id);
-    if (pending) {
-      pending.onProgress({
-        value,
-        max,
-        promptId: prompt_id,
-        nodeId: node,
-      });
-    } else {
+    if (!pending) {
       console.warn('[ComfyUI WS] No pending prompt found for:', prompt_id);
+      return;
     }
+
+    const state = pending.executionState;
+    const wfInfo = pending.workflowInfo;
+
+    // Track which sampler is currently reporting progress
+    if (node && node !== state.currentSamplerNodeId) {
+      // A new sampler node started reporting — the previous one is done
+      if (state.currentSamplerNodeId) {
+        state.completedSteps += state.currentPhaseMax;
+        if (!state.completedSamplerPhases.includes(state.currentSamplerNodeId)) {
+          state.completedSamplerPhases.push(state.currentSamplerNodeId);
+        }
+      }
+      state.currentSamplerNodeId = node;
+      state.currentPhaseMax = max;
+    } else if (node && max > state.currentPhaseMax) {
+      // Update max if it increased (shouldn't happen normally, but be safe)
+      state.currentPhaseMax = max;
+    }
+
+    // Calculate overall progress
+    let overallPercent: number;
+    let currentPhase = 1;
+    let totalPhases = 1;
+
+    if (wfInfo && wfInfo.samplerNodeIds.length > 1) {
+      totalPhases = wfInfo.samplerNodeIds.length;
+      currentPhase = state.completedSamplerPhases.length + 1;
+      
+      // Estimate total steps: assume each sampler phase has ~max steps
+      // (they usually have the same step count, but may differ)
+      const estimatedTotalSteps = max * totalPhases;
+      const completedSteps = state.completedSteps + value;
+      overallPercent = Math.round((completedSteps / estimatedTotalSteps) * 100);
+    } else {
+      overallPercent = Math.round((value / max) * 100);
+    }
+
+    const currentNodeName = wfInfo?.nodeTypes[node] || undefined;
+
+    pending.onProgress({
+      value,
+      max,
+      promptId: prompt_id,
+      nodeId: node,
+      overallPercent,
+      currentPhase,
+      totalPhases,
+      currentNodeName,
+      nodesExecuted: state.executedNodes.length,
+      totalNodes: wfInfo?.totalNodes,
+    });
   }
   
   private handleExecuting(data: any) {
     const { prompt_id, node } = data;
     
     console.log('[ComfyUI WS] Executing:', prompt_id, 'node:', node);
-    console.log('[ComfyUI WS] Pending prompts:', Array.from(this.pendingPrompts.keys()));
     
     // When node is null, execution is complete - this is the ONLY place we should trigger completion
     if (node === null) {
@@ -304,6 +389,33 @@ export class ComfyUIWebSocket {
         console.warn('[ComfyUI WS] No pending prompt found for completion:', prompt_id);
       }
     } else {
+      // Track that this node started executing
+      const pending = this.pendingPrompts.get(prompt_id);
+      if (pending) {
+        if (!pending.executionState.executedNodes.includes(node)) {
+          pending.executionState.executedNodes.push(node);
+        }
+        // Send an executing progress update so the UI can show which node is running
+        const wfInfo = pending.workflowInfo;
+        const currentNodeName = wfInfo?.nodeTypes[node] || undefined;
+        // Only send executing update if we have workflow info (for node name display)
+        if (wfInfo) {
+          pending.onProgress({
+            value: 0,
+            max: 1,
+            promptId: prompt_id,
+            nodeId: node,
+            overallPercent: pending.executionState.completedSamplerPhases.length > 0
+              ? Math.round((pending.executionState.completedSamplerPhases.length / wfInfo.samplerNodeIds.length) * 100)
+              : undefined,
+            currentPhase: pending.executionState.completedSamplerPhases.length + 1,
+            totalPhases: wfInfo.samplerNodeIds.length,
+            currentNodeName,
+            nodesExecuted: pending.executionState.executedNodes.length,
+            totalNodes: wfInfo.totalNodes,
+          });
+        }
+      }
       console.log('[ComfyUI WS] Executing node:', node, 'for prompt:', prompt_id);
     }
   }
@@ -336,15 +448,29 @@ export class ComfyUIWebSocket {
     panelId: number,
     onProgress: ProgressCallback,
     onCompleted: CompletedCallback,
-    onError: ErrorCallback
+    onError: ErrorCallback,
+    workflowInfo?: WorkflowProgressInfo
   ) {
     console.log('[ComfyUI WS] Tracking prompt:', promptId, 'for panel:', panelId, 'clientId:', this.clientId);
+    if (workflowInfo) {
+      console.log('[ComfyUI WS] Workflow info:', workflowInfo.totalNodes, 'nodes,', 
+        workflowInfo.samplerNodeIds.length, 'sampler phases:', workflowInfo.samplerNodeIds);
+    }
     this.pendingPrompts.set(promptId, {
       promptId,
       panelId,
       onProgress,
       onCompleted,
       onError,
+      workflowInfo,
+      executionState: {
+        executedNodes: [],
+        completedSamplerPhases: [],
+        currentSamplerNodeId: null,
+        completedSteps: 0,
+        totalStepsEstimate: 0,
+        currentPhaseMax: 0,
+      },
     });
     console.log('[ComfyUI WS] Pending prompts after add:', Array.from(this.pendingPrompts.keys()));
   }
@@ -465,6 +591,19 @@ export function getComfyUIWebSocket(baseUrl: string, clientId?: string): ComfyUI
   }
   
   return instances.get(key)!;
+}
+
+/**
+ * Disconnect and remove a specific WebSocket instance by its key.
+ * Call this after a generation completes to free the connection.
+ */
+export function disconnectWebSocket(baseUrl: string, clientId?: string): void {
+  const key = `${baseUrl}:${clientId || 'storyboard-ui'}`;
+  const ws = instances.get(key);
+  if (ws) {
+    ws.disconnect();
+    instances.delete(key);
+  }
 }
 
 export function disconnectAllWebSockets() {

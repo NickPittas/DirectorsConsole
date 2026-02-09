@@ -769,6 +769,17 @@
   color: var(--sb-accent-primary);
 }
 
+.panel-generating-indicator .progress-phase {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
 .panel-generating-indicator .progress-bar-container {
   width: 80px;
   height: 4px;
@@ -817,6 +828,16 @@
   object-fit: contain;
   cursor: pointer;
   -webkit-user-drag: element;
+  user-select: none;
+}
+
+.panel-image-container video {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  cursor: pointer;
   user-select: none;
 }
 

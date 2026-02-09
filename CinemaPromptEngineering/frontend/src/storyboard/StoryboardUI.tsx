@@ -30,7 +30,8 @@ import {
   Printer
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
-import { getComfyUIWebSocket, ComfyUIWebSocket } from './services/comfyui-websocket';
+import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
+import { extractMediaOutputs, isVideoUrl } from './comfyui-client';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
@@ -100,6 +101,56 @@ function calculateNewPanelY(panelId: number, _existingCount: number): number {
 }
 
 // ============================================================================
+// Workflow Progress Helpers
+// ============================================================================
+
+/**
+ * Known ComfyUI node class_types that report step-by-step progress.
+ * These are KSampler variants and any custom sampler nodes.
+ */
+const SAMPLER_NODE_TYPES = new Set([
+  'KSampler', 'KSamplerAdvanced', 'KSampler (Efficient)',
+  'SamplerCustom', 'SamplerCustomAdvanced',
+  'KSamplerSelect', 'SamplerDPMPP_2M_SDE',
+  // AnimateDiff / video-specific samplers
+  'ADE_AnimateDiffSampler', 'ADE_AnimateDiffSamplerAdvanced',
+  'FreeU_V2', 'SamplerDPMPP_3M_SDE',
+  // WanVideo / Hunyuan samplers
+  'WanSampler', 'HunyuanSampler',
+  // Common custom node samplers
+  'Efficient Loader', // Some efficiency nodes wrap KSampler
+  'ImpactKSamplerBasicPipe', 'ImpactKSamplerAdvancedBasicPipe',
+]);
+
+/**
+ * Build WorkflowProgressInfo from a ComfyUI workflow dict.
+ * Identifies sampler nodes to enable multi-phase progress tracking.
+ */
+function buildWorkflowProgressInfo(workflow: Record<string, any>): WorkflowProgressInfo {
+  const nodeTypes: Record<string, string> = {};
+  const samplerNodeIds: string[] = [];
+
+  for (const [nodeId, node] of Object.entries(workflow)) {
+    if (typeof node !== 'object' || node === null) continue;
+    const classType = node.class_type || '';
+    nodeTypes[nodeId] = classType;
+
+    // Check if this is a sampler/progress-reporting node
+    if (SAMPLER_NODE_TYPES.has(classType) || 
+        classType.toLowerCase().includes('ksampler') ||
+        classType.toLowerCase().includes('sampler')) {
+      samplerNodeIds.push(nodeId);
+    }
+  }
+
+  return {
+    totalNodes: Object.keys(workflow).length,
+    samplerNodeIds,
+    nodeTypes,
+  };
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -149,6 +200,8 @@ export interface Panel {
   height: number;
   status: 'empty' | 'generating' | 'complete' | 'error';
   progress: number;
+  progressPhase?: string; // e.g., "Phase 1/2" or "VAE Decode" for multi-sampler workflows
+  progressNodeName?: string; // Currently executing node type (e.g., "KSampler")
   notes: string;
   nodeId?: string; // Selected render node for this panel
   workflowId?: string; // Per-panel workflow selection
@@ -793,6 +846,25 @@ export function StoryboardUI() {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Effect - Cleanup all WebSockets and polling on unmount / page unload
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      disconnectAllWebSockets();
+      orchestratorManager.stopPolling();
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Also cleanup on React component unmount (HMR, navigation)
+      disconnectAllWebSockets();
+      orchestratorManager.stopPolling();
+    };
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // Effect - Fetch backends from Orchestrator API and start health monitoring
   // ---------------------------------------------------------------------------
   useEffect(() => {
@@ -809,6 +881,10 @@ export function StoryboardUI() {
         nodes.forEach(node => orchestratorManager.pollNode(node));
       }, 100);
     }
+    
+    return () => {
+      orchestratorManager.stopPolling();
+    };
   }, [projectSettings.orchestratorUrl]);
   
   // ---------------------------------------------------------------------------
@@ -1919,6 +1995,12 @@ export function StoryboardUI() {
       console.log('[Parallel] Base workflow built:', JSON.stringify(baseWorkflow, null, 2));
       addLog('info', `Base workflow nodes: ${Object.keys(baseWorkflow).length}`);
       
+      // Build workflow progress info for multi-phase tracking
+      const parallelWfProgressInfo = buildWorkflowProgressInfo(baseWorkflow);
+      if (parallelWfProgressInfo.samplerNodeIds.length > 1) {
+        addLog('info', `Multi-sampler workflow: ${parallelWfProgressInfo.samplerNodeIds.length} sampler phases detected`);
+      }
+      
       // ====================================================================================
       // STEP 2: FOR EACH NODE, CLONE WORKFLOW AND CHANGE ONLY THE SEED
       // ====================================================================================
@@ -2088,7 +2170,7 @@ export function StoryboardUI() {
           
           // Track progress via WebSocket if connected, otherwise poll
           if (nodeWs.connected) {
-            trackParallelJobWithWebSocket(data.prompt_id, panelId, backendId, node.url, nodeWs);
+            trackParallelJobWithWebSocket(data.prompt_id, panelId, backendId, node.url, nodeWs, clientId, parallelWfProgressInfo);
           } else {
             trackParallelJobWithPolling(data.prompt_id, panelId, backendId, node.url);
           }
@@ -2490,9 +2572,15 @@ export function StoryboardUI() {
       const data = await response.json();
       addLog('comfyui', `Queued prompt: ${data.prompt_id} on ${nodeName}`);
       
+      // Build workflow progress info for multi-phase tracking (e.g., 2 KSamplers in video workflows)
+      const wfProgressInfo = buildWorkflowProgressInfo(builtWorkflow);
+      if (wfProgressInfo.samplerNodeIds.length > 1) {
+        addLog('info', `Multi-sampler workflow detected: ${wfProgressInfo.samplerNodeIds.length} sampler phases`);
+      }
+      
       // Track progress via WebSocket if connected, otherwise poll
       if (nodeWs.connected) {
-        trackWithWebSocket(data.prompt_id, panelId, targetUrl, nodeWs);
+        trackWithWebSocket(data.prompt_id, panelId, targetUrl, nodeWs, clientId, wfProgressInfo);
       } else {
         addLog('warning', `WebSocket not connected, falling back to polling`);
         pollForResult(data.prompt_id, panelId, targetUrl);
@@ -2549,20 +2637,18 @@ export function StoryboardUI() {
           if (history[promptId]) {
             const outputs = history[promptId].outputs;
             
-            // Collect ALL output images (matching WebSocket path behavior)
+            // Collect ALL output media (images + videos) matching WebSocket path behavior
             const allImages: string[] = [];
             for (const nodeId in outputs) {
               const nodeOutput = outputs[nodeId];
-              if (nodeOutput.images && nodeOutput.images.length > 0) {
-                for (const img of nodeOutput.images) {
-                  const imageUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
-                  allImages.push(imageUrl);
-                }
+              const mediaOutputs = extractMediaOutputs(nodeOutput, targetUrl);
+              for (const media of mediaOutputs) {
+                allImages.push(media.url);
               }
             }
             
             if (allImages.length > 0) {
-              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} image(s)`);
+              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} output(s)`);
               activePollsRef.current.delete(pollKey);
               
               // Auto-save if enabled - read from singleton to avoid stale closure
@@ -2676,6 +2762,13 @@ export function StoryboardUI() {
                 });
               });
               return;
+            } else if (Object.keys(outputs).length > 0) {
+              // Outputs exist but no media was extracted — log for debugging
+              const outputKeys = Object.keys(outputs).map(nodeId => {
+                const nodeOutput = outputs[nodeId];
+                return `${nodeId}: [${Object.keys(nodeOutput).join(', ')}]`;
+              });
+              addLog('warning', `Generation completed but no media found in outputs. Node output keys: ${outputKeys.join('; ')}`);
             }
           }
         }
@@ -2718,7 +2811,7 @@ export function StoryboardUI() {
   }, [addLog]);
   
   // Track generation progress via WebSocket (real-time)
-  const trackWithWebSocket = useCallback((promptId: string, panelId: number, targetUrl: string, ws?: ComfyUIWebSocket) => {
+  const trackWithWebSocket = useCallback((promptId: string, panelId: number, targetUrl: string, ws?: ComfyUIWebSocket, clientId?: string, workflowInfo?: WorkflowProgressInfo) => {
     const websocket = ws || wsRef.current;
     if (!websocket) {
       // Fallback to polling
@@ -2726,15 +2819,46 @@ export function StoryboardUI() {
       return;
     }
     
+    // Helper to disconnect the per-generation WebSocket after completion
+    const cleanupWs = () => {
+      if (clientId) {
+        // Disconnect and remove this per-generation WebSocket instance
+        disconnectWebSocket(targetUrl, clientId);
+      }
+    };
+    
     websocket.trackPrompt(
       promptId,
       panelId,
       // Progress callback
       (progress) => {
-        const pct = Math.round((progress.value / progress.max) * 100);
-        addLog('info', `Progress: ${pct}% (${progress.value}/${progress.max})`);
+        // Use overall percent when available (accounts for multi-sampler workflows)
+        const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
+        
+        // Build informative log message
+        let logMsg = `Progress: ${pct}%`;
+        if (progress.totalPhases && progress.totalPhases > 1) {
+          logMsg += ` (phase ${progress.currentPhase}/${progress.totalPhases}: ${progress.value}/${progress.max})`;
+        } else {
+          logMsg += ` (${progress.value}/${progress.max})`;
+        }
+        if (progress.currentNodeName) {
+          logMsg += ` [${progress.currentNodeName}]`;
+        }
+        addLog('info', logMsg);
+        
+        // Build phase display string
+        const progressPhase = (progress.totalPhases && progress.totalPhases > 1)
+          ? `Phase ${progress.currentPhase}/${progress.totalPhases}`
+          : undefined;
+        
         setPanels(prev => prev.map(p => 
-          p.id === panelId ? { ...p, progress: pct } : p
+          p.id === panelId ? { 
+            ...p, 
+            progress: pct,
+            progressPhase,
+            progressNodeName: progress.currentNodeName,
+          } : p
         ));
       },
       // Completed callback
@@ -2773,9 +2897,9 @@ export function StoryboardUI() {
               // If no outputs are explicitly selected, use all of them (backwards compatibility)
               const useAllOutputs = selectedOutputNodeIds.length === 0;
               
-              // Collect images from selected output nodes only
+              // Collect media from selected output nodes only (images + videos)
               const allImages: string[] = [];
-              const nodeOutputMap: Record<string, string[]> = {}; // Track which node produced which images
+              const nodeOutputMap: Record<string, string[]> = {}; // Track which node produced which outputs
               
               for (const nodeId of Object.keys(promptData.outputs)) {
                 // Skip this node if it's not selected (unless we're using all outputs)
@@ -2785,13 +2909,12 @@ export function StoryboardUI() {
                 }
                 
                 const output = promptData.outputs[nodeId];
-                if (output.images && output.images.length > 0) {
-                  const nodeImages = output.images.map((img: any) => 
-                    `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`
-                  );
-                  allImages.push(...nodeImages);
-                  nodeOutputMap[nodeId] = nodeImages;
-                  addLog('comfyui', `Node ${nodeId} produced ${nodeImages.length} image(s)`);
+                const mediaOutputs = extractMediaOutputs(output, targetUrl);
+                if (mediaOutputs.length > 0) {
+                  const nodeUrls = mediaOutputs.map(m => m.url);
+                  allImages.push(...nodeUrls);
+                  nodeOutputMap[nodeId] = nodeUrls;
+                  addLog('comfyui', `Node ${nodeId} produced ${mediaOutputs.length} output(s)`);
                 }
               }
               
@@ -2913,6 +3036,7 @@ export function StoryboardUI() {
                     };
                   });
                 });
+                cleanupWs();
                 return;
               }
             }
@@ -2925,6 +3049,7 @@ export function StoryboardUI() {
         setPanels(prev => prev.map(p => 
           p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
         ));
+        cleanupWs();
       },
       // Error callback
       (_promptId, error) => {
@@ -2934,7 +3059,10 @@ export function StoryboardUI() {
         setPanels(prev => prev.map(p => 
           p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
         ));
-      }
+        cleanupWs();
+      },
+      // Workflow info for multi-phase progress tracking
+      workflowInfo
     );
   }, [addLog, showError, pollForResult, panels]);
   
@@ -3082,14 +3210,24 @@ export function StoryboardUI() {
     panelId: number,
     nodeId: string,
     targetUrl: string,
-    ws: ComfyUIWebSocket
+    ws: ComfyUIWebSocket,
+    clientId?: string,
+    workflowInfo?: WorkflowProgressInfo
   ) => {
+    // Helper to disconnect the per-generation WebSocket after completion
+    const cleanupWs = () => {
+      if (clientId) {
+        disconnectWebSocket(targetUrl, clientId);
+      }
+    };
+    
     ws.trackPrompt(
       promptId,
       panelId,
       // Progress callback - update this specific job's progress
       (progress) => {
-        const pct = Math.round((progress.value / progress.max) * 100);
+        // Use overall percent when available (accounts for multi-sampler workflows)
+        const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
         setPanels(prev => prev.map(p => {
           if (p.id !== panelId || !p.parallelJobs) return p;
           const updatedJobs = p.parallelJobs.map(j =>
@@ -3115,13 +3253,13 @@ export function StoryboardUI() {
           const promptData = historyData[promptId];
           
           if (promptData?.outputs) {
-            // Collect image URL from first output
+            // Collect media URL from first output (images, gifs, or videos)
             let resultUrl: string | undefined;
             for (const nodeIdKey of Object.keys(promptData.outputs)) {
               const output = promptData.outputs[nodeIdKey];
-              if (output.images && output.images.length > 0) {
-                const img = output.images[0];
-                resultUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
+              const mediaOutputs = extractMediaOutputs(output, targetUrl);
+              if (mediaOutputs.length > 0) {
+                resultUrl = mediaOutputs[0].url;
                 break;
               }
             }
@@ -3170,6 +3308,7 @@ export function StoryboardUI() {
                 
                 return { ...p, parallelJobs: updatedJobs };
               }));
+              cleanupWs();
             }
           }
         } catch (error) {
@@ -3183,6 +3322,7 @@ export function StoryboardUI() {
               )
             };
           }));
+          cleanupWs();
         }
       },
       // Error callback
@@ -3197,7 +3337,10 @@ export function StoryboardUI() {
             )
           };
         }));
-      }
+        cleanupWs();
+      },
+      // Workflow info for multi-phase progress tracking
+      workflowInfo
     );
   }, [addLog, saveIndividualParallelResult]);
   
@@ -3236,13 +3379,13 @@ export function StoryboardUI() {
           const history = await historyResponse.json();
           
           if (history[promptId]?.outputs) {
-            // Job complete - extract result
+            // Job complete - extract result (images, gifs, or videos)
             let resultUrl: string | undefined;
             for (const nodeIdKey of Object.keys(history[promptId].outputs)) {
               const output = history[promptId].outputs[nodeIdKey];
-              if (output.images && output.images.length > 0) {
-                const img = output.images[0];
-                resultUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
+              const mediaOutputs = extractMediaOutputs(output, targetUrl);
+              if (mediaOutputs.length > 0) {
+                resultUrl = mediaOutputs[0].url;
                 break;
               }
             }
@@ -4774,34 +4917,68 @@ export function StoryboardUI() {
                     <div 
                       className="panel-image-container"
                     >
-                      <img
-                        src={panel.image}
-                        alt={`Panel ${panel.id}`}
-                        draggable={true}
-                        onDragStart={(e) => {
-                          // Pass both URL (for display) and file path (for ComfyUI) as JSON
-                          const currentEntry = panel.imageHistory[panel.historyIndex];
-                          const filePath = currentEntry?.metadata?.savedPath;
-                          const dragData = JSON.stringify({
-                            url: panel.image,
-                            filePath: filePath || null
-                          });
-                          e.dataTransfer.setData('application/x-storyboard-image', dragData);
-                          e.dataTransfer.setData('text/plain', dragData);
-                          e.dataTransfer.effectAllowed = 'copy';
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setViewerImage(panel.image);
-                          setViewerPanelId(panel.id);
-                          setZoomMode('actual');
-                          setViewerZoom(1);
-                          setViewerPan({ x: 0, y: 0 });
-                          setShowImageViewer(true);
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      />
+                      {isVideoUrl(panel.image) ? (
+                        <video
+                          src={panel.image}
+                          controls
+                          loop
+                          muted
+                          autoPlay
+                          playsInline
+                          draggable={true}
+                          onDragStart={(e) => {
+                            const currentEntry = panel.imageHistory[panel.historyIndex];
+                            const filePath = currentEntry?.metadata?.savedPath;
+                            const dragData = JSON.stringify({
+                              url: panel.image,
+                              filePath: filePath || null
+                            });
+                            e.dataTransfer.setData('application/x-storyboard-image', dragData);
+                            e.dataTransfer.setData('text/plain', dragData);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setViewerImage(panel.image);
+                            setViewerPanelId(panel.id);
+                            setZoomMode('actual');
+                            setViewerZoom(1);
+                            setViewerPan({ x: 0, y: 0 });
+                            setShowImageViewer(true);
+                          }}
+                          style={{ cursor: 'pointer', width: '100%', height: '100%', objectFit: 'contain' }}
+                        />
+                      ) : (
+                        <img
+                          src={panel.image}
+                          alt={`Panel ${panel.id}`}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            // Pass both URL (for display) and file path (for ComfyUI) as JSON
+                            const currentEntry = panel.imageHistory[panel.historyIndex];
+                            const filePath = currentEntry?.metadata?.savedPath;
+                            const dragData = JSON.stringify({
+                              url: panel.image,
+                              filePath: filePath || null
+                            });
+                            e.dataTransfer.setData('application/x-storyboard-image', dragData);
+                            e.dataTransfer.setData('text/plain', dragData);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setViewerImage(panel.image);
+                            setViewerPanelId(panel.id);
+                            setZoomMode('actual');
+                            setViewerZoom(1);
+                            setViewerPan({ x: 0, y: 0 });
+                            setShowImageViewer(true);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      )}
                     </div>
                   )}
                   
@@ -5176,6 +5353,12 @@ export function StoryboardUI() {
                         <div className="progress-spinner" />
                         <div className="progress-text-container">
                           <span className="progress-percentage">{panel.progress}%</span>
+                          {panel.progressPhase && (
+                            <span className="progress-phase">{panel.progressPhase}</span>
+                          )}
+                          {panel.progressNodeName && !panel.progressPhase && (
+                            <span className="progress-phase">{panel.progressNodeName}</span>
+                          )}
                           <div className="progress-bar-container">
                             <div 
                               className="progress-bar-fill"
@@ -6395,16 +6578,31 @@ export function StoryboardUI() {
                           ));
                         }}
                       >
-                        <img 
-                          src={entry.url}
-                          alt={`Version ${idx + 1}`}
-                          style={{
-                            maxHeight: 256,
-                            maxWidth: 256,
-                            objectFit: 'contain'
-                          }}
-                          draggable={false}
-                        />
+                        {isVideoUrl(entry.url) ? (
+                          <video 
+                            src={entry.url}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            style={{
+                              maxHeight: 256,
+                              maxWidth: 256,
+                              objectFit: 'contain'
+                            }}
+                            draggable={false}
+                          />
+                        ) : (
+                          <img 
+                            src={entry.url}
+                            alt={`Version ${idx + 1}`}
+                            style={{
+                              maxHeight: 256,
+                              maxWidth: 256,
+                              objectFit: 'contain'
+                            }}
+                            draggable={false}
+                          />
+                        )}
                         <span className="thumbnail-filename">
                           {entry.metadata?.savedPath 
                             ? entry.metadata.savedPath.split(/[\\\/]/).pop()
@@ -6449,25 +6647,50 @@ export function StoryboardUI() {
                 {/* Normal mode */}
                 {!viewerCompareMode && (
                   <>
-                    <img
-                      src={viewerImage}
-                      alt="Viewer"
-                      style={{
-                        transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
-                        cursor: 'grab',
-                        maxWidth: '100%',
-                        maxHeight: 'calc(100% - 30px)',
-                        objectFit: 'contain',
-                      }}
-                      draggable={false}
-                      onError={(e) => {
-                        console.error('[ImageViewer] Failed to load image:', viewerImage);
-                        console.error('[ImageViewer] Error event:', e);
-                      }}
-                      onLoad={() => {
-                        console.log('[ImageViewer] Image loaded successfully');
-                      }}
-                    />
+                    {isVideoUrl(viewerImage) ? (
+                      <video
+                        src={viewerImage}
+                        controls
+                        loop
+                        autoPlay
+                        playsInline
+                        style={{
+                          transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
+                          cursor: 'grab',
+                          maxWidth: '100%',
+                          maxHeight: 'calc(100% - 30px)',
+                          objectFit: 'contain',
+                        }}
+                        draggable={false}
+                        onError={(e) => {
+                          console.error('[ImageViewer] Failed to load video:', viewerImage);
+                          console.error('[ImageViewer] Error event:', e);
+                        }}
+                        onLoadedData={() => {
+                          console.log('[ImageViewer] Video loaded successfully');
+                        }}
+                      />
+                    ) : (
+                      <img
+                        src={viewerImage}
+                        alt="Viewer"
+                        style={{
+                          transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
+                          cursor: 'grab',
+                          maxWidth: '100%',
+                          maxHeight: 'calc(100% - 30px)',
+                          objectFit: 'contain',
+                        }}
+                        draggable={false}
+                        onError={(e) => {
+                          console.error('[ImageViewer] Failed to load image:', viewerImage);
+                          console.error('[ImageViewer] Error event:', e);
+                        }}
+                        onLoad={() => {
+                          console.log('[ImageViewer] Image loaded successfully');
+                        }}
+                      />
+                    )}
                     {/* Phase 5: Filename Display */}
                     {viewerPanelId && (() => {
                       const panel = panels.find(p => p.id === viewerPanelId);
