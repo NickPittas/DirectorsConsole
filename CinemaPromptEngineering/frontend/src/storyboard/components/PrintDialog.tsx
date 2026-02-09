@@ -18,7 +18,7 @@ interface PrintDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectName?: string;
-  selectedPanelId?: number | null;
+  selectedPanelIds?: number[];
   panels: Array<{
     id: number;
     name?: string;
@@ -41,7 +41,7 @@ export function PrintDialog({
   isOpen,
   onClose,
   projectName = 'Untitled Project',
-  selectedPanelId,
+  selectedPanelIds = [],
   panels,
 }: PrintDialogProps) {
   const [columns, setColumns] = useState<ColumnCount>(3);
@@ -55,16 +55,15 @@ export function PrintDialog({
   // Initialise selection when dialog opens
   useEffect(() => {
     if (isOpen) {
-      const ids = new Set(panels.filter(p => p.image).map(p => p.id));
-      setSelectedIds(ids);
-      if (selectedPanelId) {
+      if (selectedPanelIds.length > 0) {
         setPrintMode('selected');
-        setSelectedIds(new Set([selectedPanelId]));
+        setSelectedIds(new Set(selectedPanelIds));
       } else {
         setPrintMode('all');
+        setSelectedIds(new Set(panels.filter(p => p.image).map(p => p.id)));
       }
     }
-  }, [isOpen, panels, selectedPanelId]);
+  }, [isOpen, panels, selectedPanelIds]);
 
   // Panels to print
   const panelsToPrint = printMode === 'all'

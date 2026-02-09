@@ -5599,7 +5599,7 @@ export function StoryboardUI() {
         onClose={() => setShowPrintDialog(false)}
         panels={panels}
         projectName={projectSettings.name || 'Untitled Project'}
-        selectedPanelId={selectedPanelId}
+        selectedPanelIds={panels.filter(p => p.selected).map(p => p.id)}
       />
 
       {/* Node Manager Modal */}
