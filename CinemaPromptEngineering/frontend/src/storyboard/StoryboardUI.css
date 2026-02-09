@@ -805,6 +805,239 @@
   border-radius: 6px 6px 0 0; /* Match parent border radius */
 }
 
+/* ====== Minimal panel generating indicator ====== */
+/* A thin progress bar at the bottom + a small floating badge — does NOT obstruct the image */
+.panel-generating-mini {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.panel-gen-mini-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.panel-gen-mini-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #d4a855, #e0b860);
+  transition: width 0.3s ease;
+}
+
+.panel-gen-mini-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--sb-accent-primary);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  pointer-events: auto;
+}
+
+.panel-gen-mini-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--sb-accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ====== Sidebar Generation Progress section ====== */
+.gen-progress-section {
+  border-bottom: 1px solid rgba(51, 255, 51, 0.15);
+  padding: 8px;
+}
+
+.gen-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.gen-progress-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--sb-accent-primary);
+  font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+}
+
+.gen-progress-count {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.gen-progress-panel-card {
+  background: rgba(0, 20, 0, 0.3);
+  border: 1px solid rgba(51, 255, 51, 0.12);
+  border-radius: 4px;
+  padding: 6px;
+  margin-bottom: 4px;
+}
+
+.gen-progress-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.gen-progress-panel-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #66ff66;
+}
+
+.gen-progress-cancel-btn {
+  background: rgba(200, 50, 50, 0.8);
+  border: none;
+  color: white;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.gen-progress-cancel-btn:hover {
+  background: rgba(220, 70, 70, 1);
+}
+
+.gen-progress-job {
+  margin-bottom: 4px;
+}
+
+.gen-progress-job-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.gen-progress-job-wrapper .gen-progress-job {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.gen-progress-cancel-job-btn {
+  background: rgba(200, 50, 50, 0.6);
+  border: none;
+  color: white;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.gen-progress-cancel-job-btn:hover {
+  background: rgba(220, 70, 70, 1);
+}
+
+.gen-progress-job-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.gen-progress-node-name {
+  font-size: 9px;
+  color: #88cc88;
+  font-weight: 500;
+}
+
+.gen-progress-status {
+  font-size: 9px;
+  font-weight: 600;
+  color: #33ff33;
+}
+
+.gen-progress-status.pending {
+  color: #888;
+}
+
+.gen-progress-status.error {
+  color: #ff4444;
+}
+
+.gen-progress-status.complete {
+  color: #33ff33;
+}
+
+.gen-progress-stage {
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+}
+
+.gen-progress-stage-sep {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.gen-progress-node-counter {
+  color: rgba(51, 255, 51, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.gen-progress-bar-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(51, 255, 51, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.gen-progress-bar-fill {
+  height: 100%;
+  background: #33ff33;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.gen-progress-bar-fill.pending {
+  background: #555;
+}
+
+.gen-progress-bar-fill.error {
+  background: #ff4444;
+}
+
+.gen-progress-bar-fill.complete {
+  background: #33ff33;
+}
+
 .panel-content img {
   width: 100%;
   height: 100%;
