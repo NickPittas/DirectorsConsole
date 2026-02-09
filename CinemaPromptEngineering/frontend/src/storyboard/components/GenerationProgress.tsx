@@ -26,12 +26,16 @@ function JobRow({
   status,
   phase,
   currentNode,
+  nodesExecuted,
+  totalNodes,
 }: {
   nodeName: string;
   progress: number;
   status: string;
   phase?: string;
   currentNode?: string;
+  nodesExecuted?: number;
+  totalNodes?: number;
 }) {
   const statusLabel =
     status === 'running'
@@ -44,24 +48,32 @@ function JobRow({
             ? 'Error'
             : status;
 
-  // Build descriptive text line: "Phase 1/2 · KSampler" or just "KSampler" or "Queued"
+  // Build descriptive text: "Phase 1/2 · KSampler" or just "KSampler" or "Queued"
   const parts: string[] = [];
   if (phase) parts.push(phase);
   if (currentNode) parts.push(currentNode);
   const stageText = parts.length > 0 ? parts.join(' · ') : undefined;
 
+  // Node execution counter: "Node 3/12"
+  const nodeCounter =
+    nodesExecuted != null && totalNodes != null && totalNodes > 0
+      ? `Step ${nodesExecuted}/${totalNodes}`
+      : undefined;
+
   return (
     <div className="gen-progress-job">
       <div className="gen-progress-job-header">
         <span className="gen-progress-node-name">{nodeName}</span>
-        <span
-          className={`gen-progress-status ${status}`}
-        >
+        <span className={`gen-progress-status ${status}`}>
           {statusLabel}
         </span>
       </div>
-      {stageText && (
-        <div className="gen-progress-stage">{stageText}</div>
+      {(stageText || nodeCounter) && (
+        <div className="gen-progress-stage">
+          {stageText && <span>{stageText}</span>}
+          {stageText && nodeCounter && <span className="gen-progress-stage-sep"> · </span>}
+          {nodeCounter && <span className="gen-progress-node-counter">{nodeCounter}</span>}
+        </div>
       )}
       <div className="gen-progress-bar-track">
         <div
@@ -122,6 +134,10 @@ export default function GenerationProgress({
                       nodeName={job.nodeName}
                       progress={job.progress}
                       status={job.status}
+                      phase={job.progressPhase}
+                      currentNode={job.currentNodeName}
+                      nodesExecuted={job.nodesExecuted}
+                      totalNodes={job.totalNodes}
                     />
                     {onCancelParallelJob && job.status === 'running' && (
                       <button
@@ -142,6 +158,8 @@ export default function GenerationProgress({
                 status="running"
                 phase={panel.progressPhase}
                 currentNode={panel.progressNodeName}
+                nodesExecuted={panel.progressNodesExecuted}
+                totalNodes={panel.progressTotalNodes}
               />
             )}
           </div>

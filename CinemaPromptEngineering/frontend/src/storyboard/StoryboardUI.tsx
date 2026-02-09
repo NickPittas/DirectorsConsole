@@ -203,6 +203,8 @@ export interface Panel {
   progress: number;
   progressPhase?: string; // e.g., "Phase 1/2" or "VAE Decode" for multi-sampler workflows
   progressNodeName?: string; // Currently executing node type (e.g., "KSampler")
+  progressNodesExecuted?: number; // How many workflow nodes have completed
+  progressTotalNodes?: number; // Total number of workflow nodes
   notes: string;
   nodeId?: string; // Selected render node for this panel
   workflowId?: string; // Per-panel workflow selection
@@ -223,6 +225,11 @@ export interface Panel {
     status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled';
     resultUrl?: string;
     stuckSince?: number; // Timestamp when job was detected as stuck
+    // Per-node stage tracking
+    currentNodeName?: string; // ComfyUI class_type being executed (e.g., "KSampler")
+    progressPhase?: string; // e.g., "Phase 1/2"
+    nodesExecuted?: number; // How many workflow nodes have executed so far
+    totalNodes?: number; // Total workflow node count
   }>;
   batchSaveTriggered?: boolean; // Prevents duplicate batch saves
 }
@@ -2859,6 +2866,8 @@ export function StoryboardUI() {
             progress: pct,
             progressPhase,
             progressNodeName: progress.currentNodeName,
+            progressNodesExecuted: progress.nodesExecuted,
+            progressTotalNodes: progress.totalNodes,
           } : p
         ));
       },
@@ -3229,10 +3238,23 @@ export function StoryboardUI() {
       (progress) => {
         // Use overall percent when available (accounts for multi-sampler workflows)
         const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
+        
+        // Build phase display string
+        const progressPhase = (progress.totalPhases && progress.totalPhases > 1)
+          ? `Phase ${progress.currentPhase}/${progress.totalPhases}`
+          : undefined;
+        
         setPanels(prev => prev.map(p => {
           if (p.id !== panelId || !p.parallelJobs) return p;
           const updatedJobs = p.parallelJobs.map(j =>
-            j.nodeId === nodeId ? { ...j, progress: pct } : j
+            j.nodeId === nodeId ? {
+              ...j,
+              progress: pct,
+              currentNodeName: progress.currentNodeName || j.currentNodeName,
+              progressPhase,
+              nodesExecuted: progress.nodesExecuted,
+              totalNodes: progress.totalNodes,
+            } : j
           );
           // Update overall panel progress as average of all jobs
           const avgProgress = Math.round(
