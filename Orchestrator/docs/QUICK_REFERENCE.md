@@ -38,7 +38,7 @@ python -m orchestrator.server
 python test_api.py
 ```
 
-**Interactive Docs:** http://127.0.0.1:8000/docs
+**Interactive Docs:** http://127.0.0.1:9800/docs
 
 ---
 
@@ -53,7 +53,7 @@ python test_api.py
 ### Sample Request
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/job \
+curl -X POST http://127.0.0.1:9800/api/job \
   -H "Content-Type: application/json" \
   -d '{
     "workflow_id": "my_workflow",
@@ -198,7 +198,7 @@ import httpx
 async def submit_to_orchestrator(workflow_id: str, params: dict):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://127.0.0.1:8000/api/job",
+            "http://127.0.0.1:9800/api/job",
             json={
                 "workflow_id": workflow_id,
                 "parameters": params,

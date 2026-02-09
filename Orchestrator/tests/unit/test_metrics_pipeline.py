@@ -350,7 +350,7 @@ def test_backend_manager_select_best_by_gpu_memory() -> None:
             online=True,
             queue_depth=0,
             gpu_memory_total=24000,
-            gpu_memory_used=8000,
+            gpu_memory_used=9800,
         ),
     )
 

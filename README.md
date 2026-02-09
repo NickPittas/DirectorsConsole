@@ -187,9 +187,9 @@ This launches:
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| CPE Backend | `http://localhost:8000` | Cinema Prompt Engineering API |
+| CPE Backend | `http://localhost:9800` | Cinema Prompt Engineering API |
 | Storyboard Frontend | `http://localhost:5173` | React UI (opens in browser) |
-| Orchestrator | `http://localhost:8020` | Render farm manager |
+| Orchestrator | `http://localhost:9820` | Render farm manager |
 
 ### Optional Flags
 
@@ -747,7 +747,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ├─────────────────────┬─────────────────┬─────────────────┤
 │  Storyboard Canvas  │    CPE Engine   │   Orchestrator   │
 │   React + TypeScript │  Python/FastAPI  │ Python/FastAPI   │
-│   Port 5173          │  Port 8000       │ Port 8020        │
+│   Port 5173          │  Port 9800       │ Port 9820        │
 ├─────────────────────┴─────────────────┴─────────────────┤
 │                                                           │
 │  Frontend ←──REST──→ CPE Backend ←──Manifests──→ Orchestrator
@@ -776,7 +776,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ```bash
 # Backend with hot-reload
 cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 
 # Frontend with HMR
 cd CinemaPromptEngineering/frontend
@@ -784,7 +784,7 @@ npm run dev
 
 # Orchestrator with hot-reload
 cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
 ### Running Tests

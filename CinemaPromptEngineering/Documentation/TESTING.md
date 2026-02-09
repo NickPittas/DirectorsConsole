@@ -4,7 +4,7 @@ This guide explains how to test the LLM provider connectivity for GitHub Copilot
 
 ## Prerequisites
 
-1. **Backend running**: The FastAPI backend must be running on `http://localhost:8000`
+1. **Backend running**: The FastAPI backend must be running on `http://localhost:9800`
 2. **Authenticated in frontend**: You must have connected to the providers in the Settings panel
 
 ## Test Methods
@@ -77,7 +77,7 @@ python quick_test.py openai_codex "eyJ..."
 Test via the `/test-provider` API endpoint:
 
 ```bash
-curl -X POST http://localhost:8000/test-provider \
+curl -X POST http://localhost:9800/test-provider \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "github_copilot",

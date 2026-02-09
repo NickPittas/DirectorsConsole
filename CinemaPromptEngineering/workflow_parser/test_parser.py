@@ -22,7 +22,7 @@ SAMPLE_WORKFLOW = {
     "3": {
         "class_type": "KSampler",
         "inputs": {
-            "seed": 156680208700286,
+            "seed": 156698208700286,
             "steps": 20,
             "cfg": 7.0,
             "sampler_name": "euler",
@@ -167,7 +167,7 @@ def test_ksampler_extraction():
     
     # Verify values
     assert ksampler.node_id == "3"
-    assert ksampler.seed == 156680208700286
+    assert ksampler.seed == 156698208700286
     assert ksampler.steps == 20
     assert ksampler.cfg == 7.0
     assert ksampler.sampler_name == "euler"

@@ -147,7 +147,7 @@ Testing workflow parsing logic...
 ✅ Found 1 Checkpoint(s)
 ✅ Found 1 LoRA(s)
 
-✅ KSampler values correct: seed=156680208700286, steps=20, cfg=7.0
+✅ KSampler values correct: seed=156698208700286, steps=20, cfg=7.0
 ✅ Prompt role inference correct: 1 positive, 1 negative
 ✅ Checkpoint correct: realisticVision_v51.safetensors
 ✅ LoRA correct: add_detail.safetensors @ 0.8

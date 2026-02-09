@@ -122,6 +122,22 @@ export function getDefaultOrchestratorUrl(): string {
   return 'http://localhost:9820';
 }
 
+function normalizeOrchestratorUrl(orchestratorUrl: string): string {
+  if (!orchestratorUrl) return orchestratorUrl;
+
+  try {
+    const parsed = new URL(orchestratorUrl);
+    if (parsed.port === '8020') {
+      parsed.port = '9820';
+      return parsed.toString().replace(/\/$/, '');
+    }
+  } catch {
+    // Fall back to simple replace for non-standard URLs.
+  }
+
+  return orchestratorUrl.replace(/:8020(\b|\/)/, ':9820$1');
+}
+
 const DEFAULT_PROJECT: ProjectSettings = {
   name: 'Untitled Project',
   path: '',
@@ -662,6 +678,7 @@ class ProjectManager {
         this.currentProject = {
           ...DEFAULT_PROJECT,
           ...parsed,
+          orchestratorUrl: normalizeOrchestratorUrl(parsed.orchestratorUrl || ''),
           created: new Date(parsed.created),
           lastModified: new Date(parsed.lastModified),
         };
@@ -938,6 +955,7 @@ class ProjectManager {
         this.currentProject = {
           ...DEFAULT_PROJECT,
           ...settings,
+          orchestratorUrl: normalizeOrchestratorUrl(settings.orchestratorUrl || ''),
           created: new Date(settings.created),
           lastModified: new Date(settings.lastModified),
         };

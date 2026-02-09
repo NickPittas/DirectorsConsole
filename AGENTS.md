@@ -115,7 +115,7 @@ python start.py --setup
 **Backend:**
 ```bash
 cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 ```
 
 **Frontend Development:**
@@ -141,7 +141,7 @@ npm run lint             # ESLint check
 ### Orchestrator
 ```bash
 cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
 **⚠️ NOTE:** `orchestrator/api/__init__.py` exposes `app` from `orchestrator/api/server.py`.
@@ -226,13 +226,13 @@ python -m pytest tests/test_cinema_rules.py -v
 **CinemaPromptEngineering:**
 ```bash
 # Optional: API configuration
-CPE_API_PORT=8000
+CPE_API_PORT=9800
 CPE_FRONTEND_PORT=5173
 ```
 
 **Orchestrator:**
 ```bash
-ORCHESTRATOR_PORT=8020
+ORCHESTRATOR_PORT=9820
 ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 ```
 
@@ -240,7 +240,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 
 ## API Endpoints Reference
 
-### CinemaPromptEngineering (Port 8000)
+### CinemaPromptEngineering (Port 9800)
 - `GET /api/health` - Health check
 - `GET /presets/live-action` - List film presets
 - `GET /presets/animation` - List animation presets
@@ -249,7 +249,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 - `POST /validate` - Validate configuration
 - `GET /settings/providers` - List LLM providers
 
-### Orchestrator (Port 8020)
+### Orchestrator (Port 9820)
 
 **Core Job Management:**
 - `GET /health` - Health check
@@ -320,7 +320,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 **Port already in use:**
 ```powershell
 # start-all.ps1 auto-cleans ports, or manually:
-Get-NetTCPConnection -LocalPort 8000 | Stop-Process -Id {$_.OwningProcess}
+Get-NetTCPConnection -LocalPort 9800 | Stop-Process -Id {$_.OwningProcess}
 ```
 
 **Missing dependencies:**

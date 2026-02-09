@@ -186,7 +186,7 @@ Component State (Zustand)
   ↓
 API Client (api/client.ts)
   ↓
-Backend API (CPE: port 8000 | Orchestrator: port 8020)
+Backend API (CPE: port 9800 | Orchestrator: port 9820)
   ↓
 Response → React Query Cache → Component Re-render
 ```
@@ -195,7 +195,7 @@ Response → React Query Cache → Component Re-render
 
 ## 4. API ENDPOINT USAGE
 
-### CPE Backend (Port 8000) - Endpoint Analysis:
+### CPE Backend (Port 9800) - Endpoint Analysis:
 
 **Health/Info:**
 | Endpoint | Method | Frontend Usage | Status |
@@ -266,7 +266,7 @@ Response → React Query Cache → Component Re-render
 | `/lenses/by-camera/{camera}` | GET | ❓ CHECK NEEDED | Filter lenses |
 | `/preset/technical/{preset_id}` | GET | ❓ CHECK NEEDED | Technical specs |
 
-### Orchestrator API (Port 8020) - Endpoint Analysis:
+### Orchestrator API (Port 9820) - Endpoint Analysis:
 
 **Core Job Management:**
 | Endpoint | Method | Frontend Usage | Status |
@@ -307,7 +307,7 @@ Response → React Query Cache → Component Re-render
 **CPE Backend:**
 | Variable | Usage | Status |
 |----------|--------|--------|
-| `CPE_API_PORT` | Backend port config | ⚠️ NOT USED (hardcoded 8000 in launcher) |
+| `CPE_API_PORT` | Backend port config | ⚠️ NOT USED (hardcoded 9800 in launcher) |
 | `CPE_FRONTEND_PORT` | Frontend port config | ⚠️ NOT USED (hardcoded 5173 in launcher) |
 | `PYTHONPATH` | Module resolution | ✅ USED (set by launcher) |
 | `PYTHONUNBUFFERED` | Output buffering | ✅ USED |
@@ -315,7 +315,7 @@ Response → React Query Cache → Component Re-render
 **Orchestrator:**
 | Variable | Usage | Status |
 |----------|--------|--------|
-| `ORCHESTRATOR_PORT` | Backend port config | ⚠️ NOT USED (hardcoded 8020) |
+| `ORCHESTRATOR_PORT` | Backend port config | ⚠️ NOT USED (hardcoded 9820) |
 | `ORCHESTRATOR_CONFIG` | Config file path | ✅ USED |
 | `LOG_LEVEL` | Logging configuration | ✅ USED |
 
@@ -420,7 +420,7 @@ Orchestrator: Broadcast progress updates
     ┌─────────┐  ┌──────────┐   ┌──────────┐
     │ ComfyUI │  │ CPE API  │   │ Orchestrator │
     │ Client  │  │ (Port    │   │ API (Port   │
-    │ (Direct │  │ 8000)    │   │ 8020)       │
+    │ (Direct │  │ 9800)    │   │ 9820)       │
     │ calls)  │  │          │   │             │
     └────┬────┘  └────┬─────┘   └──────┬──────┘
          │              │                  │

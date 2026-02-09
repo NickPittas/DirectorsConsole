@@ -31,14 +31,14 @@
 start.py
 ├── Argument parsing (--no-orchestrator, --no-frontend, --no-browser, --setup, --force)
 ├── Environment verification (venv + deps)
-├── Port cleanup (8020, 8000, 5173)
+├── Port cleanup (9820, 9800, 5173)
 ├──
 │   SECTION 1: ORCHESTRATOR (unless --no-orchestrator)
-│   └── Start: uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020
+│   └── Start: uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820
 │       └── Entry: Orchestrator/orchestrator/api/server.py
 │
 ├── SECTION 2: CPE BACKEND
-│   └── Start: uvicorn api.main:app --host 0.0.0.0 --port 8000
+│   └── Start: uvicorn api.main:app --host 0.0.0.0 --port 9800
 │       └── Entry: CinemaPromptEngineering/api/main.py
 │
 ├── SECTION 3: CPE FRONTEND (unless --no-frontend)
@@ -51,8 +51,8 @@ start.py
 **Service Ports**:
 | Service | Default Port | Entry Module |
 |---------|-------------|--------------|
-| Orchestrator API | 8020 | `Orchestrator/orchestrator/api/server.py` |
-| CPE Backend | 8000 | `CinemaPromptEngineering/api/main.py` |
+| Orchestrator API | 9820 | `Orchestrator/orchestrator/api/server.py` |
+| CPE Backend | 9800 | `CinemaPromptEngineering/api/main.py` |
 | CPE Frontend | 5173 | `CinemaPromptEngineering/frontend/` (Vite) |
 
 ---
@@ -80,7 +80,7 @@ directors_console_main.py
 **Orchestrator (Standalone UI)**:
 ```bash
 cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 # OR for desktop UI:
 python -m orchestrator.main  # -> orchestrator.app:run()
 ```
@@ -88,7 +88,7 @@ python -m orchestrator.main  # -> orchestrator.app:run()
 **CPE Backend Only**:
 ```bash
 cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 ```
 
 **StoryboardUI**:
@@ -906,7 +906,7 @@ PHASE 4: OUTPUT & STORAGE
 
 ## 7. API Endpoints Reference
 
-### 7.1 Orchestrator API (Port 8020)
+### 7.1 Orchestrator API (Port 9820)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -934,7 +934,7 @@ PHASE 4: OUTPUT & STORAGE
 | GET | `/api/browse-folders` | Browse project folders |
 | GET | `/api/png-metadata` | Get PNG metadata |
 
-### 7.2 CPE Backend API (Port 8000)
+### 7.2 CPE Backend API (Port 9800)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -952,7 +952,7 @@ PHASE 4: OUTPUT & STORAGE
 | POST | `/api/read-image` | Read image as base64 data URL |
 | DELETE | `/api/delete-file` | Delete file via backend proxy |
 
-### 7.3 Templates API (Port 8000, prefix `/api/templates`)
+### 7.3 Templates API (Port 9800, prefix `/api/templates`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -1298,7 +1298,7 @@ const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
 
 **Solution**: Implemented backend project state storage.
 
-#### New API Endpoints (Orchestrator Port 8020)
+#### New API Endpoints (Orchestrator Port 9820)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -1361,7 +1361,7 @@ const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
                │                              │
                ▼                              ▼
 ┌──────────────────────────┐    ┌─────────────────────────────┐
-│   ComfyUI (Remote)       │    │   Orchestrator (Port 8020)  │
+│   ComfyUI (Remote)       │    │   Orchestrator (Port 9820)  │
 │   localhost:8188     │    │                             │
 │                          │    │   • POST /api/scan-versions │
 │   • Execute workflow     │    │   • POST /api/save-image    │
@@ -1471,7 +1471,7 @@ Get-ChildItem -Path "Z:\Python\DirectorsConsole" -Recurse -Directory -Filter "__
 
 The entry point `start-all.ps1` runs:
 ```powershell
-uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
 Import resolution:

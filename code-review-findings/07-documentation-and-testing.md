@@ -11,7 +11,7 @@ Documentation coverage is incomplete, with several major features undocumented. 
 ## Verification Status (Feb 4, 2026)
 
 **Verified:**
-- `Orchestrator/docs/API.md` is outdated (port 8000, Phase 1 mock behavior).
+- `Orchestrator/docs/API.md` is outdated (port 9800, Phase 1 mock behavior).
 - No frontend `*.test.ts`/`*.test.tsx` files are present.
 - Orchestrator tests do not reference project-management endpoints (no tests for scan/serve/delete/create/browse/scan-versions/save/load/png-metadata).
 
@@ -48,7 +48,7 @@ Documentation coverage is incomplete, with several major features undocumented. 
 | Issue | Lines | Problem |
 |--------|--------|---------|
 | Phase 1 mock behavior | 116-120 | Claims "Does NOT execute" but API now fully executes jobs |
-| Port inconsistency | 66, 69 | Examples use port 8000, but actual default is 8020 |
+| Port inconsistency | 66, 69 | Examples use port 9800, but actual default is 9820 |
 | Missing endpoints | - | No documentation for project management endpoints added in Phase 2+ |
 
 **Missing Endpoints from Documentation:**
@@ -336,11 +336,11 @@ class TestProjectManagement:
 
 | Source | Port | Actual Default |
 |---------|-------|----------------|
-| AGENTS.md | 8020 (Orchestrator) | 8020 ✓ |
-| AGENTS.md | 8000 (CPE) | 8000 ✓ |
+| AGENTS.md | 9820 (Orchestrator) | 9820 ✓ |
+| AGENTS.md | 9800 (CPE) | 9800 ✓ |
 | AGENTS.md | 5173 (Frontend) | 5173 ✓ |
-| Orchestrator/docs/API.md | 8000 | 8020 ✗ |
-| Orchestrator/docs/API_JOB_GROUPS.md | 8020 | 8020 ✓ |
+| Orchestrator/docs/API.md | 9800 | 9820 ✗ |
+| Orchestrator/docs/API_JOB_GROUPS.md | 9820 | 9820 ✓ |
 
 ---
 
@@ -369,7 +369,7 @@ class TestProjectManagement:
 ### High Priority (Blocking Documentation Users)
 1. **Orchestrator API documentation** claims Phase 1 mock behavior that no longer exists
 2. **Missing all project management endpoint documentation** (8 endpoints undocumented)
-3. **Port inconsistency** in Orchestrator docs (8000 vs 8020)
+3. **Port inconsistency** in Orchestrator docs (9800 vs 9820)
 
 ### Medium Priority (Affects Developer Experience)
 4. **No tests for project management endpoints** (0% test coverage of 8 critical endpoints)
@@ -388,7 +388,7 @@ class TestProjectManagement:
 ### Week 1 (Critical Documentation)
 1. [ ] Update Orchestrator/docs/API.md - Remove Phase 1 mock behavior references
 2. [ ] Update Orchestrator/docs/API.md - Document all project management endpoints
-3. [ ] Update Orchestrator/docs/API.md - Fix port references to match 8020
+3. [ ] Update Orchestrator/docs/API.md - Fix port references to match 9820
 4. [ ] Update CPE/README.md - Add OAuth flow documentation
 5. [ ] Update CPE/README.md - Add templates system documentation
 

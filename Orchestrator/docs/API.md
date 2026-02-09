@@ -41,7 +41,7 @@ This will install FastAPI, Uvicorn, and all other required dependencies.
 #### 2. Start the API Server
 
 ```bash
-# Default (localhost:8000)
+# Default (localhost:9800)
 python -m orchestrator.server
 
 # Custom host/port
@@ -63,10 +63,10 @@ Or use curl:
 
 ```bash
 # Health check
-curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:9800/api/health
 
 # Submit a job
-curl -X POST http://127.0.0.1:8000/api/job \
+curl -X POST http://127.0.0.1:9800/api/job \
   -H "Content-Type: application/json" \
   -d '{
     "workflow_id": "my_workflow_001",
@@ -162,8 +162,8 @@ Get information about available ComfyUI backends.
 
 FastAPI provides automatic interactive documentation:
 
-- **Swagger UI:** http://127.0.0.1:8000/docs
-- **ReDoc:** http://127.0.0.1:8000/redoc
+- **Swagger UI:** http://127.0.0.1:9800/docs
+- **ReDoc:** http://127.0.0.1:9800/redoc
 
 These are auto-generated from the code and always up-to-date.
 
@@ -205,7 +205,7 @@ async def submit_shot_to_orchestrator(workflow_id: str, params: dict):
     """Submit a shot from StoryboardUI2 to the Orchestrator."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://127.0.0.1:8000/api/job",
+            "http://127.0.0.1:9800/api/job",
             json={
                 "workflow_id": workflow_id,
                 "parameters": params,
@@ -300,8 +300,8 @@ orchestrator/
 #### Port Already in Use
 
 ```bash
-# Find process using port 8000
-lsof -i :8000
+# Find process using port 9800
+lsof -i :9800
 # Kill it
 kill -9 <PID>
 ```

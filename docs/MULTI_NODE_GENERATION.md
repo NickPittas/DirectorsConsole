@@ -54,7 +54,7 @@ Multi-node parallel generation allows you to select multiple render nodes in the
 ### Prerequisites
 
 1. **Multiple ComfyUI backends configured** - At least 2 render nodes connected to the Orchestrator
-2. **Orchestrator running** - The API server must be running on port 8020
+2. **Orchestrator running** - The API server must be running on port 9820
 3. **CPE frontend connected** - Storyboard UI with multi-node support
 
 ### Quick Start
@@ -319,7 +319,7 @@ Adjust based on:
 **Solutions:**
 ```bash
 # Check Orchestrator connectivity
-curl http://localhost:8020/api/backends
+curl http://localhost:9820/api/backends
 
 # Verify backends are enabled
 # Check backend configuration in Orchestrator settings
@@ -363,7 +363,7 @@ GET /api/backends/{backend_id}/status
 **Solutions:**
 ```javascript
 // Verify WebSocket URL
-const ws = new WebSocket('ws://localhost:8020/ws/job-groups/jg_abc123');
+const ws = new WebSocket('ws://localhost:9820/ws/job-groups/jg_abc123');
 
 // Check browser console for errors
 // Verify no firewall blocking WS connections

@@ -10,7 +10,7 @@ SAMPLE_WORKFLOW = {
     "3": {
         "class_type": "KSampler",
         "inputs": {
-            "seed": 156680208700286,
+            "seed": 156698208700286,
             "steps": 20,
             "cfg": 7.0,
             "sampler_name": "euler",
@@ -117,7 +117,7 @@ def test_basic_logic():
     
     # Check KSampler values
     ks = ksamplers[0]
-    assert ks["seed"] == 156680208700286
+    assert ks["seed"] == 156698208700286
     assert ks["steps"] == 20
     assert ks["cfg"] == 7.0
     print(f"\n✅ KSampler values correct: seed={ks['seed']}, steps={ks['steps']}, cfg={ks['cfg']}")
