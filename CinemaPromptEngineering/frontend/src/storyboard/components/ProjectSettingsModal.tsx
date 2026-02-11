@@ -50,7 +50,12 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
     
     fetch(`${orchestratorUrl}/api/health`, { signal: controller.signal })
       .then(res => res.ok ? setOrchestratorStatus('online') : setOrchestratorStatus('offline'))
-      .catch(() => setOrchestratorStatus('offline'));
+      .catch((err) => {
+        // Ignore AbortError from React StrictMode cleanup
+        if (err.name !== 'AbortError') {
+          setOrchestratorStatus('offline');
+        }
+      });
     
     return () => controller.abort();
   }, [isOpen, orchestratorUrl]);

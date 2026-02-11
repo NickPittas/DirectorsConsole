@@ -2752,6 +2752,67 @@ def _is_path_safe(file_path: str | Path, allowed_base_path: str | Path | None = 
 
 
 # ============================================================================
+# Cross-Platform Path Translation (reads Orchestrator config)
+# ============================================================================
+
+def _translate_path(path: str) -> str:
+    """Translate a path from any OS format to the local OS format.
+    
+    Reads path mappings from the shared config file used by the Orchestrator.
+    If import fails or no mappings configured, returns path unchanged.
+    """
+    try:
+        import sys
+        # Add parent dir to path so we can import from Orchestrator
+        project_root = str(Path(__file__).parent.parent)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from Orchestrator.orchestrator.path_translator import path_translator
+        return path_translator.to_local(path)
+    except ImportError:
+        # Orchestrator module not available - try reading config directly
+        try:
+            import json
+            import platform
+            config_path = Path(__file__).parent.parent / "Orchestrator" / "orchestrator" / "data" / "path_mappings.json"
+            if not config_path.exists():
+                return path
+            
+            with open(config_path, "r") as f:
+                data = json.load(f)
+            
+            system = platform.system()
+            current_os = "windows" if system == "Windows" else "macos" if system == "Darwin" else "linux"
+            
+            normalized = path.replace("\\", "/")
+            for mapping in data.get("mappings", []):
+                if not mapping.get("enabled", True):
+                    continue
+                prefixes = {
+                    "windows": mapping.get("windows", "").replace("\\", "/").rstrip("/"),
+                    "linux": mapping.get("linux", "").rstrip("/"),
+                    "macos": mapping.get("macos", "").rstrip("/"),
+                }
+                local_prefix = prefixes.get(current_os, "")
+                if not local_prefix:
+                    continue
+                for os_name, prefix in prefixes.items():
+                    if os_name == current_os or not prefix:
+                        continue
+                    if normalized.lower().startswith(prefix.lower()):
+                        remainder = normalized[len(prefix):]
+                        if remainder and not remainder.startswith("/"):
+                            remainder = "/" + remainder
+                        translated = local_prefix + remainder
+                        if current_os == "windows":
+                            translated = translated.replace("/", "\\")
+                        return translated
+            return path
+        except Exception:
+            return path
+
+
+# ============================================================================
 # SECURITY: SSRF Protection for URL fetching
 # ============================================================================
 
@@ -2827,6 +2888,9 @@ async def read_image_as_base64(path: str) -> dict[str, Any]:
     import asyncio
     import base64
     from pathlib import Path
+    
+    # Cross-platform path translation
+    path = _translate_path(path)
     
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(path)
@@ -2929,7 +2993,9 @@ async def open_file_explorer(request: OpenExplorerRequest) -> dict[str, Any]:
     from pathlib import Path
     
     def _open_sync():
-        path = Path(request.path)
+        # Cross-platform path translation
+        translated = _translate_path(request.path)
+        path = Path(translated)
         
         # If the path doesn't exist, try the parent directory
         if not path.exists():

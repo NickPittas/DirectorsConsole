@@ -41,6 +41,9 @@ from orchestrator.core.models.job import Job, JobStatus
 from orchestrator.api import job_groups, ws_job_groups
 from orchestrator.core.parallel_job_manager import ParallelJobManager
 
+# Cross-platform path translation
+from orchestrator.path_translator import path_translator
+
 logger = logging.getLogger(__name__)
 
 # Global parallel job manager reference
@@ -147,6 +150,15 @@ def _is_path_safe(file_path: str | Path, allowed_base_path: str | Path | None = 
         
     except Exception as e:
         return False, f"Invalid path: {e}"
+
+
+def _translate_path(path: str) -> str:
+    """Translate a path from any OS format to the local OS format.
+    
+    Uses configured path mappings to convert paths between Windows, Linux, and macOS.
+    If no mapping matches, returns the path unchanged.
+    """
+    return path_translator.to_local(path)
 
 
 def set_parallel_job_manager(manager: ParallelJobManager) -> None:
@@ -1021,6 +1033,9 @@ async def save_image(request: SaveImageRequest) -> SaveImageResponse:
     """
     import json
 
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+
     logger.info(f"Save image request: {request.filename} -> {request.folder_path}")
 
     try:
@@ -1228,6 +1243,9 @@ async def scan_versions(request: ScanVersionsRequest) -> ScanVersionsResponse:
     import glob as glob_module
     import re
     
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+    
     logger.info(f"[SCAN] Scanning versions in: {request.folder_path}")
     logger.info(f"[SCAN] Pattern: {request.pattern}")
     
@@ -1369,6 +1387,9 @@ async def save_project(request: SaveProjectRequest) -> SaveProjectResponse:
     """Save project state to a JSON file."""
     import json
     
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+    
     logger.info(f"Saving project to: {request.folder_path}/{request.filename}")
     
     def _save_sync() -> tuple[bool, str, str]:
@@ -1407,6 +1428,9 @@ async def load_project(request: LoadProjectRequest) -> LoadProjectResponse:
     """Load project state from a JSON file."""
     import json
     
+    # Cross-platform path translation
+    request.file_path = _translate_path(request.file_path)
+    
     logger.info(f"Loading project from: {request.file_path}")
     
     # SECURITY: Check for path traversal attacks
@@ -1427,7 +1451,9 @@ async def load_project(request: LoadProjectRequest) -> LoadProjectResponse:
                 return False, None, f"Project file not found: {request.file_path}"
             
             state_dict = json.loads(file_path.read_text())
-            logger.info(f"Project loaded: {len(state_dict.get('panels', []))} panels")
+            
+            panel_count = len(state_dict.get('panels', []))
+            logger.info(f"Project loaded: {panel_count} panels")
             return True, state_dict, "Project loaded successfully"
         except Exception as e:
             logger.exception(f"Failed to load project: {e}")
@@ -1456,6 +1482,9 @@ async def load_project(request: LoadProjectRequest) -> LoadProjectResponse:
 async def list_projects(folder_path: str) -> dict[str, Any]:
     """List all project files in a folder."""
     import json
+    
+    # Cross-platform path translation
+    folder_path = _translate_path(folder_path)
     
     try:
         folder = Path(folder_path)
@@ -1493,14 +1522,32 @@ async def list_projects(folder_path: str) -> dict[str, Any]:
     summary="Browse folders",
     description="List folders and drives for folder picker UI",
 )
-async def browse_folders(path: str = "") -> dict[str, Any]:
+async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]:
     """Browse folders for the folder picker dialog.
     
     If path is empty, returns available drives (on Windows) or project mounts (in Docker).
     Otherwise, returns folders in the specified path.
+    
+    Args:
+        path: Directory path to browse. Empty returns root drives/mounts.
+        show_files: Comma-separated file extensions to include (e.g. '.json,.txt').
+                    When provided, matching files are included with type='file'.
     """
+    # Parse file extensions to show
+    file_extensions: set[str] = set()
+    if show_files:
+        for ext in show_files.split(','):
+            ext = ext.strip().lower()
+            if ext and not ext.startswith('.'):
+                ext = '.' + ext
+            if ext:
+                file_extensions.add(ext)
     import platform
     import os
+    
+    # Cross-platform path translation (only when path is provided)
+    if path:
+        path = _translate_path(path)
     
     def _browse_sync() -> dict[str, Any]:
         """Synchronous browse function to run in thread pool."""
@@ -1566,7 +1613,46 @@ async def browse_folders(path: str = "") -> dict[str, Any]:
                     else:
                         return {"success": True, "current": "", "items": items, "parent": None}
                 else:
-                    path_to_browse = "/"
+                    # Linux: Show useful starting points instead of listing
+                    # root '/' which can hang on stale NAS mounts
+                    items = []
+                    home = Path.home()
+                    if home.exists():
+                        items.append({
+                            "name": f"Home ({home.name})",
+                            "path": str(home),
+                            "type": "drive"
+                        })
+
+                    for mount_root in ("/mnt", "/media"):
+                        mount_dir = Path(mount_root)
+                        if mount_dir.exists():
+                            try:
+                                # os.scandir DirEntry.is_dir() uses d_type on
+                                # Linux — no stat() call, won't hang on stale
+                                # NFS/CIFS mounts
+                                with os.scandir(mount_root) as it:
+                                    mount_entries = list(it)
+                                mount_entries.sort(key=lambda e: e.name.lower())
+                                for entry in mount_entries:
+                                    if entry.name.startswith('.'):
+                                        continue
+                                    try:
+                                        if entry.is_dir(follow_symlinks=False):
+                                            items.append({
+                                                "name": entry.name,
+                                                "path": entry.path,
+                                                "type": "drive"
+                                            })
+                                    except OSError:
+                                        pass
+                            except (PermissionError, OSError):
+                                pass
+
+                    if items:
+                        return {"success": True, "current": "", "items": items, "parent": None}
+                    else:
+                        path_to_browse = "/"
             else:
                 path_to_browse = path
             
@@ -1574,21 +1660,49 @@ async def browse_folders(path: str = "") -> dict[str, Any]:
             if not folder.exists():
                 return {"success": False, "error": f"Path does not exist: {path_to_browse}"}
             
+            # Use os.scandir instead of Path.iterdir() to avoid stat() calls
+            # that can hang on stale NAS/NFS mounts
             items = []
-            for item in sorted(folder.iterdir()):
-                if item.is_dir() and not item.name.startswith('.'):
-                    items.append({
-                        "name": item.name,
-                        "path": str(item),
-                        "type": "folder"
-                    })
+            try:
+                with os.scandir(str(folder)) as it:
+                    dir_entries = list(it)
+                dir_entries.sort(key=lambda e: e.name.lower())
+                for entry in dir_entries:
+                    if entry.name.startswith('.'):
+                        continue
+                    try:
+                        if entry.is_dir(follow_symlinks=True):
+                            items.append({
+                                "name": entry.name,
+                                "path": entry.path,
+                                "type": "folder"
+                            })
+                        elif file_extensions and entry.is_file(follow_symlinks=True):
+                            # Include files matching requested extensions
+                            _, ext = os.path.splitext(entry.name)
+                            if ext.lower() in file_extensions:
+                                items.append({
+                                    "name": entry.name,
+                                    "path": entry.path,
+                                    "type": "file"
+                                })
+                    except OSError:
+                        pass  # Skip stale mounts or inaccessible entries
+            except (PermissionError, OSError) as e:
+                return {"success": False, "error": f"Cannot list directory: {e}"}
             
-            # Get parent path (but don't go above /projects in Docker)
+            # Compute parent path
+            parent = str(folder.parent) if folder.parent != folder else None
+            # On Linux/macOS, prevent navigating to directories whose
+            # listing can hang on stale NAS mounts.  These are the
+            # same directories whose *children* appear as "drive"
+            # entries in the root browser, so "Up" returns there.
+            if platform.system() != "Windows" and parent in ("/", "/mnt", "/media", "/home"):
+                parent = None
+            # Don't go above /projects in Docker
             projects_dir = Path("/projects")
             if folder == projects_dir or (projects_dir.exists() and folder.parent == projects_dir.parent and folder != projects_dir):
-                parent = None  # Don't navigate above /projects
-            else:
-                parent = str(folder.parent) if folder.parent != folder else None
+                parent = None
             
             return {
                 "success": True,
@@ -1602,7 +1716,13 @@ async def browse_folders(path: str = "") -> dict[str, Any]:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    return await asyncio.to_thread(_browse_sync)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_browse_sync), timeout=10.0)
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "error": "Directory listing timed out. A network drive may be unresponsive.",
+        }
 
 
 @app.post("/api/create-folder", response_model=CreateFolderResponse)
@@ -1615,6 +1735,9 @@ async def create_folder(request: CreateFolderRequest):
     Returns:
         CreateFolderResponse with success status and created path
     """
+    # Cross-platform path translation
+    request.parent_path = _translate_path(request.parent_path)
+    
     def _create_sync() -> CreateFolderResponse:
         """Synchronous create function to run in thread pool."""
         try:
@@ -1669,6 +1792,9 @@ async def serve_image(
     Returns:
         FileResponse with image bytes and content-type header
     """
+    # Cross-platform path translation
+    path = _translate_path(path)
+    
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(path)
     if not is_safe:
@@ -1764,6 +1890,9 @@ async def get_png_metadata(
     """
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
+    
+    # Cross-platform path translation
+    path = _translate_path(path)
     
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(path)
@@ -1877,6 +2006,9 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
     This endpoint discovers all images in a project folder that match the
     naming pattern and have corresponding JSON metadata sidecar files.
     """
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+    
     def _scan_images_sync() -> ScanProjectImagesResponse:
         """Synchronous scan function to run in thread pool."""
         try:
@@ -2081,6 +2213,9 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
     This endpoint discovers all PNG and JPG images in a folder,
     useful for importing existing image collections.
     """
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+    
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.folder_path)
     if not is_safe:
@@ -2195,6 +2330,9 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
     This endpoint treats each subfolder as a panel and discovers all
     PNG/JPG images in each panel folder. No naming pattern required.
     """
+    # Cross-platform path translation
+    request.project_path = _translate_path(request.project_path)
+    
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.project_path)
     if not is_safe:
@@ -2317,6 +2455,9 @@ async def delete_image(request: DeleteImageRequest) -> DeleteImageResponse:
     This endpoint removes both the image file and its accompanying
     metadata JSON file (same name with .json extension).
     """
+    # Cross-platform path translation
+    request.image_path = _translate_path(request.image_path)
+    
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.image_path)
     if not is_safe:
@@ -2360,13 +2501,149 @@ async def delete_image(request: DeleteImageRequest) -> DeleteImageResponse:
         message=message
     )
 
+# ============================================================================
+# Path Translation API Endpoints
+# ============================================================================
+
+
+class PathMappingRequest(BaseModel):
+    """Request model for creating/updating a path mapping."""
+    name: str = Field(..., description="Human-readable label for this mapping")
+    windows: str = Field(default="", description="Windows path prefix (e.g., 'W:\\\\')")
+    linux: str = Field(default="", description="Linux path prefix (e.g., '/mnt/Mandalore')")
+    macos: str = Field(default="", description="macOS path prefix (e.g., '/Volumes/Mandalore')")
+    enabled: bool = Field(default=True, description="Whether this mapping is active")
+
+
+class PathMappingResponse(BaseModel):
+    """Response model for a single path mapping."""
+    id: str
+    name: str
+    windows: str
+    linux: str
+    macos: str
+    enabled: bool
+
+
+class PathTranslateRequest(BaseModel):
+    """Request model for translating a path."""
+    path: str = Field(..., description="The path to translate")
+    target_os: str | None = Field(default=None, description="Target OS (windows/linux/macos). If None, uses server OS.")
+
+
+class PathTranslateResponse(BaseModel):
+    """Response model for path translation."""
+    original: str
+    translated: str
+    current_os: str
+
+
+@app.get(
+    "/api/path-mappings",
+    summary="List path mappings",
+    description="Get all configured cross-platform path mappings",
+)
+async def list_path_mappings() -> dict[str, Any]:
+    """List all configured path mappings."""
+    return {
+        "success": True,
+        "mappings": path_translator.export_mappings(),
+        "current_os": path_translator.current_os,
+    }
+
+
+@app.post(
+    "/api/path-mappings",
+    summary="Add path mapping",
+    description="Create a new cross-platform path mapping",
+)
+async def add_path_mapping(request: PathMappingRequest) -> dict[str, Any]:
+    """Add a new path mapping."""
+    mapping = path_translator.add_mapping(
+        name=request.name,
+        windows=request.windows,
+        linux=request.linux,
+        macos=request.macos,
+        enabled=request.enabled,
+    )
+    return {
+        "success": True,
+        "mapping": mapping.to_dict(),
+        "message": f"Path mapping '{request.name}' created",
+    }
+
+
+@app.put(
+    "/api/path-mappings/{mapping_id}",
+    summary="Update path mapping",
+    description="Update an existing path mapping",
+)
+async def update_path_mapping(
+    mapping_id: str,
+    request: PathMappingRequest,
+) -> dict[str, Any]:
+    """Update an existing path mapping."""
+    mapping = path_translator.update_mapping(
+        mapping_id,
+        name=request.name,
+        windows=request.windows,
+        linux=request.linux,
+        macos=request.macos,
+        enabled=request.enabled,
+    )
+    if mapping is None:
+        raise HTTPException(status_code=404, detail=f"Path mapping not found: {mapping_id}")
+    
+    return {
+        "success": True,
+        "mapping": mapping.to_dict(),
+        "message": f"Path mapping '{request.name}' updated",
+    }
+
+
+@app.delete(
+    "/api/path-mappings/{mapping_id}",
+    summary="Delete path mapping",
+    description="Remove a path mapping",
+)
+async def delete_path_mapping(mapping_id: str) -> dict[str, Any]:
+    """Remove a path mapping."""
+    removed = path_translator.remove_mapping(mapping_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Path mapping not found: {mapping_id}")
+    
+    return {
+        "success": True,
+        "message": "Path mapping removed",
+    }
+
+
+@app.post(
+    "/api/translate-path",
+    summary="Translate a path",
+    description="Translate a path to the current OS format using configured mappings",
+)
+async def translate_path(request: PathTranslateRequest) -> PathTranslateResponse:
+    """Translate a path using configured mappings."""
+    if request.target_os and request.target_os != path_translator.current_os:
+        translated = path_translator.from_local(request.path, request.target_os)
+    else:
+        translated = path_translator.to_local(request.path)
+    
+    return PathTranslateResponse(
+        original=request.path,
+        translated=translated,
+        current_os=path_translator.current_os,
+    )
+
+
 # Debug: Log all registered routes on startup
 @app.on_event("startup")
 async def log_routes():
     """Log all registered routes for debugging."""
     routes = [route.path for route in app.routes]
     logger.info(f"Registered routes: {routes}")
-    new_endpoints = ["/api/serve-image", "/api/scan-project-images", "/api/delete-image"]
+    new_endpoints = ["/api/serve-image", "/api/scan-project-images", "/api/delete-image", "/api/path-mappings"]
     for endpoint in new_endpoints:
         if endpoint in routes:
             logger.info(f"✓ Endpoint registered: {endpoint}")

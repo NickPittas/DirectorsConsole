@@ -62,6 +62,8 @@ export function FolderContentsView({
         return <HardDrive size={24} className="item-icon drive" />;
       case 'folder':
         return <Folder size={24} className="item-icon folder" />;
+      case 'file':
+        return <FileText size={24} className="item-icon file" />;
       case 'project':
         return <FileText size={24} className="item-icon project" />;
       default:
@@ -69,17 +71,17 @@ export function FolderContentsView({
     }
   };
 
-  // Sort items: drives first, then folders, then projects, alphabetically within each group
+  // Sort items: drives first, then folders, then files/projects, alphabetically within each group
   const sortedItems = [...items].sort((a, b) => {
-    const typeOrder = { drive: 0, folder: 1, project: 2 };
-    const orderDiff = typeOrder[a.type] - typeOrder[b.type];
+    const typeOrder: Record<string, number> = { drive: 0, folder: 1, file: 2, project: 2 };
+    const orderDiff = (typeOrder[a.type] ?? 3) - (typeOrder[b.type] ?? 3);
     if (orderDiff !== 0) return orderDiff;
     return a.name.localeCompare(b.name);
   });
 
-  // Separate folders and projects for display
+  // Separate folders and files/projects for display
   const folders = sortedItems.filter((item) => item.type === 'drive' || item.type === 'folder');
-  const projects = sortedItems.filter((item) => item.type === 'project');
+  const files = sortedItems.filter((item) => item.type === 'file' || item.type === 'project');
 
   if (isLoading) {
     return (
@@ -129,21 +131,21 @@ export function FolderContentsView({
         </div>
       )}
 
-      {/* Projects Section */}
-      {projects.length > 0 && (
+      {/* Files / Projects Section */}
+      {files.length > 0 && (
         <div className="contents-section">
           <div className="section-header">
             <FileText size={14} />
-            <span>Projects ({projects.length})</span>
+            <span>Files ({files.length})</span>
           </div>
           <div className="items-grid">
-            {projects.map((item) => (
+            {files.map((item) => (
               <div
                 key={item.path}
                 className={`content-item ${selectedItem?.path === item.path ? 'selected' : ''} ${item.type}`}
                 onClick={() => handleItemClick(item)}
                 onDoubleClick={() => handleItemDoubleClick(item)}
-                title={item.name}
+                title={item.path}
               >
                 {getItemIcon(item)}
                 <div className="item-details">

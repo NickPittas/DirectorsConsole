@@ -22,7 +22,7 @@ export interface TreeNode {
 export interface FolderItem {
   name: string;
   path: string;
-  type: 'drive' | 'folder' | 'project';
+  type: 'drive' | 'folder' | 'file' | 'project';
   metadata?: ProjectMetadata;
 }
 
@@ -39,12 +39,12 @@ interface BrowseCombinedResponse {
   items?: Array<{
     name: string;
     path: string;
-    type: 'drive' | 'folder';
+    type: 'drive' | 'folder' | 'file';
   }>;
   folders?: Array<{
     name: string;
     path: string;
-    type: 'drive' | 'folder';
+    type: 'drive' | 'folder' | 'file';
   }>;
   projects: Array<{
     name: string;
@@ -83,7 +83,8 @@ export interface UseFileBrowserReturn {
 export function useFileBrowser(
   orchestratorUrl: string,
   initialPath: string = '',
-  isOpen: boolean = true
+  isOpen: boolean = true,
+  mode: 'open' | 'save' | 'select-folder' = 'open'
 ): UseFileBrowserReturn {
   // -------------------------------------------------------------------------
   // State
@@ -114,8 +115,10 @@ export function useFileBrowser(
     }
 
     try {
+      // When in 'open' mode, also request .json files from the API
+      const showFiles = mode === 'open' ? '&show_files=.json' : '';
       const response = await fetch(
-        `${orchestratorUrl}/api/browse-folders?path=${encodeURIComponent(path)}`,
+        `${orchestratorUrl}/api/browse-folders?path=${encodeURIComponent(path)}${showFiles}`,
         { method: 'GET' }
       );
 
@@ -132,47 +135,8 @@ export function useFileBrowser(
       // Transform to FolderItems - API returns 'items', fallback to 'folders' for compatibility
       const folderData = data.items ?? data.folders ?? [];
       const items: FolderItem[] = [
-        ...folderData.map((f) => ({ ...f, type: f.type as 'drive' | 'folder' })),
+        ...folderData.map((f) => ({ ...f, type: f.type as 'drive' | 'folder' | 'file' })),
       ];
-
-      // Fetch projects in a separate call if we have a valid folder
-      if (data.current) {
-        try {
-          const projectsController = new AbortController();
-          const projectsTimeoutId = setTimeout(() => projectsController.abort(), 10000); // 10 second timeout
-          
-          const projectsResponse = await fetch(
-            `${orchestratorUrl}/api/list-projects?folder_path=${encodeURIComponent(data.current)}`,
-            { 
-              method: 'GET',
-              signal: projectsController.signal
-            }
-          );
-          
-          clearTimeout(projectsTimeoutId);
-
-          if (projectsResponse.ok) {
-            const projectsData = await projectsResponse.json();
-            if (projectsData.success && projectsData.projects) {
-              const projectItems: FolderItem[] = projectsData.projects.map(
-                (p: { name: string; path: string; saved_at: string; panel_count: number }) => ({
-                  name: p.name,
-                  path: p.path,
-                  type: 'project' as const,
-                  metadata: {
-                    name: p.name,
-                    savedAt: p.saved_at,
-                    panelCount: p.panel_count,
-                  },
-                })
-              );
-              items.push(...projectItems);
-            }
-          }
-        } catch (err) {
-          console.warn('[useFileBrowser] Failed to fetch projects:', err);
-        }
-      }
 
       // Cache the result
       folderCache.current.set(path, items);
@@ -182,7 +146,7 @@ export function useFileBrowser(
       console.error('[useFileBrowser] Failed to fetch folder contents:', error);
       throw error;
     }
-  }, [orchestratorUrl]);
+  }, [orchestratorUrl, mode]);
 
   // -------------------------------------------------------------------------
   // Helper: Fetch tree children (for lazy loading)
@@ -450,6 +414,41 @@ export function useFileBrowser(
 
     const loadInitialDrives = async () => {
       try {
+        // If we have an initial path, navigate directly to it first
+        // to avoid fetching root drives which can timeout on NAS mounts
+        if (initialPath) {
+          try {
+            await navigateTo(initialPath);
+            // Still load root drives for the tree view in the background
+            const rootResponse = await fetch(
+              `${orchestratorUrl}/api/browse-folders?path=`,
+              { method: 'GET' }
+            );
+            if (rootResponse.ok) {
+              const rootData: BrowseCombinedResponse = await rootResponse.json();
+              if (rootData.success) {
+                const folderData = rootData.items ?? rootData.folders ?? [];
+                const driveNodes: TreeNode[] = folderData
+                  .filter((f) => f.type === 'drive')
+                  .map((f) => ({
+                    id: f.path,
+                    name: f.name,
+                    path: f.path,
+                    type: 'drive',
+                    children: undefined,
+                    isLoading: false,
+                    isExpanded: false,
+                  }));
+                setState((prev) => ({ ...prev, treeNodes: driveNodes }));
+              }
+            }
+            return;
+          } catch {
+            // If navigating to initialPath fails, fall through to root drives
+            console.warn('[useFileBrowser] Failed to navigate to initial path, falling back to root drives');
+          }
+        }
+
         const response = await fetch(
           `${orchestratorUrl}/api/browse-folders?path=`,
           { method: 'GET' }
@@ -481,14 +480,9 @@ export function useFileBrowser(
             treeNodes: driveNodes,
             folderContents: folderData.map((f) => ({
               ...f,
-              type: f.type as 'drive' | 'folder' | 'project',
+              type: f.type as 'drive' | 'folder' | 'file',
             })),
           }));
-
-          // If we have an initial path, navigate to it
-          if (initialPath) {
-            await navigateTo(initialPath);
-          }
         } else {
           setState((prev) => ({
             ...prev,
@@ -506,7 +500,8 @@ export function useFileBrowser(
     };
 
     loadInitialDrives();
-  }, [orchestratorUrl, isOpen, initialPath, navigateTo]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orchestratorUrl, isOpen, initialPath]);
 
   return {
     state,

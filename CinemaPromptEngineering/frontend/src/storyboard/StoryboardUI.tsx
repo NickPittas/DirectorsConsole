@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { ParameterPanel } from './components/ParameterWidgets';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
-import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow } from './services/workflow-parser';
+import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
 import { CameraAngle } from './data/cameraAngleData';
 import { useErrorNotifications, ErrorNotificationContainer } from './components/ErrorNotification';
 import { NodeManager } from './components/NodeManager';
@@ -41,6 +41,7 @@ import { PanelNotes } from './components/PanelNotes';
 import { PanelHeader } from './components/PanelHeader';
 import { StarRating } from './components/StarRating';
 import { PrintDialog } from './components/PrintDialog';
+import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
 import { getSelectedLlmSettings, getConfiguredProviders } from '../components/Settings';
@@ -804,6 +805,7 @@ export function StoryboardUI() {
   // State - Project Settings
   // ---------------------------------------------------------------------------
   const [showProjectSettings, setShowProjectSettings] = useState(false);
+  const [showPathMappings, setShowPathMappings] = useState(false);
   const [projectSettings, setProjectSettings] = useProjectSettings();
   
   // Phase 6: Track deleted images to filter on reload
@@ -2114,7 +2116,10 @@ export function StoryboardUI() {
         // Apply the seed to the cloned workflow
         applySeedToWorkflow(workflowCopy, seed);
         
-        console.log(`[Parallel] Submitting to node ${node.name} with seed ${seed}`);
+        // Normalize path separators for this node's OS
+        normalizeWorkflowPaths(workflowCopy, (node.os || 'unknown') as TargetOS);
+        
+        console.log(`[Parallel] Submitting to node ${node.name} (OS: ${node.os}) with seed ${seed}`);
         addLog('comfyui', `Submitting variation ${i + 1}/${backendIds.length} to ${node.name} (seed: ${seed})`);
         
         try {
@@ -2233,6 +2238,7 @@ export function StoryboardUI() {
     // Determine which node to use - prioritize explicit selection, then panel-specific, then auto-select
     let targetUrl = '';
     let nodeName = '';
+    let targetOS: TargetOS = 'unknown';
     
     // Fix #2: First check if user explicitly selected a single node
     if (selectedBackendIds.length === 1) {
@@ -2240,6 +2246,7 @@ export function StoryboardUI() {
       if (selectedNode && selectedNode.status === 'online') {
         targetUrl = selectedNode.url;
         nodeName = selectedNode.name;
+        targetOS = selectedNode.os || 'unknown';
       }
     }
     
@@ -2249,6 +2256,7 @@ export function StoryboardUI() {
       if (node && node.status === 'online') {
         targetUrl = node.url;
         nodeName = node.name;
+        targetOS = node.os || 'unknown';
       }
     }
     
@@ -2260,6 +2268,7 @@ export function StoryboardUI() {
         const bestNode = onlineNodes[0]; // TODO: Sort by free VRAM
         targetUrl = bestNode.url;
         nodeName = bestNode.name;
+        targetOS = bestNode.os || 'unknown';
       }
     }
     
@@ -2267,6 +2276,7 @@ export function StoryboardUI() {
     if (!targetUrl && comfyUrl && connectionStatus === 'connected') {
       targetUrl = comfyUrl;
       nodeName = 'Direct Connection';
+      // OS will be detected from health check below
     }
     
     // If still no target, show error
@@ -2277,7 +2287,7 @@ export function StoryboardUI() {
       return;
     }
     
-    // Check connection to target node
+    // Check connection to target node and detect OS if not already known
     try {
       const healthCheck = await fetch(`${targetUrl}/system_stats`, { 
         method: 'GET',
@@ -2285,6 +2295,13 @@ export function StoryboardUI() {
       });
       if (!healthCheck.ok) {
         throw new Error(`Node ${nodeName} is not responding`);
+      }
+      // Detect OS from health check if we don't have it yet (e.g. direct connection)
+      if (targetOS === 'unknown') {
+        try {
+          const statsData = await healthCheck.json();
+          targetOS = detectNodeOS(statsData);
+        } catch { /* ignore parse errors, we already verified it's responding */ }
       }
     } catch (error) {
       const errorMsg = `Cannot connect to ${nodeName}: ${error}`;
@@ -2530,9 +2547,12 @@ export function StoryboardUI() {
       workflow.config // Pass custom parameter configs
     );
     
+    // Normalize path separators for the target node's OS
+    normalizeWorkflowPaths(builtWorkflow, targetOS);
+    
     // Debug: Log the workflow being sent
     console.log('Workflow being sent to ComfyUI:', JSON.stringify(builtWorkflow, null, 2));
-    addLog('info', `Workflow nodes: ${Object.keys(builtWorkflow).length}`);
+    addLog('info', `Workflow nodes: ${Object.keys(builtWorkflow).length}, target OS: ${targetOS}`);
     
     try {
       // Create WebSocket connection FIRST with unique client ID for this panel
@@ -3656,6 +3676,17 @@ export function StoryboardUI() {
 
   // Phase 3: New load handler with folder scanning
   const handleLoadFromDialog = async (projectPath: string) => {
+    // Close the file browser dialog immediately so the loading overlay is visible
+    setFileBrowserMode(null);
+    
+    // Remember the current orchestrator URL before loadProjectState overwrites it
+    const currentOrchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+    
+    // Derive the project directory from the selected file path
+    // Handle both / (Linux/macOS) and \ (Windows) separators
+    const lastSlash = Math.max(projectPath.lastIndexOf('/'), projectPath.lastIndexOf('\\'));
+    const projectDir = lastSlash > 0 ? projectPath.substring(0, lastSlash) : projectPath;
+    
     // Show loading progress
     setIsLoadingProject(true);
     setLoadingProgress({ progress: 0, currentFile: 'Loading project data...' });
@@ -3668,6 +3699,19 @@ export function StoryboardUI() {
         setIsLoadingProject(false);
         return;
       }
+      
+      // loadProjectState overwrites currentProject with saved settings.
+      // Override path (derived from the actual file location on THIS machine)
+      // and orchestratorUrl (keep the current session's value) so that
+      // scanProjectPanels hits the correct server and path.
+      projectManager.setProject({
+        path: projectDir,
+        orchestratorUrl: currentOrchestratorUrl,
+      });
+      
+      // Update React state immediately so file browser remembers path
+      // even if scanning fails below
+      setProjectSettings(projectManager.getProject());
 
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
@@ -3681,6 +3725,21 @@ export function StoryboardUI() {
       if (!scanResult.success) {
         console.error('[Load] Failed to scan project panels:', scanResult.error);
         showError(`Failed to scan project: ${scanResult.error}`);
+        // Still restore panels from saved state even without scan
+        const savedPanels = result.state.panels as Panel[];
+        if (savedPanels.length > 0) {
+          setPanels(savedPanels.map((p, i) => ({
+            ...p,
+            selected: false,
+            status: p.status || 'empty',
+            progress: p.progress || 0,
+            imageHistory: p.imageHistory || [],
+            historyIndex: p.historyIndex ?? -1,
+            image: p.image || null,
+            images: p.images || [],
+            currentImageIndex: p.currentImageIndex || 0,
+          })));
+        }
         setIsLoadingProject(false);
         return;
       }
@@ -3871,9 +3930,6 @@ export function StoryboardUI() {
         setComfyUrl(result.state.comfy_url);
       }
       
-      // Update project settings
-      setProjectSettings(projectManager.getProject());
-      
       setLoadingProgress({ progress: 100, currentFile: 'Complete!' });
       
       // Calculate total images
@@ -3881,9 +3937,8 @@ export function StoryboardUI() {
       restoredPanels.forEach(p => totalImages += p.imageHistory.length);
       showInfo(`Loaded project with ${restoredPanels.length} panels, ${totalImages} images`);
       
-      // Close the dialog after a brief delay
+      // Close loading overlay after a brief delay
       setTimeout(() => {
-        setFileBrowserMode(null);
         setIsLoadingProject(false);
       }, 500);
       
@@ -4442,6 +4497,7 @@ export function StoryboardUI() {
           projectName={projectSettings.name || 'Untitled Project'}
           nodeCount={renderNodes.length}
           onProjectSettings={() => setShowProjectSettings(true)}
+          onPathMappings={() => setShowPathMappings(true)}
           onSaveProject={handleSaveProject}
           onSaveProjectAs={handleSaveProjectAs}
           onLoadProject={handleLoadProject}
@@ -5847,6 +5903,15 @@ export function StoryboardUI() {
           onClose={() => setShowProjectSettings(false)}
           settings={projectSettings}
           onSave={setProjectSettings}
+        />
+      )}
+
+      {/* Path Mappings Modal */}
+      {showPathMappings && (
+        <PathMappingsModal
+          isOpen={showPathMappings}
+          onClose={() => setShowPathMappings(false)}
+          orchestratorUrl={projectSettings.orchestratorUrl || getDefaultOrchestratorUrl()}
         />
       )}
 

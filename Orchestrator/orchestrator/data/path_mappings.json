@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "id": "44b8f17b-2f69-4690-8be9-7fabe1449f7a",
+      "name": "Mapping 1",
+      "windows": "W:\\",
+      "linux": "/mnt/Mandalore",
+      "macos": "",
+      "enabled": true
+    },
+    {
+      "id": "903c93fd-c99b-4163-8430-d45187fe2523",
+      "name": "Mapping 2",
+      "windows": "R:\\",
+      "linux": "/mnt/Kessel",
+      "macos": "",
+      "enabled": true
+    },
+    {
+      "id": "dd99b612-afac-460f-a1fe-99993dfb6507",
+      "name": "Mapping 3",
+      "windows": "Z:\\",
+      "linux": "/mnt/Dagobah",
+      "macos": "",
+      "enabled": true
+    }
+  ]
+}
