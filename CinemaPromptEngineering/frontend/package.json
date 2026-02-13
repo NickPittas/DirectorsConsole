@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "build:standalone": "cross-env BUILD_MODE=standalone tsc && cross-env BUILD_MODE=standalone vite build --mode standalone",
-    "build:comfyui": "cross-env BUILD_MODE=comfyui tsc && cross-env BUILD_MODE=comfyui vite build",
-    "preview": "vite preview",
+    "dev": "node ./node_modules/vite/bin/vite.js",
+    "typecheck": "node ./node_modules/typescript/bin/tsc",
+    "build": "npm run typecheck && node ./node_modules/vite/bin/vite.js build",
+    "build:standalone": "cross-env BUILD_MODE=standalone npm run typecheck && cross-env BUILD_MODE=standalone node ./node_modules/vite/bin/vite.js build --mode standalone",
+    "build:comfyui": "cross-env BUILD_MODE=comfyui npm run typecheck && cross-env BUILD_MODE=comfyui node ./node_modules/vite/bin/vite.js build",
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
