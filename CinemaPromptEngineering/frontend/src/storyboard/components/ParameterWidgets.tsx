@@ -579,8 +579,19 @@ export function LoRAWidget({
   // or just number for strength-only parameters
   const isComplex = typeof value === 'object' && value !== null;
   
+  // Normalize path separators for consistent comparison
+  const normalizePath = (path: string) => path.replace(/\\/g, '/');
+  
+  // Find matching lora from available list, handling path separator differences
+  const findMatchingLora = (searchPath: string) => {
+    if (!searchPath || availableLoras.length === 0) return '';
+    const normalized = normalizePath(searchPath);
+    const match = availableLoras.find(lora => normalizePath(lora) === normalized);
+    return match || '';
+  };
+  
   const [localLoraName, setLocalLoraName] = useState(
-    isComplex ? value.lora_name : parameter.constraints?.lora_name || ''
+    findMatchingLora(isComplex ? value.lora_name : parameter.constraints?.lora_name || '')
   );
   const [localStrength, setLocalStrength] = useState(
     isComplex ? value.strength : (typeof value === 'number' ? value : parameter.default ?? 1.0)
@@ -592,13 +603,13 @@ export function LoRAWidget({
   // Sync local state when value prop changes
   useEffect(() => {
     if (typeof value === 'object' && value !== null) {
-      setLocalLoraName(value.lora_name || '');
+      setLocalLoraName(findMatchingLora(value.lora_name || ''));
       setLocalStrength(value.strength ?? 1.0);
       setLocalBypassed(value.bypassed ?? false);
     } else if (typeof value === 'number') {
       setLocalStrength(value);
     }
-  }, [value]);
+  }, [value, availableLoras]);
   
   // Sync bypassed state from props
   useEffect(() => {
@@ -685,11 +696,38 @@ export function LoRAWidget({
                 disabled={disabled}
               >
                 <option value="">-- Select LoRA --</option>
-                {availableLoras.map((lora) => (
-                  <option key={lora} value={lora}>
-                    {formatLoraDisplayName(lora)}
-                  </option>
-                ))}
+                {(() => {
+                  // Group loras by folder
+                  const grouped: { [folder: string]: string[] } = {};
+                  const rootLoras: string[] = [];
+                  
+                  availableLoras.forEach(lora => {
+                    const normalized = normalizePath(lora);
+                    const parts = normalized.split('/');
+                    if (parts.length > 1) {
+                      const folder = parts.slice(0, -1).join('/');
+                      if (!grouped[folder]) grouped[folder] = [];
+                      grouped[folder].push(lora);
+                    } else {
+                      rootLoras.push(lora);
+                    }
+                  });
+                  
+                  return (
+                    <>
+                      {rootLoras.map(lora => (
+                        <option key={lora} value={lora}>{formatLoraDisplayName(lora)}</option>
+                      ))}
+                      {Object.keys(grouped).sort().map(folder => (
+                        <optgroup key={folder} label={folder}>
+                          {grouped[folder].map(lora => (
+                            <option key={lora} value={lora}>{formatLoraDisplayName(lora)}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </>
+                  );
+                })()}
               </select>
             </div>
           )}
