@@ -753,6 +753,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   } | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollingError, setPollingError] = useState<string | null>(null);
+  
+  // Track if current OAuth provider has a built-in client ID
+  const [_hasBuiltinClient, setHasBuiltinClient] = useState(false);
 
   // Helper to refresh OAuth tokens for providers that need it
   const refreshExpiredTokens = async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
@@ -934,6 +937,23 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   
   // Get credentials for the selected provider
   const currentCredentials = activeProvider ? credentials[activeProvider] || {} : {};
+
+  // Fetch OAuth flow type info when OAuth provider is selected
+  useEffect(() => {
+    if (!activeProvider || selectedProvider?.type !== 'oauth') {
+      setHasBuiltinClient(false);
+      return;
+    }
+
+    api.getOAuthFlowType(activeProvider)
+      .then((flowInfo) => {
+        setHasBuiltinClient(flowInfo.has_builtin_client || false);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch OAuth flow type:', err);
+        setHasBuiltinClient(false);
+      });
+  }, [activeProvider, selectedProvider?.type]);
   
   // Handle provider selection change
   const handleProviderChange = useCallback((providerId: string) => {

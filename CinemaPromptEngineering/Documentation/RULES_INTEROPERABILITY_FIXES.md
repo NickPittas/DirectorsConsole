@@ -665,7 +665,7 @@ Color_Tones_Complete: {
   },
   Cold: {
     temperature_bias: "Very Blue",
-    kelvin_range: "8000K+",
+    kelvin_range: "9800K+",
     emotional_effect: ["Alienation", "Death", "Inhuman"]
   },
   Stylized: {

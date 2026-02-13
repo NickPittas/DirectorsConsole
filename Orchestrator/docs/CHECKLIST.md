@@ -27,10 +27,10 @@
 
 ### Manual Tests:
 1. [ ] Server starts: `python -m orchestrator.server`
-2. [ ] Health check works: `curl http://127.0.0.1:8000/api/health`
-3. [ ] Job submission works: `curl -X POST http://127.0.0.1:8000/api/job -H "Content-Type: application/json" -d '{"workflow_id":"test"}'`
+2. [ ] Health check works: `curl http://127.0.0.1:9800/api/health`
+3. [ ] Job submission works: `curl -X POST http://127.0.0.1:9800/api/job -H "Content-Type: application/json" -d '{"workflow_id":"test"}'`
 4. [ ] Test suite passes: `python test_api.py`
-5. [ ] Interactive docs load: http://127.0.0.1:8000/docs
+5. [ ] Interactive docs load: http://127.0.0.1:9800/docs
 
 ### Expected Behaviors:
 - [ ] Server logs startup messages
@@ -116,7 +116,7 @@
 ## 📦 Handoff Package
 
 ### For Main Agent:
-1. **Demo Ready:** Run `python -m orchestrator.server` and show http://127.0.0.1:8000/docs
+1. **Demo Ready:** Run `python -m orchestrator.server` and show http://127.0.0.1:9800/docs
 2. **Integration Guide:** See `docs/API.md` section "Integration Example"
 3. **Next Steps:** See `docs/PHASE1_SUMMARY.md` section "Next Steps (For Future Agents)"
 
@@ -165,7 +165,7 @@ python -m orchestrator.server --reload --log-level debug
 
 ### Production (Future):
 ```bash
-python -m orchestrator.server --host 0.0.0.0 --port 8000
+python -m orchestrator.server --host 0.0.0.0 --port 9800
 ```
 
 ### As Systemd Service (Future):

@@ -27,7 +27,7 @@ The Job Groups API enables parallel generation across multiple ComfyUI backends,
 ### Base URL
 
 ```
-http://localhost:8020
+http://localhost:9820
 ```
 
 ### Content Type
@@ -51,7 +51,7 @@ Submit a parallel generation job across multiple backends. Each backend receives
 **Request:**
 
 ```bash
-curl -X POST http://localhost:8020/api/job-group \
+curl -X POST http://localhost:9820/api/job-group \
   -H "Content-Type: application/json" \
   -d '{
     "workflow_json": {
@@ -129,7 +129,7 @@ Retrieve the current status of a job group, including all child jobs and their p
 **Request:**
 
 ```bash
-curl http://localhost:8020/api/job-groups/jg_abc123def456
+curl http://localhost:9820/api/job-groups/jg_abc123def456
 ```
 
 **Response (200 OK):**
@@ -194,7 +194,7 @@ Cancel an active job group. Attempts to interrupt all running child jobs. Alread
 **Request:**
 
 ```bash
-curl -X DELETE http://localhost:8020/api/job-groups/jg_abc123def456
+curl -X DELETE http://localhost:9820/api/job-groups/jg_abc123def456
 ```
 
 **Response (200 OK):**
@@ -219,13 +219,13 @@ Connect to receive real-time streaming of job group progress and results.
 **WebSocket URL:**
 
 ```
-ws://localhost:8020/ws/job-groups/jg_abc123def456
+ws://localhost:9820/ws/job-groups/jg_abc123def456
 ```
 
 **Connection Example (JavaScript):**
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8020/ws/job-groups/jg_abc123def456');
+const ws = new WebSocket('ws://localhost:9820/ws/job-groups/jg_abc123def456');
 
 ws.onopen = () => {
   console.log('Connected to job group WebSocket');
@@ -510,7 +510,7 @@ import asyncio
 import httpx
 import json
 
-ORCHESTRATOR_URL = "http://localhost:8020"
+ORCHESTRATOR_URL = "http://localhost:9820"
 
 
 async def submit_parallel_job():
@@ -601,7 +601,7 @@ import json
 import httpx
 from websockets import connect
 
-ORCHESTRATOR_URL = "http://localhost:8020"
+ORCHESTRATOR_URL = "http://localhost:9820"
 
 
 async def submit_with_websocket():
@@ -662,7 +662,7 @@ if __name__ == "__main__":
 ### TypeScript/JavaScript Example
 
 ```typescript
-const ORCHESTRATOR_URL = 'http://localhost:8020';
+const ORCHESTRATOR_URL = 'http://localhost:9820';
 
 interface JobGroupRequest {
   workflow_json: Record<string, unknown>;

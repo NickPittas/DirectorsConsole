@@ -565,7 +565,7 @@ class ProcessManager:
             }
             
             if platform.system() == "Windows":
-                # CREATE_NO_WINDOW (0x08000000) runs process without a console window
+                # CREATE_NO_WINDOW (0x09800000) runs process without a console window
                 # CREATE_NEW_PROCESS_GROUP (0x200) for signal isolation
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
             else:

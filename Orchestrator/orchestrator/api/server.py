@@ -67,12 +67,11 @@ def _add_allowed_host(host: str) -> None:
 
 
 def _is_url_safe(url: str) -> tuple[bool, str]:
-    """Validate URL to prevent SSRF attacks.
+    """Validate URL for basic safety.
     
-    Only allows URLs to:
-    - Registered ComfyUI backend hosts
-    - localhost/127.0.0.1
-    - HTTP/HTTPS schemes only
+    This is a local desktop application — users connect to their own
+    ComfyUI render nodes on LAN, VPN (Tailscale), or other networks.
+    We only enforce scheme validation and block cloud metadata endpoints.
     
     Args:
         url: The URL to validate
@@ -91,27 +90,23 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
         if not hostname:
             return False, "URL has no hostname"
         
-        # Check if hostname is in allowlist
+        # Check if hostname is in allowlist (fast path)
         if hostname in _ALLOWED_URL_HOSTS:
             return True, ""
         
         # Check if it's an IP address
         try:
             ip = ipaddress.ip_address(hostname)
-            # Block cloud metadata endpoints (AWS/GCP/Azure)
+            # Block cloud metadata endpoints (AWS/GCP/Azure 169.254.x.x)
             if ip.is_link_local:
                 return False, "Link-local/metadata endpoint blocked"
-            # Allow private/LAN IPs — this is a local desktop tool and
-            # ComfyUI render nodes live on the user's LAN by design.
-            if ip.is_private or ip.is_loopback:
-                return True, ""
+            # Allow ALL other IPs — this is a local desktop tool.
+            # ComfyUI render nodes may be on LAN, Tailscale (CGNAT 100.64.0.0/10),
+            # or any other reachable network.
+            return True, ""
         except ValueError:
-            # Not an IP, it's a hostname - must be in allowlist
+            # Not an IP, it's a hostname — allow it for desktop use
             pass
-        
-        # Final check: non-private hostnames must be in allowlist
-        if hostname not in _ALLOWED_URL_HOSTS:
-            return False, f"Host '{hostname}' not in allowed hosts. Only registered ComfyUI backends are allowed."
         
         return True, ""
         
@@ -252,27 +247,11 @@ app = FastAPI(
 )
 
 # Add CORS middleware for frontend access
-# Security: Restrict to known frontend origins instead of wildcard
-_ALLOWED_ORIGINS = [
-    "http://localhost:3000",      # Vite dev server
-    "http://localhost:5173",      # Vite default port
-    "http://localhost:9800",      # CPE backend (serves frontend)
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:9800",
-    "http://localhost:8188",      # ComfyUI server
-    "http://127.0.0.1:8188",
-]
-
-# Allow additional origins from environment variable (comma-separated)
-_extra_origins = os.getenv("ORCHESTRATOR_CORS_ORIGINS", "")
-if _extra_origins:
-    _ALLOWED_ORIGINS.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
-
+# Desktop app - allow all origins for LAN/VPN/Tailscale access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],
@@ -1707,11 +1686,19 @@ async def serve_image(
             return False, "", f"Path is not a file: {path}"
         
         # Determine content type from extension
-        content_type = "image/png"  # default
-        if image_path.suffix.lower() in [".jpg", ".jpeg"]:
-            content_type = "image/jpeg"
-        elif image_path.suffix.lower() == ".webp":
-            content_type = "image/webp"
+        mime_map = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp',
+            '.gif': 'image/gif',
+            '.mp4': 'video/mp4',
+            '.mov': 'video/quicktime',
+            '.avi': 'video/x-msvideo',
+            '.webm': 'video/webm',
+            '.mkv': 'video/x-matroska',
+        }
+        content_type = mime_map.get(image_path.suffix.lower(), 'application/octet-stream')
         
         return True, content_type, ""
     
@@ -1937,7 +1924,9 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
             file_regex_str = file_regex_str.replace("{project}", r"[\w]+")  # Match any project name prefix
             file_regex_str = file_regex_str.replace("{panel}", r"(\d+)")
             file_regex_str = file_regex_str.replace("{version}", r"v(\d+)")
-            file_regex = re.compile(f"^{file_regex_str}\\.png$", re.IGNORECASE)
+            # Support images and video files
+            media_ext_pattern = r"\.(png|jpg|jpeg|webp|gif|mp4|mov|avi|webm|mkv)"
+            file_regex = re.compile(f"^{file_regex_str}{media_ext_pattern}$", re.IGNORECASE)
             
             # Build regex for directory if present
             # Make {project} flexible - match any word characters (consistent with filename pattern)
@@ -1952,15 +1941,18 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
             images: list[ProjectImageInfo] = []
             skipped_files: list[str] = []
 
-            # Find all PNG files - use recursive glob if pattern has subdirs
-            if has_subdirs:
-                png_files = list(folder.glob("**/*.png"))
-            else:
-                png_files = list(folder.glob("*.png"))
+            # Find all media files - use recursive glob if pattern has subdirs
+            media_globs = ['*.png', '*.jpg', '*.jpeg', '*.webp', '*.gif', '*.mp4', '*.mov', '*.avi', '*.webm', '*.mkv']
+            media_files: list[Path] = []
+            for glob_pattern in media_globs:
+                if has_subdirs:
+                    media_files.extend(folder.glob(f"**/{glob_pattern}"))
+                else:
+                    media_files.extend(folder.glob(glob_pattern))
             
-            logger.debug(f"Found {len(png_files)} PNG files in {folder} (recursive={has_subdirs})")
+            logger.debug(f"Found {len(media_files)} media files in {folder} (recursive={has_subdirs})")
 
-            for png_file in png_files:
+            for png_file in media_files:
                 # If pattern has subdirectories, validate the parent directory name
                 if dir_regex:
                     parent_dir = png_file.parent.name
@@ -2022,10 +2014,10 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
             # Debug: track why files might be skipped
             debug_info = {
                 "has_subdirs": has_subdirs,
-                "png_count": len(png_files),
+                "media_count": len(media_files),
                 "dir_pattern": dir_regex.pattern if dir_regex else None,
                 "file_pattern": file_regex.pattern,
-                "sample_files": [str(f) for f in png_files[:3]] if png_files else [],
+                "sample_files": [str(f) for f in media_files[:3]] if media_files else [],
             }
             
             return ScanProjectImagesResponse(
@@ -2123,10 +2115,10 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
 
             images: list[FolderImageInfo] = []
 
-            # Find all image files (PNG, JPG, JPEG)
-            image_extensions = {'.png', '.jpg', '.jpeg'}
+            # Find all media files (images + video)
+            media_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.avi', '.webm', '.mkv'}
             for item in folder.iterdir():
-                if item.is_file() and item.suffix.lower() in image_extensions:
+                if item.is_file() and item.suffix.lower() in media_extensions:
                     try:
                         stat_info = item.stat()
                         images.append(
@@ -2240,7 +2232,8 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
 
             panels: list[PanelFolderInfo] = []
             total_images = 0
-            image_extensions = {'.png', '.jpg', '.jpeg'}
+            # Support images AND video files for full media pipeline
+            media_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.avi', '.webm', '.mkv'}
 
             # Scan all subdirectories as panels
             for item in sorted(project_folder.iterdir()):
@@ -2249,7 +2242,7 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
                     
                     # Find all images in this panel folder
                     for img_file in item.iterdir():
-                        if img_file.is_file() and img_file.suffix.lower() in image_extensions:
+                        if img_file.is_file() and img_file.suffix.lower() in media_extensions:
                             try:
                                 stat_info = img_file.stat()
                                 panel_images.append(

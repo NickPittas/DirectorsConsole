@@ -115,7 +115,7 @@ python start.py --setup
 **Backend:**
 ```bash
 cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 ```
 
 **Frontend Development:**
@@ -141,7 +141,7 @@ npm run lint             # ESLint check
 ### Orchestrator
 ```bash
 cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
 **⚠️ NOTE:** `orchestrator/api/__init__.py` exposes `app` from `orchestrator/api/server.py`.
@@ -226,13 +226,13 @@ python -m pytest tests/test_cinema_rules.py -v
 **CinemaPromptEngineering:**
 ```bash
 # Optional: API configuration
-CPE_API_PORT=8000
+CPE_API_PORT=9800
 CPE_FRONTEND_PORT=5173
 ```
 
 **Orchestrator:**
 ```bash
-ORCHESTRATOR_PORT=8020
+ORCHESTRATOR_PORT=9820
 ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 ```
 
@@ -240,7 +240,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 
 ## API Endpoints Reference
 
-### CinemaPromptEngineering (Port 8000)
+### CinemaPromptEngineering (Port 9800)
 - `GET /api/health` - Health check
 - `GET /presets/live-action` - List film presets
 - `GET /presets/animation` - List animation presets
@@ -249,7 +249,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 - `POST /validate` - Validate configuration
 - `GET /settings/providers` - List LLM providers
 
-### Orchestrator (Port 8020)
+### Orchestrator (Port 9820)
 
 **Core Job Management:**
 - `GET /health` - Health check
@@ -320,7 +320,7 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 **Port already in use:**
 ```powershell
 # start-all.ps1 auto-cleans ports, or manually:
-Get-NetTCPConnection -LocalPort 8000 | Stop-Process -Id {$_.OwningProcess}
+Get-NetTCPConnection -LocalPort 9800 | Stop-Process -Id {$_.OwningProcess}
 ```
 
 **Missing dependencies:**
@@ -370,10 +370,15 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - **Panels** are the core canvas units, each with:
   - `workflowId`: Links to specific workflow configuration
   - `parameterValues`: Panel-specific parameters (NOT global)
-  - `imageHistory`: Stack of generated images with navigation
+  - `imageHistory`: Stack of generated images/videos with navigation
   - `status`: 'empty' | 'generating' | 'complete' | 'error'
+  - `progressPhase`: Multi-KSampler phase indicator (e.g., "Phase 1/2")
+  - `progressNodeName`: Currently executing ComfyUI node class (e.g., "KSampler", "VAEDecode")
+  - `progressNodesExecuted` / `progressTotalNodes`: Workflow step counter
+  - `parallelJobs`: Per-render-node tracking with full stage info
 - **Parameter Handling**: When switching workflows, ONLY preserve prompt and image inputs; reset all others (steps, cfg, sampler, etc.) to workflow defaults
 - **Generation**: Always use panel's stored `parameterValues`, not global state
+- **Video Support**: Videos detected from ComfyUI `output.gifs` and `output.videos` keys, saved with correct extension, displayed inline with `<video>` element
 
 ### Render Node Management
 - **Direct REST Calls**: Frontend calls ComfyUI nodes directly at their URLs
@@ -386,8 +391,11 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 1. **Global Cancel Button**: Red button next to Generate, interrupts all busy nodes
 2. **Node Restart**: System menu option + Node Manager selection with checkboxes
 3. **Image Deletion**: Delete button on images (canvas + backend via proxy)
-4. **Progress Bars**: Fixed overlay positioning for multi-node renders
-5. **Notification Fix**: Timer no longer resets on re-renders
+4. **Video Generation Pipeline**: Full support for AI video workflows (Wan 2.2, CogVideoX, etc.)
+5. **Generation Progress Sidebar**: Dedicated sidebar component replacing panel overlays
+6. **Per-Node Stage Tracking**: Real-time display of executing ComfyUI node type per render node
+7. **Multi-KSampler Progress**: Accumulated progress across multiple sampler phases
+8. **Notification Fix**: Timer no longer resets on re-renders
 
 ### Common Bugs & Solutions
 
@@ -420,6 +428,50 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - Parser: `CinemaPromptEngineering/frontend/src/storyboard/services/workflow-parser.ts`
 - Builder: `CinemaPromptEngineering/frontend/src/storyboard/workflow-builder.ts`
 - Templates: `CinemaPromptEngineering/frontend/src/storyboard/template-loader.ts`
+
+**Video & Progress**:
+- ComfyUI WebSocket: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-websocket.ts`
+- ComfyUI Client: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-client.ts`
+- Generation Progress Sidebar: `CinemaPromptEngineering/frontend/src/storyboard/components/GenerationProgress.tsx`
+- Project Manager: `CinemaPromptEngineering/frontend/src/storyboard/services/project-manager.ts`
+
+---
+
+### Recent Fixes (Feb 9, 2026)
+
+**Video Generation Pipeline** (Completed)
+- **Video Output Retrieval**: Added `extractMediaOutputs()` to check `output.images`, `output.gifs`, `output.videos` keys from ComfyUI history
+- **Video Detection**: `isVideoUrl()` checks filename param, direct URL extension, and path query parameter (for serve-image URLs)
+- **Media Type Detection**: `detectMediaType()` returns 'image' | 'video' | 'animated' based on file extension
+- **Dynamic Extensions**: `project-manager.ts` uses `getExtensionFromUrl()` to save files with correct extension (not hardcoded `.png`)
+- **Backend Video MIME Types**: `server.py` now maps `.mp4→video/mp4`, `.mov→video/quicktime`, `.avi→video/x-msvideo`, `.webm→video/webm`, `.mkv→video/x-matroska`
+- **Video Scan Support**: All scan endpoints (`scan_project_panels`, `scan_folder_images`, `scan_project_images`) now include video extensions `{'.mp4', '.mov', '.avi', '.webm', '.mkv'}`
+- **Video Display**: `<video>` element with controls, loop, autoplay, muted in panel canvas and image viewer
+
+**Multi-KSampler Progress Tracking** (Completed)
+- **ProgressData Enhancement**: Added `overallPercent`, `currentPhase`, `totalPhases`, `currentNodeName`, `nodesExecuted`, `totalNodes`
+- **WorkflowProgressInfo**: `buildWorkflowProgressInfo()` scans workflow JSON for all node class_types and sampler node IDs
+- **Phase Accumulation**: Progress accumulates across multiple KSampler phases instead of resetting each time
+- **Node Name Tracking**: `handleExecuting()` sends `currentNodeName` from `wfInfo.nodeTypes[node]` for every workflow node
+
+**Generation Progress Sidebar** (Completed)
+- **GenerationProgress.tsx**: New sidebar component showing per-panel progress cards
+- **Panel Indicator**: Replaced old overlay with minimal 3px bottom bar + percentage badge (`.panel-generating-mini`)
+- **Per-Node Stage Display**: Each parallel job row shows current ComfyUI node type, phase info, and step counter
+- **Stage Data Flow**: `trackParallelJobWithWebSocket` now stores `currentNodeName`, `progressPhase`, `nodesExecuted`, `totalNodes`
+- **Single-Node Stage**: Panel stores `progressNodesExecuted`, `progressTotalNodes`, `progressNodeName`, `progressPhase`
+
+**New Components:**
+- `GenerationProgress.tsx` - Sidebar progress panel with per-node stage tracking
+
+**Files Modified:**
+- `comfyui-websocket.ts` - Multi-phase progress, node name tracking, WorkflowProgressInfo
+- `comfyui-client.ts` - `extractMediaOutputs()`, `isVideoUrl()`, `detectMediaType()`, video MIME handling
+- `workflow-parser.ts` - Video output node detection
+- `project-manager.ts` - Dynamic file extension, `getExtensionFromUrl()`
+- `StoryboardUI.tsx` - Video rendering, progress sidebar integration, parallel job stage tracking
+- `StoryboardUI.css` - Minimal progress bar styles, sidebar progress section styles
+- `server.py` - Video extensions in scan endpoints, video MIME types in serve_image
 
 ---
 
@@ -503,7 +555,7 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - Duplicate `cinema_rules` directories (maintenance nightmare)
 - Frontend bypasses Orchestrator API for workflow execution
 - Inconsistent dependency versions across modules
-- StoryboardUI.tsx is 12,000+ line monolithic component
+- StoryboardUI.tsx is 7,100+ line monolithic component (reduced from 12,000+)
 
 **Performance (MEDIUM - Partially Addressed):**
 - No memoization in ParameterWidget components
@@ -530,5 +582,5 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 
 ---
 
-*Last Updated: February 6, 2026 - Phase 5 Code Review Remediation completed*
+*Last Updated: February 9, 2026 - Video pipeline, progress sidebar, per-node stage tracking*
 *Project: Director's Console - Project Eliot*

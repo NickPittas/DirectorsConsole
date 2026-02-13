@@ -54,7 +54,7 @@ Multi-node parallel generation allows you to select multiple render nodes in the
 ### Prerequisites
 
 1. **Multiple ComfyUI backends configured** - At least 2 render nodes connected to the Orchestrator
-2. **Orchestrator running** - The API server must be running on port 8020
+2. **Orchestrator running** - The API server must be running on port 9820
 3. **CPE frontend connected** - Storyboard UI with multi-node support
 
 ### Quick Start
@@ -97,31 +97,57 @@ The Multi-Node Selector displays all available ComfyUI backends:
 
 ### Results Display
 
-As generations complete, results appear in real-time:
+As generations complete, results appear in real-time in the **Generation Progress Sidebar** (right side panel):
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Parallel Results (2/3 completed)                               │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐                         │
-│  │ 🌆 ✓    │  │ 🌆 ✓    │  │ ⏳ 45%  │                         │
-│  │ Seed 42 │  │ Seed 8765│ │ Seed 3210│                        │
-│  │ 3090-01 │  │ 4090-WS │  │ 4080-LAB│                        │
-│  └─────────┘  └─────────┘  └─────────┘                         │
-│                                                                 │
-│  [Keep All Results]  [Keep Selected Only]  [Close]             │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  Generation Progress              2 active    │
+├─────────────────────────────────────────────────┤
+│  ▶ Panel 3: City at Night                  ✕  │
+│  ┌───────────────────────────────────────────┐│
+│  │ RTX-3090-01                 67%       ✕  ││
+│  │ Phase 1/2 · KSampler · Step 5/14        ││
+│  │ █████████████████████████░░░░░░░░░░░  ││
+│  ├───────────────────────────────────────────┤│
+│  │ RTX-4090-WS                 45%       ✕  ││
+│  │ VAEDecode · Step 12/14                  ││
+│  │ ████████████████░░░░░░░░░░░░░░░░░░░░  ││
+│  ├───────────────────────────────────────────┤│
+│  │ RTX-4080-LAB               Queued         ││
+│  └───────────────────────────────────────────┘│
+└─────────────────────────────────────────────────┘
 ```
+
+The sidebar shows:
+- **Per-node workflow stage**: Current ComfyUI node being executed (e.g., "CheckpointLoaderSimple", "KSampler", "VAEDecode", "SaveImage")
+- **Multi-phase progress**: For video workflows with multiple KSamplers, shows accumulated phase progress (e.g., "Phase 1/2")
+- **Step counter**: Shows workflow execution step (e.g., "Step 5/14")
+- **Cancel buttons**: Per-job cancel capability
+
+On the canvas, each generating panel shows a **minimal bottom bar** (3px green progress bar + small percentage badge) instead of the old blocking overlay.
 
 ### Result States
 
 | State | Visual | Description |
 |-------|--------|-------------|
 | **Queued** | ⏳ Hourglass | Waiting to start |
-| **Running** | 🔄 Progress ring | Actively generating |
+| **Running** | 🔄 Progress ring | Actively generating (shows stage info) |
 | **Completed** | ✓ Checkmark | Successfully finished |
 | **Failed** | ⚠️ Warning | Error occurred |
 | **Timeout** | ⏱️ Clock | Exceeded time limit |
+
+### Per-Node Stage Tracking
+
+During generation, the progress sidebar shows real-time information about what each ComfyUI render node is doing:
+
+| Stage Info | Example | Source |
+|------------|---------|--------|
+| **Current Node** | "KSampler", "VAEDecode", "CheckpointLoaderSimple" | `handleExecuting()` in WebSocket |
+| **Phase** | "Phase 1/2" | Multi-KSampler phase counter |
+| **Step Counter** | "Step 5/14" | Workflow node execution counter |
+| **Progress %** | "67%" | Accumulated sampler progress |
+
+This data is tracked per render node in parallel jobs, so you can see exactly what each GPU is processing at any moment.
 
 ---
 
@@ -319,7 +345,7 @@ Adjust based on:
 **Solutions:**
 ```bash
 # Check Orchestrator connectivity
-curl http://localhost:8020/api/backends
+curl http://localhost:9820/api/backends
 
 # Verify backends are enabled
 # Check backend configuration in Orchestrator settings
@@ -363,7 +389,7 @@ GET /api/backends/{backend_id}/status
 **Solutions:**
 ```javascript
 // Verify WebSocket URL
-const ws = new WebSocket('ws://localhost:8020/ws/job-groups/jg_abc123');
+const ws = new WebSocket('ws://localhost:9820/ws/job-groups/jg_abc123');
 
 // Check browser console for errors
 // Verify no firewall blocking WS connections
@@ -422,5 +448,5 @@ See [API Reference](../Orchestrator/docs/API_JOB_GROUPS.md) for complete documen
 
 ---
 
-*Last Updated: February 1, 2026*
+*Last Updated: February 9, 2026*
 *Part of Director's Console - Project Eliot*

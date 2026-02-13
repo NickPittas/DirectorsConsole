@@ -122,6 +122,22 @@ export function getDefaultOrchestratorUrl(): string {
   return 'http://localhost:9820';
 }
 
+function normalizeOrchestratorUrl(orchestratorUrl: string): string {
+  if (!orchestratorUrl) return orchestratorUrl;
+
+  try {
+    const parsed = new URL(orchestratorUrl);
+    if (parsed.port === '8020') {
+      parsed.port = '9820';
+      return parsed.toString().replace(/\/$/, '');
+    }
+  } catch {
+    // Fall back to simple replace for non-standard URLs.
+  }
+
+  return orchestratorUrl.replace(/:8020(\b|\/)/, ':9820$1');
+}
+
 const DEFAULT_PROJECT: ProjectSettings = {
   name: 'Untitled Project',
   path: '',
@@ -209,6 +225,31 @@ class ProjectManager {
   // ---------------------------------------------------------------------------
   // Naming Template
   // ---------------------------------------------------------------------------
+  
+  /**
+   * Detect file extension from a ComfyUI URL.
+   * Parses the `filename` query parameter from /view URLs, or falls back to .png.
+   */
+  getExtensionFromUrl(url: string): string {
+    try {
+      const urlObj = new URL(url, 'http://localhost');
+      const filename = urlObj.searchParams.get('filename');
+      if (filename) {
+        const dotIndex = filename.lastIndexOf('.');
+        if (dotIndex >= 0) {
+          return filename.substring(dotIndex).toLowerCase();
+        }
+      }
+    } catch {
+      // Fallback: try to extract from URL path
+      const lastDot = url.lastIndexOf('.');
+      if (lastDot >= 0) {
+        const ext = url.substring(lastDot).split(/[?#]/)[0].toLowerCase();
+        if (ext.length <= 6) return ext; // Reasonable extension length
+      }
+    }
+    return '.png'; // Default fallback
+  }
   
   generateFilename(
     panelId: number,
@@ -510,14 +551,17 @@ class ProjectManager {
       ? this.resolvePanelFolder(panelName)
       : this.currentProject.path;
     
+    // Detect file extension from the source URL (supports images and videos)
+    const fileExtension = this.getExtensionFromUrl(imageUrl);
+    
     // Phase 2: Use panel name for filename generation if provided
     const filename = (panelName 
       ? this.generateFilenameForPanel(panelName, version, metadata)
-      : this.generateFilename(panelId, version, metadata)) + '.png';
+      : this.generateFilename(panelId, version, metadata)) + fileExtension;
     
     try {
       // Call the Orchestrator's save-image endpoint
-      // No metadata needed - PNG already contains embedded ComfyUI workflow
+      // Handles both images and videos (fetches bytes and saves to disk)
       const response = await fetch(`${orchestratorUrl}/api/save-image`, {
         method: 'POST',
         headers: {
@@ -607,7 +651,8 @@ class ProjectManager {
     version: number,
     metadata: Partial<ImageMetadata>
   ): Promise<{ filename: string; blob: Blob }> {
-    const filename = this.generateFilename(panelId, version, metadata) + '.png';
+    const ext = this.getExtensionFromUrl(url);
+    const filename = this.generateFilename(panelId, version, metadata) + ext;
     const blob = await this.downloadImage(url);
     return { filename, blob };
   }
@@ -662,6 +707,7 @@ class ProjectManager {
         this.currentProject = {
           ...DEFAULT_PROJECT,
           ...parsed,
+          orchestratorUrl: normalizeOrchestratorUrl(parsed.orchestratorUrl || ''),
           created: new Date(parsed.created),
           lastModified: new Date(parsed.lastModified),
         };
@@ -938,6 +984,7 @@ class ProjectManager {
         this.currentProject = {
           ...DEFAULT_PROJECT,
           ...settings,
+          orchestratorUrl: normalizeOrchestratorUrl(settings.orchestratorUrl || ''),
           created: new Date(settings.created),
           lastModified: new Date(settings.lastModified),
         };

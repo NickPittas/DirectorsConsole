@@ -150,7 +150,7 @@ def _derive_key(seed: str, salt: bytes) -> bytes:
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        iterations=480000,
+        iterations=498000,
     )
     key = base64.urlsafe_b64encode(kdf.derive(seed.encode()))
     return key

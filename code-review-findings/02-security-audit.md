@@ -641,7 +641,7 @@ allow_origins=[
 ],
 
 # File: Orchestrator\orchestrator\api\server.py, Line 2711
-uvicorn.run(app, host="0.0.0.0", port=8000)  # No SSL/TLS
+uvicorn.run(app, host="0.0.0.0", port=9800)  # No SSL/TLS
 ```
 
 **Attack Vectors:**
@@ -663,7 +663,7 @@ ssl_context.load_cert_chain("cert.pem", "key.pem")
 uvicorn.run(
     app,
     host="0.0.0.0",
-    port=8000,
+    port=9800,
     ssl_keyfile="key.pem",
     ssl_certfile="cert.pem"
 )

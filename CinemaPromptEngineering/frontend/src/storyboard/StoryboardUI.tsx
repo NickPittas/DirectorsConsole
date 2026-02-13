@@ -30,7 +30,8 @@ import {
   Printer
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
-import { getComfyUIWebSocket, ComfyUIWebSocket } from './services/comfyui-websocket';
+import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
+import { extractMediaOutputs, isVideoUrl } from './comfyui-client';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
@@ -40,6 +41,7 @@ import { PanelNotes } from './components/PanelNotes';
 import { PanelHeader } from './components/PanelHeader';
 import { StarRating } from './components/StarRating';
 import { PrintDialog } from './components/PrintDialog';
+import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
 import { getSelectedLlmSettings, getConfiguredProviders } from '../components/Settings';
 import { api } from '../api/client';
@@ -100,6 +102,56 @@ function calculateNewPanelY(panelId: number, _existingCount: number): number {
 }
 
 // ============================================================================
+// Workflow Progress Helpers
+// ============================================================================
+
+/**
+ * Known ComfyUI node class_types that report step-by-step progress.
+ * These are KSampler variants and any custom sampler nodes.
+ */
+const SAMPLER_NODE_TYPES = new Set([
+  'KSampler', 'KSamplerAdvanced', 'KSampler (Efficient)',
+  'SamplerCustom', 'SamplerCustomAdvanced',
+  'KSamplerSelect', 'SamplerDPMPP_2M_SDE',
+  // AnimateDiff / video-specific samplers
+  'ADE_AnimateDiffSampler', 'ADE_AnimateDiffSamplerAdvanced',
+  'FreeU_V2', 'SamplerDPMPP_3M_SDE',
+  // WanVideo / Hunyuan samplers
+  'WanSampler', 'HunyuanSampler',
+  // Common custom node samplers
+  'Efficient Loader', // Some efficiency nodes wrap KSampler
+  'ImpactKSamplerBasicPipe', 'ImpactKSamplerAdvancedBasicPipe',
+]);
+
+/**
+ * Build WorkflowProgressInfo from a ComfyUI workflow dict.
+ * Identifies sampler nodes to enable multi-phase progress tracking.
+ */
+function buildWorkflowProgressInfo(workflow: Record<string, any>): WorkflowProgressInfo {
+  const nodeTypes: Record<string, string> = {};
+  const samplerNodeIds: string[] = [];
+
+  for (const [nodeId, node] of Object.entries(workflow)) {
+    if (typeof node !== 'object' || node === null) continue;
+    const classType = node.class_type || '';
+    nodeTypes[nodeId] = classType;
+
+    // Check if this is a sampler/progress-reporting node
+    if (SAMPLER_NODE_TYPES.has(classType) || 
+        classType.toLowerCase().includes('ksampler') ||
+        classType.toLowerCase().includes('sampler')) {
+      samplerNodeIds.push(nodeId);
+    }
+  }
+
+  return {
+    totalNodes: Object.keys(workflow).length,
+    samplerNodeIds,
+    nodeTypes,
+  };
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -149,6 +201,10 @@ export interface Panel {
   height: number;
   status: 'empty' | 'generating' | 'complete' | 'error';
   progress: number;
+  progressPhase?: string; // e.g., "Phase 1/2" or "VAE Decode" for multi-sampler workflows
+  progressNodeName?: string; // Currently executing node type (e.g., "KSampler")
+  progressNodesExecuted?: number; // How many workflow nodes have completed
+  progressTotalNodes?: number; // Total number of workflow nodes
   notes: string;
   nodeId?: string; // Selected render node for this panel
   workflowId?: string; // Per-panel workflow selection
@@ -169,6 +225,11 @@ export interface Panel {
     status: 'pending' | 'running' | 'complete' | 'error' | 'cancelled';
     resultUrl?: string;
     stuckSince?: number; // Timestamp when job was detected as stuck
+    // Per-node stage tracking
+    currentNodeName?: string; // ComfyUI class_type being executed (e.g., "KSampler")
+    progressPhase?: string; // e.g., "Phase 1/2"
+    nodesExecuted?: number; // How many workflow nodes have executed so far
+    totalNodes?: number; // Total workflow node count
   }>;
   batchSaveTriggered?: boolean; // Prevents duplicate batch saves
 }
@@ -382,10 +443,12 @@ export function StoryboardUI() {
   // Refs to always have access to latest state values in callbacks (avoids stale closures)
   const parameterValuesRef = useRef<Record<string, any>>(parameterValues);
   const selectedPanelIdRef = useRef<number | null>(selectedPanelId);
+  const panelsRef = useRef(panels);
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
+  panelsRef.current = panels;
 
   // Phase 2: Resize handlers
   const handleResizeStart = useCallback((panelId: number, e: React.MouseEvent) => {
@@ -791,6 +854,25 @@ export function StoryboardUI() {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Effect - Cleanup all WebSockets and polling on unmount / page unload
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      disconnectAllWebSockets();
+      orchestratorManager.stopPolling();
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Also cleanup on React component unmount (HMR, navigation)
+      disconnectAllWebSockets();
+      orchestratorManager.stopPolling();
+    };
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // Effect - Fetch backends from Orchestrator API and start health monitoring
   // ---------------------------------------------------------------------------
   useEffect(() => {
@@ -807,6 +889,10 @@ export function StoryboardUI() {
         nodes.forEach(node => orchestratorManager.pollNode(node));
       }, 100);
     }
+    
+    return () => {
+      orchestratorManager.stopPolling();
+    };
   }, [projectSettings.orchestratorUrl]);
   
   // ---------------------------------------------------------------------------
@@ -1917,6 +2003,12 @@ export function StoryboardUI() {
       console.log('[Parallel] Base workflow built:', JSON.stringify(baseWorkflow, null, 2));
       addLog('info', `Base workflow nodes: ${Object.keys(baseWorkflow).length}`);
       
+      // Build workflow progress info for multi-phase tracking
+      const parallelWfProgressInfo = buildWorkflowProgressInfo(baseWorkflow);
+      if (parallelWfProgressInfo.samplerNodeIds.length > 1) {
+        addLog('info', `Multi-sampler workflow: ${parallelWfProgressInfo.samplerNodeIds.length} sampler phases detected`);
+      }
+      
       // ====================================================================================
       // STEP 2: FOR EACH NODE, CLONE WORKFLOW AND CHANGE ONLY THE SEED
       // ====================================================================================
@@ -1966,9 +2058,12 @@ export function StoryboardUI() {
         };
       });
       
-      // Initialize atomic version counter for this panel
-      const currentVersion = panel?.imageHistory?.length || 0;
-      nextVersionRef.current.set(panelId, currentVersion + 1);
+      // Initialize atomic version counter for this panel using filesystem scan
+      // This prevents version collisions when multiple parallel jobs save concurrently
+      const panelName = panel?.name || `Panel_${String(panelId).padStart(2, '0')}`;
+      const currentHistory = panel?.imageHistory || [];
+      const startVersion = await projectManager.getNextVersion(panelName, currentHistory);
+      nextVersionRef.current.set(panelId, startVersion);
       
       // Update panel to show it's generating with parallel jobs tracking
       setPanels(prev => prev.map(p =>
@@ -2083,7 +2178,7 @@ export function StoryboardUI() {
           
           // Track progress via WebSocket if connected, otherwise poll
           if (nodeWs.connected) {
-            trackParallelJobWithWebSocket(data.prompt_id, panelId, backendId, node.url, nodeWs);
+            trackParallelJobWithWebSocket(data.prompt_id, panelId, backendId, node.url, nodeWs, clientId, parallelWfProgressInfo);
           } else {
             trackParallelJobWithPolling(data.prompt_id, panelId, backendId, node.url);
           }
@@ -2485,9 +2580,15 @@ export function StoryboardUI() {
       const data = await response.json();
       addLog('comfyui', `Queued prompt: ${data.prompt_id} on ${nodeName}`);
       
+      // Build workflow progress info for multi-phase tracking (e.g., 2 KSamplers in video workflows)
+      const wfProgressInfo = buildWorkflowProgressInfo(builtWorkflow);
+      if (wfProgressInfo.samplerNodeIds.length > 1) {
+        addLog('info', `Multi-sampler workflow detected: ${wfProgressInfo.samplerNodeIds.length} sampler phases`);
+      }
+      
       // Track progress via WebSocket if connected, otherwise poll
       if (nodeWs.connected) {
-        trackWithWebSocket(data.prompt_id, panelId, targetUrl, nodeWs);
+        trackWithWebSocket(data.prompt_id, panelId, targetUrl, nodeWs, clientId, wfProgressInfo);
       } else {
         addLog('warning', `WebSocket not connected, falling back to polling`);
         pollForResult(data.prompt_id, panelId, targetUrl);
@@ -2544,20 +2645,18 @@ export function StoryboardUI() {
           if (history[promptId]) {
             const outputs = history[promptId].outputs;
             
-            // Collect ALL output images (matching WebSocket path behavior)
+            // Collect ALL output media (images + videos) matching WebSocket path behavior
             const allImages: string[] = [];
             for (const nodeId in outputs) {
               const nodeOutput = outputs[nodeId];
-              if (nodeOutput.images && nodeOutput.images.length > 0) {
-                for (const img of nodeOutput.images) {
-                  const imageUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
-                  allImages.push(imageUrl);
-                }
+              const mediaOutputs = extractMediaOutputs(nodeOutput, targetUrl);
+              for (const media of mediaOutputs) {
+                allImages.push(media.url);
               }
             }
             
             if (allImages.length > 0) {
-              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} image(s)`);
+              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} output(s)`);
               activePollsRef.current.delete(pollKey);
               
               // Auto-save if enabled - read from singleton to avoid stale closure
@@ -2671,6 +2770,13 @@ export function StoryboardUI() {
                 });
               });
               return;
+            } else if (Object.keys(outputs).length > 0) {
+              // Outputs exist but no media was extracted — log for debugging
+              const outputKeys = Object.keys(outputs).map(nodeId => {
+                const nodeOutput = outputs[nodeId];
+                return `${nodeId}: [${Object.keys(nodeOutput).join(', ')}]`;
+              });
+              addLog('warning', `Generation completed but no media found in outputs. Node output keys: ${outputKeys.join('; ')}`);
             }
           }
         }
@@ -2713,7 +2819,7 @@ export function StoryboardUI() {
   }, [addLog]);
   
   // Track generation progress via WebSocket (real-time)
-  const trackWithWebSocket = useCallback((promptId: string, panelId: number, targetUrl: string, ws?: ComfyUIWebSocket) => {
+  const trackWithWebSocket = useCallback((promptId: string, panelId: number, targetUrl: string, ws?: ComfyUIWebSocket, clientId?: string, workflowInfo?: WorkflowProgressInfo) => {
     const websocket = ws || wsRef.current;
     if (!websocket) {
       // Fallback to polling
@@ -2721,15 +2827,48 @@ export function StoryboardUI() {
       return;
     }
     
+    // Helper to disconnect the per-generation WebSocket after completion
+    const cleanupWs = () => {
+      if (clientId) {
+        // Disconnect and remove this per-generation WebSocket instance
+        disconnectWebSocket(targetUrl, clientId);
+      }
+    };
+    
     websocket.trackPrompt(
       promptId,
       panelId,
       // Progress callback
       (progress) => {
-        const pct = Math.round((progress.value / progress.max) * 100);
-        addLog('info', `Progress: ${pct}% (${progress.value}/${progress.max})`);
+        // Use overall percent when available (accounts for multi-sampler workflows)
+        const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
+        
+        // Build informative log message
+        let logMsg = `Progress: ${pct}%`;
+        if (progress.totalPhases && progress.totalPhases > 1) {
+          logMsg += ` (phase ${progress.currentPhase}/${progress.totalPhases}: ${progress.value}/${progress.max})`;
+        } else {
+          logMsg += ` (${progress.value}/${progress.max})`;
+        }
+        if (progress.currentNodeName) {
+          logMsg += ` [${progress.currentNodeName}]`;
+        }
+        addLog('info', logMsg);
+        
+        // Build phase display string
+        const progressPhase = (progress.totalPhases && progress.totalPhases > 1)
+          ? `Phase ${progress.currentPhase}/${progress.totalPhases}`
+          : undefined;
+        
         setPanels(prev => prev.map(p => 
-          p.id === panelId ? { ...p, progress: pct } : p
+          p.id === panelId ? { 
+            ...p, 
+            progress: pct,
+            progressPhase,
+            progressNodeName: progress.currentNodeName,
+            progressNodesExecuted: progress.nodesExecuted,
+            progressTotalNodes: progress.totalNodes,
+          } : p
         ));
       },
       // Completed callback
@@ -2744,8 +2883,10 @@ export function StoryboardUI() {
         const currentSettings = projectManager.getProject();
         
         // SKIP if this panel has parallel jobs - they're handled by saveIndividualParallelResult
-        const panel = panels.find(p => p.id === panelId);
-        if (panel?.parallelJobs && panel.parallelJobs.length > 0) {
+        // CRITICAL: Use panelsRef.current to avoid stale closure - panels captured in this
+        // callback go stale because it's registered once via ws.trackPrompt and never updated
+        const panelNow = panelsRef.current.find(p => p.id === panelId);
+        if (panelNow?.parallelJobs && panelNow.parallelJobs.length > 0) {
           addLog('comfyui', `Skipping single-node save - panel has parallel jobs, handled by parallel tracker`);
           return;
         }
@@ -2766,9 +2907,9 @@ export function StoryboardUI() {
               // If no outputs are explicitly selected, use all of them (backwards compatibility)
               const useAllOutputs = selectedOutputNodeIds.length === 0;
               
-              // Collect images from selected output nodes only
+              // Collect media from selected output nodes only (images + videos)
               const allImages: string[] = [];
-              const nodeOutputMap: Record<string, string[]> = {}; // Track which node produced which images
+              const nodeOutputMap: Record<string, string[]> = {}; // Track which node produced which outputs
               
               for (const nodeId of Object.keys(promptData.outputs)) {
                 // Skip this node if it's not selected (unless we're using all outputs)
@@ -2778,13 +2919,12 @@ export function StoryboardUI() {
                 }
                 
                 const output = promptData.outputs[nodeId];
-                if (output.images && output.images.length > 0) {
-                  const nodeImages = output.images.map((img: any) => 
-                    `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`
-                  );
-                  allImages.push(...nodeImages);
-                  nodeOutputMap[nodeId] = nodeImages;
-                  addLog('comfyui', `Node ${nodeId} produced ${nodeImages.length} image(s)`);
+                const mediaOutputs = extractMediaOutputs(output, targetUrl);
+                if (mediaOutputs.length > 0) {
+                  const nodeUrls = mediaOutputs.map(m => m.url);
+                  allImages.push(...nodeUrls);
+                  nodeOutputMap[nodeId] = nodeUrls;
+                  addLog('comfyui', `Node ${nodeId} produced ${mediaOutputs.length} output(s)`);
                 }
               }
               
@@ -2802,8 +2942,8 @@ export function StoryboardUI() {
                    const generationTime = startTime ? (Date.now() - startTime) / 1000 : undefined;
                    
                    // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
-                   // Capture panels state NOW to avoid stale closure
-                   const panelsSnapshot = [...panels];
+                   // Use panelsRef.current to avoid stale closure from WebSocket callback
+                   const panelsSnapshot = [...panelsRef.current];
                    (async () => {
                      try {
                         // Get the panel to determine its current history
@@ -2906,6 +3046,7 @@ export function StoryboardUI() {
                     };
                   });
                 });
+                cleanupWs();
                 return;
               }
             }
@@ -2918,6 +3059,7 @@ export function StoryboardUI() {
         setPanels(prev => prev.map(p => 
           p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
         ));
+        cleanupWs();
       },
       // Error callback
       (_promptId, error) => {
@@ -2927,7 +3069,10 @@ export function StoryboardUI() {
         setPanels(prev => prev.map(p => 
           p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
         ));
-      }
+        cleanupWs();
+      },
+      // Workflow info for multi-phase progress tracking
+      workflowInfo
     );
   }, [addLog, showError, pollForResult, panels]);
   
@@ -2943,7 +3088,9 @@ export function StoryboardUI() {
     panelId: number,
     job: { nodeId: string; nodeName: string; resultUrl: string; seed: number }
   ) => {
-    const panel = panels.find(p => p.id === panelId);
+    // CRITICAL: Use panelsRef.current to avoid stale closure issues
+    // The panels captured in this closure go stale as parallel jobs complete and update state
+    const panel = panelsRef.current.find(p => p.id === panelId);
     if (!panel || !job.resultUrl) return;
 
     // Prevent duplicate saves for the same job
@@ -2973,11 +3120,12 @@ export function StoryboardUI() {
         seed: job.seed,
       };
 
-      // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
-      // CRITICAL FIX #2: Use panel NAME (not ID) to match folder structure
-      const currentHistory = panel.imageHistory || [];
+      // CRITICAL FIX: Use atomic version counter to prevent version collisions
+      // Multiple parallel jobs completing concurrently would all get the same version
+      // from getNextVersion() because filesystem scan returns same result before any save completes
       const panelName = panel?.name || `Panel_${String(panelId).padStart(2, '0')}`;
-      const nextVersion = await projectManager.getNextVersion(panelName, currentHistory);
+      const nextVersion = nextVersionRef.current.get(panelId) || 1;
+      nextVersionRef.current.set(panelId, nextVersion + 1);
 
       // Create history entry for this single job
       const entry = projectManager.createHistoryEntry(
@@ -3060,29 +3208,53 @@ export function StoryboardUI() {
       addLog('error', `Failed to save result from ${job.nodeName}: ${err}`);
       // Don't throw - let other jobs continue
     }
-  }, [panels, workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
+  }, [workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
 
   /**
    * Track a parallel job via WebSocket - updates individual job progress
    * and batches saves when ALL jobs complete to avoid race conditions
    */
+  // Note: panels removed from deps - uses panelsRef.current instead to avoid stale closures
   const trackParallelJobWithWebSocket = useCallback((
     promptId: string,
     panelId: number,
     nodeId: string,
     targetUrl: string,
-    ws: ComfyUIWebSocket
+    ws: ComfyUIWebSocket,
+    clientId?: string,
+    workflowInfo?: WorkflowProgressInfo
   ) => {
+    // Helper to disconnect the per-generation WebSocket after completion
+    const cleanupWs = () => {
+      if (clientId) {
+        disconnectWebSocket(targetUrl, clientId);
+      }
+    };
+    
     ws.trackPrompt(
       promptId,
       panelId,
       // Progress callback - update this specific job's progress
       (progress) => {
-        const pct = Math.round((progress.value / progress.max) * 100);
+        // Use overall percent when available (accounts for multi-sampler workflows)
+        const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
+        
+        // Build phase display string
+        const progressPhase = (progress.totalPhases && progress.totalPhases > 1)
+          ? `Phase ${progress.currentPhase}/${progress.totalPhases}`
+          : undefined;
+        
         setPanels(prev => prev.map(p => {
           if (p.id !== panelId || !p.parallelJobs) return p;
           const updatedJobs = p.parallelJobs.map(j =>
-            j.nodeId === nodeId ? { ...j, progress: pct } : j
+            j.nodeId === nodeId ? {
+              ...j,
+              progress: pct,
+              currentNodeName: progress.currentNodeName || j.currentNodeName,
+              progressPhase,
+              nodesExecuted: progress.nodesExecuted,
+              totalNodes: progress.totalNodes,
+            } : j
           );
           // Update overall panel progress as average of all jobs
           const avgProgress = Math.round(
@@ -3104,13 +3276,13 @@ export function StoryboardUI() {
           const promptData = historyData[promptId];
           
           if (promptData?.outputs) {
-            // Collect image URL from first output
+            // Collect media URL from first output (images, gifs, or videos)
             let resultUrl: string | undefined;
             for (const nodeIdKey of Object.keys(promptData.outputs)) {
               const output = promptData.outputs[nodeIdKey];
-              if (output.images && output.images.length > 0) {
-                const img = output.images[0];
-                resultUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
+              const mediaOutputs = extractMediaOutputs(output, targetUrl);
+              if (mediaOutputs.length > 0) {
+                resultUrl = mediaOutputs[0].url;
                 break;
               }
             }
@@ -3159,6 +3331,7 @@ export function StoryboardUI() {
                 
                 return { ...p, parallelJobs: updatedJobs };
               }));
+              cleanupWs();
             }
           }
         } catch (error) {
@@ -3172,6 +3345,7 @@ export function StoryboardUI() {
               )
             };
           }));
+          cleanupWs();
         }
       },
       // Error callback
@@ -3186,7 +3360,10 @@ export function StoryboardUI() {
             )
           };
         }));
-      }
+        cleanupWs();
+      },
+      // Workflow info for multi-phase progress tracking
+      workflowInfo
     );
   }, [addLog, saveIndividualParallelResult]);
   
@@ -3225,13 +3402,13 @@ export function StoryboardUI() {
           const history = await historyResponse.json();
           
           if (history[promptId]?.outputs) {
-            // Job complete - extract result
+            // Job complete - extract result (images, gifs, or videos)
             let resultUrl: string | undefined;
             for (const nodeIdKey of Object.keys(history[promptId].outputs)) {
               const output = history[promptId].outputs[nodeIdKey];
-              if (output.images && output.images.length > 0) {
-                const img = output.images[0];
-                resultUrl = `${targetUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`;
+              const mediaOutputs = extractMediaOutputs(output, targetUrl);
+              if (mediaOutputs.length > 0) {
+                resultUrl = mediaOutputs[0].url;
                 break;
               }
             }
@@ -3514,8 +3691,43 @@ export function StoryboardUI() {
       // Each folder becomes a panel, named after the folder
       const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
       const restoredPanels: Panel[] = [];
-      let panelId = 1;
+      const usedIds = new Set<number>();
 
+      // Helper to get next unique ID
+      const getNextUniqueId = (): number => {
+        let nextId = 1;
+        while (usedIds.has(nextId)) nextId++;
+        usedIds.add(nextId);
+        return nextId;
+      };
+
+      // STEP 1: Match scanned folders to saved panels by name
+      const savedPanels = result.state.panels as Panel[];
+      const matchedSavedNames = new Set<string>();
+      const matchedFolderNames = new Set<string>();
+
+      // First pass: exact name matches
+      for (const panelFolder of scanResult.panels) {
+        const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name);
+        if (savedPanel && savedPanel.name) {
+          matchedSavedNames.add(savedPanel.name);
+          matchedFolderNames.add(panelFolder.panel_name);
+        }
+      }
+
+      // STEP 2: For unmatched folders and unmatched saved panels, pair by sorted order
+      // This handles the rename case: if you renamed "Panel_01" to "Hero_Shot",
+      // the unmatched saved "Panel_01" gets paired with unmatched folder "Hero_Shot"
+      const unmatchedFolders = scanResult.panels.filter(pf => !matchedFolderNames.has(pf.panel_name));
+      const unmatchedSaved = savedPanels.filter(p => !matchedSavedNames.has(p.name ?? ''));
+      const fallbackPairs = new Map<string, Panel>(); // folder name -> saved panel
+      for (let i = 0; i < unmatchedFolders.length && i < unmatchedSaved.length; i++) {
+        fallbackPairs.set(unmatchedFolders[i].panel_name, unmatchedSaved[i]);
+        matchedSavedNames.add(unmatchedSaved[i].name ?? ''); // Mark as consumed
+        console.log(`[Load] Paired renamed folder "${unmatchedFolders[i].panel_name}" with saved panel "${unmatchedSaved[i].name}"`);
+      }
+
+      // STEP 3: Build panels from scanned folders
       for (const panelFolder of scanResult.panels) {
         // Filter out deleted images
         const validImages = panelFolder.images.filter(
@@ -3527,10 +3739,10 @@ export function StoryboardUI() {
           continue;
         }
 
-        // Try to find saved panel data by name
-        const savedPanel = result.state.panels.find(
-          (p: unknown) => (p as Panel).name === panelFolder.panel_name
-        ) as Panel | undefined;
+        // Try to find saved panel data: first by exact name, then by fallback pair
+        const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name)
+          || fallbackPairs.get(panelFolder.panel_name)
+          || undefined;
 
         // DEBUG: Log what we found
         console.log('[Load] Panel folder:', panelFolder.panel_name, 'Saved panel found:', savedPanel ? {
@@ -3538,7 +3750,6 @@ export function StoryboardUI() {
           notes: savedPanel.notes,
           imageRatings: (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings,
         } : 'NOT FOUND');
-        console.log('[Load] All saved panels:', result.state.panels.map((p: unknown) => (p as Panel).name));
 
         // Get saved image ratings for this panel
         const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
@@ -3562,14 +3773,21 @@ export function StoryboardUI() {
           } as ImageMetadata
         }));
 
-        // Use saved panel ID if available, otherwise use next available ID
-        const usePanelId = savedPanel?.id ?? panelId;
+        // Use saved panel ID if available and not already taken, otherwise assign unique
+        let usePanelId: number;
+        if (savedPanel?.id && !usedIds.has(savedPanel.id)) {
+          usePanelId = savedPanel.id;
+          usedIds.add(usePanelId);
+        } else {
+          usePanelId = getNextUniqueId();
+        }
 
+        const panelIndex = restoredPanels.length;
         restoredPanels.push({
           id: usePanelId,
           name: panelFolder.panel_name,
-          x: savedPanel?.x ?? calculateNewPanelX(panelId, panelId),
-          y: savedPanel?.y ?? calculateNewPanelY(panelId, panelId),
+          x: savedPanel?.x ?? calculateNewPanelX(panelIndex + 1, panelIndex + 1),
+          y: savedPanel?.y ?? calculateNewPanelY(panelIndex + 1, panelIndex + 1),
           width: savedPanel?.width ?? 300,
           height: savedPanel?.height ?? 300,
           notes: savedPanel?.notes ?? '',
@@ -3586,17 +3804,23 @@ export function StoryboardUI() {
           locked: savedPanel?.locked ?? false,
           selected: false,
         });
-
-        panelId++;
       }
 
-      // Also restore any saved panels that don't have folders (empty panels)
-      for (const savedPanel of result.state.panels as Panel[]) {
-        const hasFolder = scanResult.panels.some(pf => pf.panel_name === savedPanel.name);
-        if (!hasFolder && savedPanel.name) {
+      // STEP 4: Restore saved panels that have no folder AND weren't paired with renamed folders
+      for (const savedPanel of savedPanels) {
+        if (!savedPanel.name) continue;
+        if (matchedSavedNames.has(savedPanel.name)) continue; // Already matched or paired
           // Panel exists in save file but has no folder - restore it empty
+          // Use saved ID if not already taken, otherwise assign unique
+          let emptyPanelId: number;
+          if (savedPanel.id && !usedIds.has(savedPanel.id)) {
+            emptyPanelId = savedPanel.id;
+            usedIds.add(emptyPanelId);
+          } else {
+            emptyPanelId = getNextUniqueId();
+          }
           restoredPanels.push({
-            id: savedPanel.id,
+            id: emptyPanelId,
             name: savedPanel.name,
             x: savedPanel.x,
             y: savedPanel.y,
@@ -3616,7 +3840,6 @@ export function StoryboardUI() {
             locked: false,
             selected: false,
           });
-        }
       }
 
       // Sort panels by ID for consistent ordering
@@ -3701,17 +3924,166 @@ export function StoryboardUI() {
     const result = await projectManager.loadProjectState(projectPath);
     
     if (result.success && result.state) {
-      // Restore panels with all their history, but reset generation state
-      const restoredPanels = (result.state.panels as typeof panels).map(panel => {
-        const newStatus = panel.image ? 'complete' : 'empty';
-        return {
-          ...panel,
-          status: newStatus as 'empty' | 'complete',
-          progress: panel.image ? 100 : 0,
-          parallelJobs: undefined,
+      // Get deleted images from saved state
+      const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
+      setDeletedImages(savedDeletedImages);
+      
+      // Scan the filesystem for current folder/image state
+      // This handles renamed folders and images since the project was last saved
+      const scanResult = await projectManager.scanProjectPanels();
+      
+      if (scanResult.success && scanResult.panels.length > 0) {
+        // Re-initialize panels from filesystem scan, merging saved metadata
+        const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+        const restoredPanels: Panel[] = [];
+        const usedIds = new Set<number>();
+        
+        const getNextUniqueId = (): number => {
+          let nextId = 1;
+          while (usedIds.has(nextId)) nextId++;
+          usedIds.add(nextId);
+          return nextId;
         };
-      });
-      setPanels(restoredPanels);
+        
+        // Match scanned folders to saved panels by name, then pair unmatched by order
+        const savedPanels2 = result.state.panels as Panel[];
+        const matchedSavedNames2 = new Set<string>();
+        const matchedFolderNames2 = new Set<string>();
+        
+        for (const pf of scanResult.panels) {
+          const sp = savedPanels2.find(p => p.name === pf.panel_name);
+          if (sp && sp.name) { matchedSavedNames2.add(sp.name); matchedFolderNames2.add(pf.panel_name); }
+        }
+        
+        const unmatchedFolders2 = scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name));
+        const unmatchedSaved2 = savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? ''));
+        const fallbackPairs2 = new Map<string, Panel>();
+        for (let i = 0; i < unmatchedFolders2.length && i < unmatchedSaved2.length; i++) {
+          fallbackPairs2.set(unmatchedFolders2[i].panel_name, unmatchedSaved2[i]);
+          matchedSavedNames2.add(unmatchedSaved2[i].name ?? '');
+        }
+        
+        for (const panelFolder of scanResult.panels) {
+          const validImages = panelFolder.images.filter(
+            img => !savedDeletedImages.has(img.image_path)
+          );
+          
+          if (validImages.length === 0) continue;
+          
+          // Try to match by folder name, then fallback pair
+          const savedPanel = savedPanels2.find(p => p.name === panelFolder.panel_name)
+            || fallbackPairs2.get(panelFolder.panel_name)
+            || undefined;
+          
+          const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
+
+          const imageHistory: ImageHistoryEntry[] = validImages.map((img, index) => ({
+            id: `${panelFolder.panel_name}_v${index + 1}`,
+            url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
+            metadata: {
+              timestamp: new Date(img.modified_time * 1000),
+              workflowId: '',
+              workflowName: 'Loaded',
+              seed: 0,
+              promptSummary: '',
+              parameters: {},
+              workflow: {},
+              sourceUrl: '',
+              savedPath: img.image_path,
+              version: index + 1,
+              rating: savedImageRatings[img.image_path],
+            } as ImageMetadata
+          }));
+          
+          let usePanelId: number;
+          if (savedPanel?.id && !usedIds.has(savedPanel.id)) {
+            usePanelId = savedPanel.id;
+            usedIds.add(usePanelId);
+          } else {
+            usePanelId = getNextUniqueId();
+          }
+          
+          const panelIndex = restoredPanels.length;
+          restoredPanels.push({
+            id: usePanelId,
+            name: panelFolder.panel_name,
+            x: savedPanel?.x ?? calculateNewPanelX(panelIndex + 1, panelIndex + 1),
+            y: savedPanel?.y ?? calculateNewPanelY(panelIndex + 1, panelIndex + 1),
+            width: savedPanel?.width ?? 300,
+            height: savedPanel?.height ?? 300,
+            notes: savedPanel?.notes ?? '',
+            workflowId: savedPanel?.workflowId,
+            parameterValues: savedPanel?.parameterValues,
+            nodeId: savedPanel?.nodeId,
+            imageHistory,
+            historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
+            image: imageHistory.length > 0 ? imageHistory[imageHistory.length - 1]?.url ?? null : null,
+            images: [],
+            currentImageIndex: 0,
+            status: imageHistory.length > 0 ? 'complete' : 'empty',
+            progress: imageHistory.length > 0 ? 100 : 0,
+            locked: savedPanel?.locked ?? false,
+            selected: false,
+          });
+        }
+        
+        // Restore saved panels that have no folder AND weren't paired
+        for (const savedPanel of savedPanels2) {
+          if (!savedPanel.name) continue;
+          if (matchedSavedNames2.has(savedPanel.name)) continue;
+            let emptyPanelId: number;
+            if (savedPanel.id && !usedIds.has(savedPanel.id)) {
+              emptyPanelId = savedPanel.id;
+              usedIds.add(emptyPanelId);
+            } else {
+              emptyPanelId = getNextUniqueId();
+            }
+            restoredPanels.push({
+              id: emptyPanelId,
+              name: savedPanel.name,
+              x: savedPanel.x,
+              y: savedPanel.y,
+              width: savedPanel.width ?? 300,
+              height: savedPanel.height ?? 300,
+              notes: savedPanel.notes ?? '',
+              workflowId: savedPanel.workflowId,
+              parameterValues: savedPanel.parameterValues,
+              nodeId: savedPanel.nodeId,
+              imageHistory: [],
+              historyIndex: -1,
+              image: null,
+              images: [],
+              currentImageIndex: 0,
+              status: 'empty',
+              progress: 0,
+              locked: false,
+              selected: false,
+            });
+        }
+        
+        restoredPanels.sort((a, b) => a.id - b.id);
+        setPanels(restoredPanels);
+      } else {
+        // Fallback: no scan results, restore from save file with deduplicated IDs
+        const usedIds = new Set<number>();
+        const restoredPanels = (result.state.panels as typeof panels).map(panel => {
+          let panelId = panel.id;
+          if (usedIds.has(panelId)) {
+            panelId = 1;
+            while (usedIds.has(panelId)) panelId++;
+          }
+          usedIds.add(panelId);
+          const newStatus = panel.image ? 'complete' : 'empty';
+          return {
+            ...panel,
+            id: panelId,
+            status: newStatus as 'empty' | 'complete',
+            progress: panel.image ? 100 : 0,
+            parallelJobs: undefined,
+          };
+        });
+        setPanels(restoredPanels);
+      }
       // Workflows are NOT restored from project files — they are managed
       // independently via the persistent workflow storage backend
       // Restore parameter values if available
@@ -4568,34 +4940,68 @@ export function StoryboardUI() {
                     <div 
                       className="panel-image-container"
                     >
-                      <img
-                        src={panel.image}
-                        alt={`Panel ${panel.id}`}
-                        draggable={true}
-                        onDragStart={(e) => {
-                          // Pass both URL (for display) and file path (for ComfyUI) as JSON
-                          const currentEntry = panel.imageHistory[panel.historyIndex];
-                          const filePath = currentEntry?.metadata?.savedPath;
-                          const dragData = JSON.stringify({
-                            url: panel.image,
-                            filePath: filePath || null
-                          });
-                          e.dataTransfer.setData('application/x-storyboard-image', dragData);
-                          e.dataTransfer.setData('text/plain', dragData);
-                          e.dataTransfer.effectAllowed = 'copy';
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setViewerImage(panel.image);
-                          setViewerPanelId(panel.id);
-                          setZoomMode('actual');
-                          setViewerZoom(1);
-                          setViewerPan({ x: 0, y: 0 });
-                          setShowImageViewer(true);
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      />
+                      {isVideoUrl(panel.image) ? (
+                        <video
+                          src={panel.image}
+                          controls
+                          loop
+                          muted
+                          autoPlay
+                          playsInline
+                          draggable={true}
+                          onDragStart={(e) => {
+                            const currentEntry = panel.imageHistory[panel.historyIndex];
+                            const filePath = currentEntry?.metadata?.savedPath;
+                            const dragData = JSON.stringify({
+                              url: panel.image,
+                              filePath: filePath || null
+                            });
+                            e.dataTransfer.setData('application/x-storyboard-image', dragData);
+                            e.dataTransfer.setData('text/plain', dragData);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setViewerImage(panel.image);
+                            setViewerPanelId(panel.id);
+                            setZoomMode('actual');
+                            setViewerZoom(1);
+                            setViewerPan({ x: 0, y: 0 });
+                            setShowImageViewer(true);
+                          }}
+                          style={{ cursor: 'pointer', width: '100%', height: '100%', objectFit: 'contain' }}
+                        />
+                      ) : (
+                        <img
+                          src={panel.image}
+                          alt={`Panel ${panel.id}`}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            // Pass both URL (for display) and file path (for ComfyUI) as JSON
+                            const currentEntry = panel.imageHistory[panel.historyIndex];
+                            const filePath = currentEntry?.metadata?.savedPath;
+                            const dragData = JSON.stringify({
+                              url: panel.image,
+                              filePath: filePath || null
+                            });
+                            e.dataTransfer.setData('application/x-storyboard-image', dragData);
+                            e.dataTransfer.setData('text/plain', dragData);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setViewerImage(panel.image);
+                            setViewerPanelId(panel.id);
+                            setZoomMode('actual');
+                            setViewerZoom(1);
+                            setViewerPan({ x: 0, y: 0 });
+                            setShowImageViewer(true);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      )}
                     </div>
                   )}
                   
@@ -4963,41 +5369,19 @@ export function StoryboardUI() {
                     </div>
                   )}
                   
-                  {/* Progress indicator with bar for single node generation */}
+                  {/* Minimal generating indicator — thin bottom bar + small badge */}
                   {panel.status === 'generating' && (
-                    <div className="panel-generating-indicator">
-                      <div className="progress-content">
-                        <div className="progress-spinner" />
-                        <div className="progress-text-container">
-                          <span className="progress-percentage">{panel.progress}%</span>
-                          <div className="progress-bar-container">
-                            <div 
-                              className="progress-bar-fill"
-                              style={{ width: `${panel.progress}%` }}
-                            />
-                          </div>
-                        </div>
+                    <div className="panel-generating-mini">
+                      <div className="panel-gen-mini-bar">
+                        <div
+                          className="panel-gen-mini-bar-fill"
+                          style={{ width: `${panel.progress}%` }}
+                        />
                       </div>
-                      <button
-                        className="cancel-generation-btn"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (wsRef.current) {
-                            const success = await wsRef.current.cancelGeneration();
-                            if (success) {
-                              setPanels(prev => prev.map(p =>
-                                p.id === panel.id ? { ...p, status: 'empty', progress: 0, parallelJobs: undefined } : p
-                              ));
-                              showWarning('Generation cancelled');
-                            } else {
-                              showError('Failed to cancel generation');
-                            }
-                          }
-                        }}
-                        title="Cancel generation"
-                      >
-                        ✕
-                      </button>
+                      <span className="panel-gen-mini-badge">
+                        <span className="panel-gen-mini-spinner" />
+                        {panel.progress}%
+                      </span>
                     </div>
                   )}
                   
@@ -5121,6 +5505,35 @@ export function StoryboardUI() {
         {/* Right Sidebar - Stats */}
         <aside className="stats-panel" style={{ width: rightPanelWidth }}>
           <div className="stats-header">System Stats</div>
+          
+          {/* Generation Progress — shows when any panel is generating */}
+          <GenerationProgress
+            panels={panels}
+            onCancelSingle={async (panelId) => {
+              if (wsRef.current) {
+                const success = await wsRef.current.cancelGeneration();
+                if (success) {
+                  setPanels(prev => prev.map(p =>
+                    p.id === panelId ? { ...p, status: 'empty', progress: 0, parallelJobs: undefined } : p
+                  ));
+                  showWarning('Generation cancelled');
+                } else {
+                  showError('Failed to cancel generation');
+                }
+              }
+            }}
+            onCancelParallelJob={async (_panelId, nodeId) => {
+              const node = renderNodes.find(n => n.id === nodeId);
+              if (node) {
+                try {
+                  await fetch(`${node.url}/interrupt`, { method: 'POST' });
+                  showWarning(`Cancelled generation on ${node.name}`);
+                } catch (err) {
+                  showError(`Failed to cancel on ${node.name}: ${err}`);
+                }
+              }
+            }}
+          />
           
           {/* Multi-Node Selector */}
           {renderNodes.length > 0 && (
@@ -5393,7 +5806,7 @@ export function StoryboardUI() {
         onClose={() => setShowPrintDialog(false)}
         panels={panels}
         projectName={projectSettings.name || 'Untitled Project'}
-        selectedPanelId={selectedPanelId}
+        selectedPanelIds={panels.filter(p => p.selected).map(p => p.id)}
       />
 
       {/* Node Manager Modal */}
@@ -6189,16 +6602,31 @@ export function StoryboardUI() {
                           ));
                         }}
                       >
-                        <img 
-                          src={entry.url}
-                          alt={`Version ${idx + 1}`}
-                          style={{
-                            maxHeight: 256,
-                            maxWidth: 256,
-                            objectFit: 'contain'
-                          }}
-                          draggable={false}
-                        />
+                        {isVideoUrl(entry.url) ? (
+                          <video 
+                            src={entry.url}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            style={{
+                              maxHeight: 256,
+                              maxWidth: 256,
+                              objectFit: 'contain'
+                            }}
+                            draggable={false}
+                          />
+                        ) : (
+                          <img 
+                            src={entry.url}
+                            alt={`Version ${idx + 1}`}
+                            style={{
+                              maxHeight: 256,
+                              maxWidth: 256,
+                              objectFit: 'contain'
+                            }}
+                            draggable={false}
+                          />
+                        )}
                         <span className="thumbnail-filename">
                           {entry.metadata?.savedPath 
                             ? entry.metadata.savedPath.split(/[\\\/]/).pop()
@@ -6243,25 +6671,50 @@ export function StoryboardUI() {
                 {/* Normal mode */}
                 {!viewerCompareMode && (
                   <>
-                    <img
-                      src={viewerImage}
-                      alt="Viewer"
-                      style={{
-                        transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
-                        cursor: 'grab',
-                        maxWidth: '100%',
-                        maxHeight: 'calc(100% - 30px)',
-                        objectFit: 'contain',
-                      }}
-                      draggable={false}
-                      onError={(e) => {
-                        console.error('[ImageViewer] Failed to load image:', viewerImage);
-                        console.error('[ImageViewer] Error event:', e);
-                      }}
-                      onLoad={() => {
-                        console.log('[ImageViewer] Image loaded successfully');
-                      }}
-                    />
+                    {isVideoUrl(viewerImage) ? (
+                      <video
+                        src={viewerImage}
+                        controls
+                        loop
+                        autoPlay
+                        playsInline
+                        style={{
+                          transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
+                          cursor: 'grab',
+                          maxWidth: '100%',
+                          maxHeight: 'calc(100% - 30px)',
+                          objectFit: 'contain',
+                        }}
+                        draggable={false}
+                        onError={(e) => {
+                          console.error('[ImageViewer] Failed to load video:', viewerImage);
+                          console.error('[ImageViewer] Error event:', e);
+                        }}
+                        onLoadedData={() => {
+                          console.log('[ImageViewer] Video loaded successfully');
+                        }}
+                      />
+                    ) : (
+                      <img
+                        src={viewerImage}
+                        alt="Viewer"
+                        style={{
+                          transform: `translate(${viewerPan.x}px, ${viewerPan.y}px) scale(${viewerZoom})`,
+                          cursor: 'grab',
+                          maxWidth: '100%',
+                          maxHeight: 'calc(100% - 30px)',
+                          objectFit: 'contain',
+                        }}
+                        draggable={false}
+                        onError={(e) => {
+                          console.error('[ImageViewer] Failed to load image:', viewerImage);
+                          console.error('[ImageViewer] Error event:', e);
+                        }}
+                        onLoad={() => {
+                          console.log('[ImageViewer] Image loaded successfully');
+                        }}
+                      />
+                    )}
                     {/* Phase 5: Filename Display */}
                     {viewerPanelId && (() => {
                       const panel = panels.find(p => p.id === viewerPanelId);

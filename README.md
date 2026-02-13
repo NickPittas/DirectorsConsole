@@ -61,7 +61,11 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 
 - **Storyboard Canvas** — Free-floating infinite canvas with draggable, resizable panels. Per-panel workflows, image history with navigation, star ratings, markdown notes, and multi-select alignment tools.
 
-- **Multi-Node ComfyUI Rendering** — Connect multiple ComfyUI backends and render in parallel. Real-time progress via WebSocket. Node metrics, health monitoring, and one-click restart.
+- **Video Generation Support** — Full pipeline support for AI video workflows (Wan 2.2, CogVideoX, HunyuanVideo, etc.). Videos are detected from ComfyUI outputs (`images`, `gifs`, `videos` keys), saved with correct extensions, displayed inline with `<video>` playback, and persisted across project save/reload.
+
+- **Multi-Node ComfyUI Rendering** — Connect multiple ComfyUI backends and render in parallel. Real-time progress via WebSocket with per-node stage tracking. Node metrics, health monitoring, and one-click restart.
+
+- **Generation Progress Sidebar** — Dedicated sidebar panel showing detailed progress for all active generations. Per-node workflow stage display (e.g., "Loading Checkpoint", "KSampler", "VAE Decode"), multi-phase progress for multi-KSampler workflows, and step counters. Replaces intrusive panel overlays with a minimal bottom bar indicator.
 
 - **AI-Enhanced Prompts** — Connect 13+ LLM providers (OpenAI, Anthropic, Google AI, Ollama, and more) to refine and enhance your cinema prompts with AI assistance.
 
@@ -187,9 +191,9 @@ This launches:
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| CPE Backend | `http://localhost:8000` | Cinema Prompt Engineering API |
+| CPE Backend | `http://localhost:9800` | Cinema Prompt Engineering API |
 | Storyboard Frontend | `http://localhost:5173` | React UI (opens in browser) |
-| Orchestrator | `http://localhost:8020` | Render farm manager |
+| Orchestrator | `http://localhost:9820` | Render farm manager |
 
 ### Optional Flags
 
@@ -223,7 +227,7 @@ Each panel is an independent production unit with its own:
 
 - **Workflow** — Select any imported ComfyUI workflow per panel
 - **Parameters** — Each panel stores its own parameter values (prompt, steps, CFG, sampler, etc.)
-- **Image History** — Navigate through all generated images with forward/back arrows
+- **Image & Video History** — Navigate through all generated images and videos with forward/back arrows. Videos play inline with native `<video>` controls.
 - **Star Rating** — Rate images 1–5 stars for quick review
 - **Markdown Notes** — Attach production notes with edit/view toggle
 - **Panel Name** — Custom names that map to folder structure (e.g., "Hero_Shot" creates `{project}/Hero_Shot/`)
@@ -269,7 +273,7 @@ Print your storyboard with fully configurable layouts:
 
 ## ComfyUI Integration
 
-Director's Console communicates **directly** with ComfyUI nodes for image generation. The frontend builds workflow JSON and sends it to ComfyUI's REST API, with real-time progress updates via WebSocket.
+Director's Console communicates **directly** with ComfyUI nodes for image and video generation. The frontend builds workflow JSON and sends it to ComfyUI's REST API, with real-time progress updates via WebSocket. Video outputs are automatically detected from ComfyUI's `images`, `gifs`, and `videos` output keys and saved with the correct file extension.
 
 ### Node Manager
 
@@ -300,9 +304,12 @@ Manage your ComfyUI render backends from the Node Manager:
 When multiple ComfyUI backends are connected:
 - Assign specific nodes to specific panels
 - Queue jobs across multiple backends in parallel
-- Real-time progress bars per node
+- Real-time progress sidebar with per-node stage tracking (shows current workflow node: "CheckpointLoaderSimple", "KSampler", "VAEDecode", etc.)
+- Multi-phase progress for video workflows with multiple KSamplers (e.g., "Phase 1/2")
+- Step counters showing workflow execution progress (e.g., "Step 5/14")
 - Global cancel button to interrupt all busy nodes
 - Job groups for coordinated parallel execution
+- Minimal non-intrusive panel indicator (3px bottom bar + percentage badge)
 
 ---
 
@@ -526,16 +533,16 @@ Beyond rule-based generation, CPE can send your structured prompt to an LLM for 
 
 **Model-Specific Formatting:**
 
-| Target Model | Strategy |
-|--------------|----------|
-| Midjourney | Comma-separated keywords + `--v 6 --q 2` parameters |
-| FLUX | Natural language sentences, no negative prompts |
-| Wan 2.2 | 80–120 words, over-specified, padded with detail |
-| SDXL / Stable Diffusion | Comma-separated keywords with weights |
-| Runway Gen-3 | Natural language, lowercase |
-| CogVideoX | Concise, max 15 parts (224 token limit) |
-| HunyuanVideo | Capitalized sentences |
-| LTX-2 | 200 word limit |
+| Target Model | Type | Strategy |
+|--------------|------|----------|
+| Midjourney | Image | Comma-separated keywords + `--v 6 --q 2` parameters |
+| FLUX | Image | Natural language sentences, no negative prompts |
+| SDXL / Stable Diffusion | Image | Comma-separated keywords with weights |
+| Wan 2.2 | Video | 80–120 words, over-specified, padded with detail |
+| Runway Gen-3 | Video | Natural language, lowercase |
+| CogVideoX | Video | Concise, max 15 parts (224 token limit) |
+| HunyuanVideo | Video | Capitalized sentences |
+| LTX-2 | Video | 200 word limit |
 
 ---
 
@@ -747,7 +754,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ├─────────────────────┬─────────────────┬─────────────────┤
 │  Storyboard Canvas  │    CPE Engine   │   Orchestrator   │
 │   React + TypeScript │  Python/FastAPI  │ Python/FastAPI   │
-│   Port 5173          │  Port 8000       │ Port 8020        │
+│   Port 5173          │  Port 9800       │ Port 9820        │
 ├─────────────────────┴─────────────────┴─────────────────┤
 │                                                           │
 │  Frontend ←──REST──→ CPE Backend ←──Manifests──→ Orchestrator
@@ -776,7 +783,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ```bash
 # Backend with hot-reload
 cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 
 # Frontend with HMR
 cd CinemaPromptEngineering/frontend
@@ -784,7 +791,7 @@ npm run dev
 
 # Orchestrator with hot-reload
 cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 8020 --reload
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
 ### Running Tests

@@ -39,6 +39,75 @@ export interface GeneratedImage {
   subfolder: string;
   type: string;
   url: string;
+  mediaType?: 'image' | 'video' | 'animated'; // Detected from filename extension or output key
+}
+
+/**
+ * Known video file extensions for media type detection.
+ */
+const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv'];
+const ANIMATED_EXTENSIONS = ['.gif', '.webp', '.apng'];
+
+/**
+ * Detect media type from filename extension.
+ */
+export function detectMediaType(filename: string): 'image' | 'video' | 'animated' {
+  const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+  if (ANIMATED_EXTENSIONS.includes(ext)) return 'animated';
+  return 'image';
+}
+
+/**
+ * Check if a URL points to a video file.
+ */
+export function isVideoUrl(url: string): boolean {
+  try {
+    // Handle ComfyUI /view URLs (filename param) and Orchestrator serve-image URLs (path param)
+    const urlObj = new URL(url, 'http://localhost');
+    const filename = urlObj.searchParams.get('filename') || urlObj.searchParams.get('path') || url;
+    return detectMediaType(filename) === 'video';
+  } catch {
+    // Fallback: check the URL string directly
+    const ext = url.toLowerCase().substring(url.lastIndexOf('.'));
+    return VIDEO_EXTENSIONS.includes(ext);
+  }
+}
+
+/**
+ * Extract all media outputs from a ComfyUI node output.
+ * ComfyUI stores outputs under different keys:
+ * - output.images: SaveImage, PreviewImage, SaveAnimatedWEBP, etc.
+ * - output.gifs: VHS_VideoCombine (animated/video outputs)
+ * - output.videos: Some video save nodes
+ */
+export function extractMediaOutputs(
+  nodeOutput: Record<string, any>,
+  serverUrl: string
+): GeneratedImage[] {
+  const results: GeneratedImage[] = [];
+  
+  // Check all known output keys
+  const outputKeys = ['images', 'gifs', 'videos'];
+  
+  for (const key of outputKeys) {
+    const items = nodeOutput[key];
+    if (!items || !Array.isArray(items) || items.length === 0) continue;
+    
+    for (const item of items) {
+      if (!item.filename) continue;
+      const mediaType = detectMediaType(item.filename);
+      results.push({
+        filename: item.filename,
+        subfolder: item.subfolder || '',
+        type: item.type || 'output',
+        url: `${serverUrl}/view?filename=${encodeURIComponent(item.filename)}&subfolder=${encodeURIComponent(item.subfolder || '')}&type=${item.type || 'output'}`,
+        mediaType,
+      });
+    }
+  }
+  
+  return results;
 }
 
 export interface SystemStats {
@@ -338,22 +407,14 @@ export class ComfyUIClient {
       };
     }
 
-    // Extract output images from all nodes
+    // Extract output images AND videos from all nodes
     const images: GeneratedImage[] = [];
     const outputs = history.outputs || {};
 
     for (const nodeId of Object.keys(outputs)) {
       const nodeOutput = outputs[nodeId];
-      if (nodeOutput.images) {
-        for (const img of nodeOutput.images) {
-          images.push({
-            filename: img.filename,
-            subfolder: img.subfolder || '',
-            type: img.type || 'output',
-            url: `${this.serverUrl}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || '')}&type=${img.type || 'output'}`,
-          });
-        }
-      }
+      const mediaOutputs = extractMediaOutputs(nodeOutput, this.serverUrl);
+      images.push(...mediaOutputs);
     }
 
     return {

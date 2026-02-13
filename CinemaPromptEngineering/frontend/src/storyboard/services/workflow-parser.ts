@@ -825,15 +825,40 @@ export class WorkflowParser {
         });
       }
 
-      // Detect video save nodes
-      if (class_type.includes('SaveVideo') || class_type.includes('VideoSave')) {
+      // Detect animated image save nodes (WEBP, APNG)
+      if (class_type === 'SaveAnimatedWEBP' || class_type === 'SaveAnimatedPNG') {
         outputCount++;
         outputs.push({
           node_id,
-          name: `Output ${outputCount} (Video)`,
+          name: `Output ${outputCount} (${class_type})`,
           type: 'video',
           selected: outputCount === 1,
         });
+      }
+
+      // Detect video save nodes - covers VHS_VideoCombine (VideoHelperSuite),
+      // VHS_SaveVideo, generic SaveVideo/VideoSave, AnimateDiff combine nodes,
+      // WanVideo nodes, and other common patterns
+      if (
+        class_type === 'VHS_VideoCombine' ||
+        class_type === 'VHS_SaveVideo' ||
+        class_type === 'ADE_AnimateDiffCombine' ||
+        class_type.includes('SaveVideo') || 
+        class_type.includes('VideoSave') ||
+        class_type.includes('VideoCombine') ||
+        class_type.includes('WanVideo') ||
+        class_type.includes('VideoOutput')
+      ) {
+        // Avoid duplicates if already matched above
+        if (!outputs.some(o => o.node_id === node_id)) {
+          outputCount++;
+          outputs.push({
+            node_id,
+            name: `Output ${outputCount} (Video: ${class_type})`,
+            type: 'video',
+            selected: outputCount === 1,
+          });
+        }
       }
     }
 

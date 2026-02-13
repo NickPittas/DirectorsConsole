@@ -56,15 +56,11 @@ app.include_router(templates_router)
 app.include_router(workflows_router)
 
 # CORS for frontend
+# Desktop app - allow all origins for LAN/VPN/Tailscale access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",   # Vite dev server
-        "http://localhost:5173",   # Vite default port
-        "http://localhost:8188",   # ComfyUI server
-        "http://127.0.0.1:8188",   # ComfyUI server (alt)
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -2778,12 +2774,11 @@ if _extra_hosts:
 
 
 def _is_url_safe_for_fetch(url: str) -> tuple[bool, str]:
-    """Validate URL to prevent SSRF attacks.
+    """Validate URL for basic safety.
     
-    Only allows URLs to:
-    - localhost/127.0.0.1
-    - Hosts in CPE_ALLOWED_FETCH_HOSTS environment variable
-    - HTTP/HTTPS schemes only
+    This is a local desktop application — users connect to their own
+    ComfyUI render nodes on LAN, VPN (Tailscale), or other networks.
+    We only enforce scheme validation and block cloud metadata endpoints.
     
     Args:
         url: The URL to validate
@@ -2802,27 +2797,23 @@ def _is_url_safe_for_fetch(url: str) -> tuple[bool, str]:
         if not hostname:
             return False, "URL has no hostname"
         
-        # Check if hostname is in allowlist
+        # Check if hostname is in allowlist (fast path)
         if hostname in _CPE_ALLOWED_URL_HOSTS:
             return True, ""
         
         # Check if it's an IP address
         try:
             ip = ipaddress.ip_address(hostname)
-            # Block cloud metadata endpoints (AWS/GCP/Azure)
+            # Block cloud metadata endpoints (AWS/GCP/Azure 169.254.x.x)
             if ip.is_link_local:
                 return False, "Link-local/metadata endpoint blocked"
-            # Allow private/LAN IPs — this is a local desktop tool and
-            # ComfyUI render nodes live on the user's LAN by design.
-            if ip.is_private or ip.is_loopback:
-                return True, ""
+            # Allow ALL other IPs — this is a local desktop tool.
+            # ComfyUI render nodes may be on LAN, Tailscale (CGNAT 100.64.0.0/10),
+            # or any other reachable network.
+            return True, ""
         except ValueError:
-            # Not an IP, it's a hostname - must be in allowlist
+            # Not an IP, it's a hostname — allow it for desktop use
             pass
-        
-        # Final check: non-private hostnames must be in allowlist
-        if hostname not in _CPE_ALLOWED_URL_HOSTS:
-            return False, f"Host '{hostname}' not in allowed hosts. Set CPE_ALLOWED_FETCH_HOSTS env var."
         
         return True, ""
         
@@ -2846,10 +2837,16 @@ async def read_image_as_base64(path: str) -> dict[str, Any]:
     def _read_sync():
         image_path = Path(path)
         if not image_path.exists():
-            return (False, f"Image not found: {path}")
+            return (False, f"File not found: {path}")
         suffix = image_path.suffix.lower()
-        mime_types = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif'}
-        mime_type = mime_types.get(suffix, 'image/png')
+        mime_types = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+            '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+            '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.flv': 'video/x-flv',
+            '.wmv': 'video/x-ms-wmv',
+        }
+        mime_type = mime_types.get(suffix, 'application/octet-stream')
         with open(image_path, 'rb') as f:
             image_data = f.read()
         return (True, f"data:{mime_type};base64,{base64.b64encode(image_data).decode('utf-8')}")
