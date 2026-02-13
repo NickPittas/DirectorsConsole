@@ -4,7 +4,7 @@
  * Renders parameter widgets based on type (integer, float, seed, enum, boolean, prompt)
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { WorkflowParameter } from '../services/workflow-parser';
 import { ImageDropZone } from './ImageDropZone';
 import { CameraAngle, parseAngleFromPrompt, removeAnglePrefix } from '../data/cameraAngleData';
@@ -212,13 +212,54 @@ export function SeedWidget({ parameter, value, onChange, disabled }: ParameterWi
 // Enum Widget
 // ============================================================================
 
+const MODEL_EXTENSIONS = ['.safetensors', '.pt', '.pth', '.bin', '.ckpt', '.gguf', '.sft'];
+const isModelPath = (s: string) => MODEL_EXTENSIONS.some(ext => s.toLowerCase().endsWith(ext));
+
+function groupModelsByFolder(paths: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const path of paths) {
+    const normalized = path.replace(/\\/g, '/');
+    const lastSlash = normalized.lastIndexOf('/');
+    const folder = lastSlash > 0 ? normalized.substring(0, lastSlash) : '(root)';
+    if (!groups.has(folder)) groups.set(folder, []);
+    groups.get(folder)!.push(path);
+  }
+  return groups;
+}
+
+function formatModelName(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  const lastSlash = normalized.lastIndexOf('/');
+  const filename = lastSlash > 0 ? normalized.substring(lastSlash + 1) : normalized;
+  const dotIndex = filename.lastIndexOf('.');
+  return dotIndex > 0 ? filename.substring(0, dotIndex) : filename;
+}
+
+function findMatchingModel(searchPath: string | undefined, options: string[]): string {
+  if (!searchPath) return options[0] || '';
+  const normalized = searchPath.replace(/\\/g, '/');
+  const match = options.find(opt => opt.replace(/\\/g, '/') === normalized);
+  return match || normalized;
+}
+
 export function EnumWidget({ parameter, value, onChange, disabled }: ParameterWidgetProps) {
-  const [localValue, setLocalValue] = useState(value ?? parameter.default);
+  const options = parameter.constraints?.options || [];
+  const isModel = options.length > 0 && options.every(isModelPath);
   
-  // Sync local state when value prop changes (e.g., when loading from a panel)
+  const [localValue, setLocalValue] = useState(() => {
+    if (isModel) {
+      return findMatchingModel(value ?? parameter.default, options);
+    }
+    return value ?? parameter.default;
+  });
+  
   useEffect(() => {
-    setLocalValue(value ?? parameter.default);
-  }, [value, parameter.default]);
+    if (isModel) {
+      setLocalValue(findMatchingModel(value ?? parameter.default, options));
+    } else {
+      setLocalValue(value ?? parameter.default);
+    }
+  }, [value, parameter.default, options, isModel]);
   
   const handleChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     const newValue = e.target.value;
@@ -226,7 +267,7 @@ export function EnumWidget({ parameter, value, onChange, disabled }: ParameterWi
     onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
   
-  const options = parameter.constraints?.options || [];
+  const groupedModels = useMemo(() => isModel ? groupModelsByFolder(options) : null, [options, isModel]);
   
   return (
     <div className="parameter-widget enum-widget">
@@ -237,11 +278,23 @@ export function EnumWidget({ parameter, value, onChange, disabled }: ParameterWi
         onChange={handleChange}
         disabled={disabled}
       >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
+        {isModel && groupedModels ? (
+          Array.from(groupedModels.entries()).map(([folder, models]) => (
+            <optgroup key={folder} label={folder}>
+              {models.map(model => (
+                <option key={model} value={model}>
+                  {formatModelName(model)}
+                </option>
+              ))}
+            </optgroup>
+          ))
+        ) : (
+          options.map(option => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))
+        )}
       </select>
       {parameter.description && (
         <span className="parameter-description">{parameter.description}</span>
