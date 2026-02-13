@@ -299,6 +299,18 @@ Manage your ComfyUI render backends from the Node Manager:
 - **Parameter isolation** — switching workflows resets technical parameters to defaults while preserving prompts and image inputs
 - **Categorization** — organize workflows into custom categories
 
+### Model & LoRA Dropdowns
+
+Model and LoRA parameters now feature enhanced dropdown selection:
+
+- **Folder Structure** — Models and LoRAs are organized by their folder hierarchy using `<optgroup>` elements, making it easy to navigate large model libraries (e.g., `Flux/Flux 2/Klein/flux-2-klein-base-9b-fp8.safetensors`)
+- **Auto-Selection** — When a workflow is loaded, the dropdown automatically pre-selects the model or LoRA that's currently configured in the workflow
+- **Cross-Platform Path Compatibility** — Path separators are automatically normalized, ensuring workflows created on Windows work correctly when submitted to Linux or macOS ComfyUI nodes, and vice versa
+
+**Supported file types for folder grouping:**
+- Models: `.safetensors`, `.pt`, `.pth`, `.bin`, `.ckpt`, `.gguf`
+- LoRAs: `.safetensors`, `.pt`, `.pth`, `.bin`
+
 ### Multi-Node Rendering
 
 When multiple ComfyUI backends are connected:
