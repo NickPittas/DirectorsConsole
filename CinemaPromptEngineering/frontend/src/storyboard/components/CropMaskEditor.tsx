@@ -6,6 +6,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import './CropMaskEditor.css';
 
 type EditorMode = 'crop' | 'mask' | 'paint';
@@ -96,6 +97,7 @@ function hasPaintContent(canvas: HTMLCanvasElement): boolean {
 }
 
 export function CropMaskEditor({ imageData, mode: initialMode, initialMask, initialCrop, initialPaint, onSave, onCancel }: CropMaskEditorProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<EditorMode>(initialMode);
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   
@@ -889,25 +891,25 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
       <div className="crop-mask-editor-modal">
         {/* Header */}
         <div className="crop-mask-editor-header">
-          <h3>{mode === 'crop' ? 'Crop Image' : mode === 'mask' ? 'Edit Mask' : 'Paint on Image'}</h3>
+          <h3>{mode === 'crop' ? t('storyboard.cropMaskEditor.cropImage') : mode === 'mask' ? t('storyboard.cropMaskEditor.editMask') : t('storyboard.cropMaskEditor.paintOnImage')}</h3>
           <div className="mode-toggle">
             <button 
               className={mode === 'crop' ? 'active' : ''} 
               onClick={() => setMode('crop')}
             >
-              ✂ Crop
+              ✂ {t('storyboard.cropMaskEditor.tabCrop')}
             </button>
             <button 
               className={mode === 'mask' ? 'active' : ''} 
               onClick={() => setMode('mask')}
             >
-              🎭 Mask
+              🎭 {t('storyboard.cropMaskEditor.tabMask')}
             </button>
             <button 
               className={mode === 'paint' ? 'active' : ''} 
               onClick={() => setMode('paint')}
             >
-              🖌️ Paint
+              🖌️ {t('storyboard.cropMaskEditor.tabPaint')}
             </button>
           </div>
           <button className="close-btn" onClick={onCancel}>×</button>
@@ -917,7 +919,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
         <div className="crop-mask-editor-toolbar">
           {mode === 'crop' && (
             <div className="crop-toolbar">
-              <span>Aspect Ratio:</span>
+              <span>{t('storyboard.cropMaskEditor.aspectRatio')}</span>
               <div className="aspect-presets">
                 {ASPECT_PRESETS.map((preset) => (
                   <button
@@ -929,8 +931,8 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
                   </button>
                 ))}
               </div>
-              <button className="reset-crop-btn" onClick={resetCrop} title="Reset crop to full image">
-                🗑️ Reset
+              <button className="reset-crop-btn" onClick={resetCrop} title={t('storyboard.cropMaskEditor.resetCropTitle')}>
+                🗑️ {t('storyboard.cropMaskEditor.reset')}
               </button>
             </div>
           )}
@@ -938,7 +940,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
             <div className="mask-toolbar">
               <div className="brush-controls">
                 <label>
-                  Size:
+                  {t('storyboard.cropMaskEditor.size')}
                   <input
                     type="range"
                     min="5"
@@ -949,7 +951,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
                   <span>{brushSize}px</span>
                 </label>
                 <label>
-                  Opacity:
+                  {t('storyboard.cropMaskEditor.opacity')}
                   <input
                     type="range"
                     min="0.1"
@@ -966,15 +968,15 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
                   className={brushMode === 'add' ? 'active' : ''}
                   onClick={() => setBrushMode('add')}
                 >
-                  ✏️ Add
+                  ✏️ {t('storyboard.cropMaskEditor.add')}
                 </button>
                 <button
                   className={brushMode === 'erase' ? 'active' : ''}
                   onClick={() => setBrushMode('erase')}
                 >
-                  🧹 Erase
+                  🧹 {t('storyboard.cropMaskEditor.erase')}
                 </button>
-                <button onClick={clearMask}>🗑️ Clear</button>
+                <button onClick={clearMask}>🗑️ {t('storyboard.cropMaskEditor.clear')}</button>
               </div>
             </div>
           )}
@@ -982,7 +984,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
             <div className="paint-toolbar">
               <div className="brush-controls">
                 <label>
-                  Size:
+                  {t('storyboard.cropMaskEditor.size')}
                   <input
                     type="range"
                     min="1"
@@ -993,7 +995,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
                   <span>{paintBrushSize}px</span>
                 </label>
                 <label className="color-picker-label">
-                  Color:
+                  {t('storyboard.cropMaskEditor.color')}
                   <input
                     type="color"
                     value={paintColor}
@@ -1008,15 +1010,15 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
                   className={paintBrushMode === 'paint' ? 'active' : ''}
                   onClick={() => setPaintBrushMode('paint')}
                 >
-                  🖌️ Paint
+                  🖌️ {t('storyboard.cropMaskEditor.tabPaint')}
                 </button>
                 <button
                   className={paintBrushMode === 'erase' ? 'active' : ''}
                   onClick={() => setPaintBrushMode('erase')}
                 >
-                  🧹 Erase
+                  🧹 {t('storyboard.cropMaskEditor.erase')}
                 </button>
-                <button onClick={clearPaint}>🗑️ Clear</button>
+                <button onClick={clearPaint}>🗑️ {t('storyboard.cropMaskEditor.clear')}</button>
               </div>
             </div>
           )}
@@ -1153,9 +1155,9 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
             )}
           </div>
           <div className="action-buttons">
-            <button className="cancel-btn" onClick={onCancel}>Cancel</button>
+            <button className="cancel-btn" onClick={onCancel}>{t('storyboard.cropMaskEditor.cancel')}</button>
             <button className="save-btn" onClick={handleSave}>
-              {mode === 'crop' ? 'Apply Crop' : mode === 'mask' ? 'Save Mask' : 'Apply Changes'}
+              {mode === 'crop' ? t('storyboard.cropMaskEditor.applyCrop') : mode === 'mask' ? t('storyboard.cropMaskEditor.saveMask') : t('storyboard.cropMaskEditor.applyChanges')}
             </button>
           </div>
         </div>

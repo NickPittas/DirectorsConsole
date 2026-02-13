@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import './DeleteConfirmDialog.css';
 
 interface DeleteConfirmDialogProps {
@@ -16,6 +17,7 @@ export function DeleteConfirmDialog({
   onCancel,
   onSuppressForSession,
 }: DeleteConfirmDialogProps) {
+  const { t } = useTranslation();
   const [dontAskAgain, setDontAskAgain] = useState(false);
 
   const handleConfirm = () => {
@@ -30,11 +32,11 @@ export function DeleteConfirmDialog({
   return (
     <div className="modal-overlay delete-confirm-overlay">
       <div className="delete-confirm-dialog">
-        <h3>Delete Image?</h3>
-        <p>Are you sure you want to permanently delete:</p>
+        <h3>{t('storyboard.deleteConfirm.title')}</h3>
+        <p>{t('storyboard.deleteConfirm.prompt')}</p>
         <p className="delete-filename">{filename}</p>
         <p className="delete-warning">
-          This will remove the file from disk and cannot be undone.
+          {t('storyboard.deleteConfirm.warning')}
         </p>
 
         <label className="dont-ask-checkbox">
@@ -43,15 +45,15 @@ export function DeleteConfirmDialog({
             checked={dontAskAgain}
             onChange={(e) => setDontAskAgain(e.target.checked)}
           />
-          <span>Don't ask again this session</span>
+          <span>{t('storyboard.deleteConfirm.dontAskAgain')}</span>
         </label>
 
         <div className="dialog-actions">
           <button className="cancel-btn" onClick={onCancel}>
-            Cancel
+            {t('storyboard.deleteConfirm.cancel')}
           </button>
           <button className="delete-btn" onClick={handleConfirm}>
-            Delete
+            {t('storyboard.deleteConfirm.delete')}
           </button>
         </div>
       </div>

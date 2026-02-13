@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { orchestratorManager, RenderNode, useRenderNodes } from '../services/orchestrator';
 import { RefreshCw } from 'lucide-react';
 import './NodeManager.css';
@@ -9,6 +10,7 @@ interface NodeManagerProps {
 }
 
 export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
+  const { t } = useTranslation();
   const nodes = useRenderNodes();
   const [newUrl, setNewUrl] = useState('');
   const [newName, setNewName] = useState('');
@@ -61,7 +63,7 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
 
   const handleRestartSelected = async () => {
     if (selectedNodes.size === 0) {
-      alert('Please select at least one node to restart');
+      alert(t('storyboard.nodes.selectAtLeastOne'));
       return;
     }
 
@@ -105,17 +107,21 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
     <div className="node-manager-overlay">
       <div className="node-manager-modal">
         <div className="node-manager-header">
-          <h2>Render Nodes</h2>
+          <h2>{t('storyboard.nodes.title')}</h2>
           <div className="header-actions">
             {selectedNodes.size > 0 && (
               <button
                 className="restart-selected-btn"
                 onClick={handleRestartSelected}
                 disabled={isRestarting}
-                title={`Restart ${selectedNodes.size} selected node(s)`}
+                title={t('storyboard.nodes.restartSelectedTitle', { count: selectedNodes.size })}
               >
                 <RefreshCw size={16} className={isRestarting ? 'spinning' : ''} />
-                <span>{isRestarting ? 'Restarting...' : `Restart ${selectedNodes.size}`}</span>
+                <span>
+                  {isRestarting
+                    ? t('storyboard.nodes.restarting')
+                    : t('storyboard.nodes.restart', { count: selectedNodes.size })}
+                </span>
               </button>
             )}
             <button className="close-btn" onClick={onClose}>×</button>
@@ -127,18 +133,18 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
           <div className="add-node-form">
             <input
               type="text"
-              placeholder="Node Name (e.g., 5090-Node-1)"
+              placeholder={t('storyboard.nodes.nodeNamePlaceholder')}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
             <input
               type="text"
-              placeholder="ComfyUI URL (e.g., http://192.168.1.100:8188)"
+              placeholder={t('storyboard.nodes.nodeUrlPlaceholder')}
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
             />
             <button onClick={handleAddNode} disabled={!newUrl || !newName}>
-              Add Node
+              {t('storyboard.nodes.addNode')}
             </button>
           </div>
 
@@ -148,7 +154,7 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
               className={`polling-btn ${isPolling ? 'active' : ''}`}
               onClick={togglePolling}
             >
-              {isPolling ? '⏹ Stop Monitoring' : '▶ Start Monitoring'}
+              {isPolling ? `⏹ ${t('storyboard.nodes.stopMonitoring')}` : `▶ ${t('storyboard.nodes.startMonitoring')}`}
             </button>
           </div>
 
@@ -162,12 +168,12 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
                     checked={selectedNodes.size === nodes.length && nodes.length > 0}
                     onChange={handleSelectAll}
                   />
-                  <span>Select All ({selectedNodes.size}/{nodes.length})</span>
+                  <span>{t('storyboard.nodes.selectAll', { selected: selectedNodes.size, total: nodes.length })}</span>
                 </label>
               </div>
             )}
             {nodes.length === 0 ? (
-              <p className="no-nodes">No render nodes configured. Add nodes to distribute rendering.</p>
+              <p className="no-nodes">{t('storyboard.nodes.noNodes')}</p>
             ) : (
               nodes.map(node => (
                 <div 
@@ -195,7 +201,7 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
                       className="remove-btn"
                       onClick={() => handleRemoveNode(node.id)}
                     >
-                      Remove
+                      {t('storyboard.nodes.remove')}
                     </button>
                   </div>
                   
@@ -204,12 +210,12 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
                   {node.status !== 'offline' && node.gpuName !== 'Unknown' && (
                     <div className="node-stats">
                       <div className="stat-row">
-                        <span className="stat-label">GPU:</span>
+                        <span className="stat-label">{t('storyboard.nodes.gpu')}</span>
                         <span className="stat-value">{node.gpuName}</span>
                       </div>
                       
                       <div className="stat-row">
-                        <span className="stat-label">VRAM:</span>
+                        <span className="stat-label">{t('storyboard.nodes.vram')}</span>
                         <span className="stat-value">
                           {formatBytes(node.vramUsed)} / {formatBytes(node.vramTotal)}
                           {' '}
@@ -222,7 +228,7 @@ export function NodeManager({ onClose, onRestartNodes }: NodeManagerProps) {
                       </div>
                       
                       <div className="stat-row">
-                        <span className="stat-label">GPU Usage:</span>
+                        <span className="stat-label">{t('storyboard.nodes.gpuUsage')}</span>
                         <span className="stat-value">{node.gpuUsage}%</span>
                       </div>
                       

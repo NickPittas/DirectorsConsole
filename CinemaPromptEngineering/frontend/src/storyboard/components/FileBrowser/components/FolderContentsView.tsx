@@ -4,6 +4,7 @@
  */
 
 import { HardDrive, Folder, FileText, Clock, LayoutGrid } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { FolderItem } from '../hooks/useFileBrowser';
 
 interface FolderContentsViewProps {
@@ -14,33 +15,6 @@ interface FolderContentsViewProps {
   isLoading: boolean;
 }
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 0) {
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (diffHours === 0) {
-      const diffMinutes = Math.floor(diffMs / (1000 * 60));
-      return diffMinutes <= 1 ? 'Just now' : `${diffMinutes} minutes ago`;
-    }
-    return `${diffHours} hours ago`;
-  }
-  if (diffDays === 1) {
-    return 'Yesterday';
-  }
-  if (diffDays < 7) {
-    return `${diffDays} days ago`;
-  }
-  if (diffDays < 30) {
-    return `${Math.floor(diffDays / 7)} weeks ago`;
-  }
-
-  return date.toLocaleDateString();
-}
-
 export function FolderContentsView({
   items,
   selectedItem,
@@ -48,6 +22,37 @@ export function FolderContentsView({
   onOpenItem,
   isLoading,
 }: FolderContentsViewProps) {
+  const { t, i18n } = useTranslation();
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      if (diffHours === 0) {
+        const diffMinutes = Math.floor(diffMs / (1000 * 60));
+        return diffMinutes <= 1
+          ? t('storyboard.fileBrowser.contents.justNow')
+          : t('storyboard.fileBrowser.contents.minutesAgo', { count: diffMinutes });
+      }
+      return t('storyboard.fileBrowser.contents.hoursAgo', { count: diffHours });
+    }
+    if (diffDays === 1) {
+      return t('storyboard.fileBrowser.contents.yesterday');
+    }
+    if (diffDays < 7) {
+      return t('storyboard.fileBrowser.contents.daysAgo', { count: diffDays });
+    }
+    if (diffDays < 30) {
+      return t('storyboard.fileBrowser.contents.weeksAgo', { count: Math.floor(diffDays / 7) });
+    }
+
+    const locale = (i18n.resolvedLanguage || i18n.language) === 'zh-CN' ? 'zh-CN' : undefined;
+    return date.toLocaleDateString(locale);
+  };
   const handleItemClick = (item: FolderItem) => {
     onSelectItem(item);
   };
@@ -86,7 +91,7 @@ export function FolderContentsView({
       <div className="folder-contents-view loading">
         <div className="contents-loading">
           <div className="loading-spinner" />
-          <span>Loading...</span>
+          <span>{t('storyboard.fileBrowser.contents.loading')}</span>
         </div>
       </div>
     );
@@ -97,7 +102,7 @@ export function FolderContentsView({
       <div className="folder-contents-view empty">
         <div className="contents-empty">
           <Folder size={48} className="empty-icon" />
-          <span>This folder is empty</span>
+          <span>{t('storyboard.fileBrowser.contents.empty')}</span>
         </div>
       </div>
     );
@@ -110,7 +115,7 @@ export function FolderContentsView({
         <div className="contents-section">
           <div className="section-header">
             <Folder size={14} />
-            <span>Folders ({folders.length})</span>
+            <span>{t('storyboard.fileBrowser.contents.folders', { count: folders.length })}</span>
           </div>
           <div className="items-grid">
             {folders.map((item) => (
@@ -134,7 +139,7 @@ export function FolderContentsView({
         <div className="contents-section">
           <div className="section-header">
             <FileText size={14} />
-            <span>Projects ({projects.length})</span>
+            <span>{t('storyboard.fileBrowser.contents.projects', { count: projects.length })}</span>
           </div>
           <div className="items-grid">
             {projects.map((item) => (
@@ -156,7 +161,7 @@ export function FolderContentsView({
                       </span>
                       <span className="meta-item">
                         <LayoutGrid size={12} />
-                        {item.metadata.panelCount} panels
+                        {t('storyboard.fileBrowser.contents.panels', { count: item.metadata.panelCount })}
                       </span>
                     </div>
                   )}

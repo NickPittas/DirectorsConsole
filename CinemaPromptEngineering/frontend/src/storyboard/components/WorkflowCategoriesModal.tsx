@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Tags, Check } from 'lucide-react';
 import { Workflow, WORKFLOW_CATEGORIES, WorkflowCategory } from '../StoryboardUI';
 
@@ -15,9 +16,25 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
   workflows,
   onUpdateWorkflow,
 }) => {
+  const { t } = useTranslation();
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
   const [selectedCategories, setSelectedCategories] = useState<WorkflowCategory[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+
+  const categoryKeyMap: Record<WorkflowCategory, string> = {
+    'Image Generation': 'imageGeneration',
+    'Text to Image': 'textToImage',
+    'Image to Image': 'imageToImage',
+    'InPainting': 'inPainting',
+    'Image Editing': 'imageEditing',
+    'Upscaling': 'upscaling',
+    'Video Generation': 'videoGeneration',
+  };
+
+  const getCategoryLabel = (category: WorkflowCategory): string => {
+    const key = categoryKeyMap[category];
+    return t(`storyboard.workflowCategories.categories.${key}`, { defaultValue: category });
+  };
 
   const handleWorkflowSelect = useCallback((workflow: Workflow) => {
     setSelectedWorkflow(workflow);
@@ -67,7 +84,7 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
     <div className="workflow-categories-modal-overlay" onClick={onClose}>
       <div className="workflow-categories-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2><Tags size={20} /> Manage Workflow Categories</h2>
+          <h2><Tags size={20} /> {t('storyboard.workflowCategories.title')}</h2>
           <button className="close-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -78,7 +95,7 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
             <div className="search-box">
               <input
                 type="text"
-                placeholder="Search workflows..."
+                placeholder={t('storyboard.workflowCategories.searchPlaceholder')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -102,11 +119,11 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
                         className="category-tag"
                         style={{ backgroundColor: getCategoryColor(cat) }}
                       >
-                        {cat}
+                        {getCategoryLabel(cat)}
                       </span>
                     ))}
                     {!workflow.categories?.length && (
-                      <span className="no-categories">No categories</span>
+                      <span className="no-categories">{t('storyboard.workflowCategories.noCategories')}</span>
                     )}
                   </div>
                 </div>
@@ -117,9 +134,9 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
           <div className="categories-section">
             {selectedWorkflow ? (
               <>
-                <h3>Assign Categories to: {selectedWorkflow.name}</h3>
+                <h3>{t('storyboard.workflowCategories.assignTitle', { name: selectedWorkflow.name })}</h3>
                 <p className="help-text">
-                  Select all categories that apply to this workflow. A workflow can have multiple categories.
+                  {t('storyboard.workflowCategories.help')}
                 </p>
 
                 <div className="categories-grid">
@@ -139,7 +156,7 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
                         className="category-indicator"
                         style={{ backgroundColor: getCategoryColor(category) }}
                       />
-                      <span className="category-name">{category}</span>
+                      <span className="category-name">{getCategoryLabel(category)}</span>
                       {selectedCategories.includes(category) && (
                         <Check size={16} className="check-icon" />
                       )}
@@ -148,7 +165,7 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
                 </div>
 
                 <div className="selected-categories-summary">
-                  <h4>Selected Categories:</h4>
+                  <h4>{t('storyboard.workflowCategories.selectedTitle')}</h4>
                   <div className="selected-tags">
                     {selectedCategories.map(cat => (
                       <span
@@ -156,28 +173,28 @@ export const WorkflowCategoriesModal: React.FC<WorkflowCategoriesModalProps> = (
                         className="selected-tag"
                         style={{ backgroundColor: getCategoryColor(cat) }}
                       >
-                        {cat}
+                        {getCategoryLabel(cat)}
                       </span>
                     ))}
                     {!selectedCategories.length && (
-                      <span className="no-selection">No categories selected</span>
+                      <span className="no-selection">{t('storyboard.workflowCategories.noneSelected')}</span>
                     )}
                   </div>
                 </div>
 
                 <div className="modal-actions">
                   <button className="save-btn" onClick={handleSave}>
-                    Save Categories
+                    {t('storyboard.workflowCategories.save')}
                   </button>
                   <button className="cancel-btn" onClick={() => setSelectedWorkflow(null)}>
-                    Cancel
+                    {t('storyboard.workflowCategories.cancel')}
                   </button>
                 </div>
               </>
             ) : (
               <div className="no-selection-message">
                 <Tags size={48} />
-                <p>Select a workflow from the list to assign categories</p>
+                <p>{t('storyboard.workflowCategories.selectWorkflowHint')}</p>
               </div>
             )}
           </div>

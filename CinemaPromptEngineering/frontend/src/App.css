@@ -110,6 +110,43 @@ body {
   flex: 1;
 }
 
+.directors-console__nav-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding-left: var(--spacing-sm);
+  border-left: 1px solid var(--color-border);
+}
+
+.language-switcher__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.language-switcher__select {
+  padding: 6px 10px;
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.language-switcher__select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 .tab-button {
   display: flex;
   align-items: center;

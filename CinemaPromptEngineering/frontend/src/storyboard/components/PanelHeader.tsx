@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Lock, GripVertical, X } from 'lucide-react';
 import './PanelHeader.css';
 
@@ -26,6 +27,7 @@ export function PanelHeader({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { t } = useTranslation();
 
   // Focus input when entering edit mode
   useEffect(() => {
@@ -80,7 +82,7 @@ export function PanelHeader({
       {/* Drag Handle */}
       <div 
         className="panel-drag-handle"
-        title="Drag to move panel"
+        title={t('storyboard.panel.dragToMove')}
         {...dragHandleListeners}
       >
         <GripVertical size={16} />
@@ -104,7 +106,7 @@ export function PanelHeader({
           <span 
             className={`panel-name ${locked ? 'locked' : 'editable'}`}
             onDoubleClick={handleDoubleClick}
-            title={locked ? 'Panel locked (has generated images)' : 'Double-click to rename'}
+            title={locked ? t('storyboard.panel.lockedTitle') : t('storyboard.panel.renameTitle')}
           >
             {name}
           </span>
@@ -123,7 +125,7 @@ export function PanelHeader({
             e.stopPropagation();
             onRemove();
           }}
-          title="Remove panel"
+          title={t('storyboard.panel.removeTitle')}
         >
           <X size={14} />
         </button>

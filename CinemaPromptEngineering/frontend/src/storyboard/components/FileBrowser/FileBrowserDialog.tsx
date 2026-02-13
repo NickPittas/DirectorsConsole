@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, FolderPlus, Save, FolderOpen, AlertCircle } from 'lucide-react';
 import { useFileBrowser, FolderItem } from './hooks/useFileBrowser';
 import { DriveTreeView } from './components/DriveTreeView';
@@ -44,6 +45,7 @@ export function FileBrowserDialog({
   onSaveProject,
   onSelectFolder,
 }: FileBrowserDialogProps) {
+  const { t } = useTranslation();
   // -------------------------------------------------------------------------
   // State
   // -------------------------------------------------------------------------
@@ -158,7 +160,7 @@ export function FileBrowserDialog({
         ? state.selectedItem.path
         : state.currentPath;
       if (!folderPath) {
-        setError('Please select a folder');
+        setError(t('storyboard.fileBrowser.pleaseSelectFolder'));
         return;
       }
       if (onSelectFolder) {
@@ -172,15 +174,15 @@ export function FileBrowserDialog({
         // If folder selected in open mode, navigate into it
         navigateTo(state.selectedItem.path);
       } else {
-        setError('Please select a project file to open');
+        setError(t('storyboard.fileBrowser.pleaseSelectProject'));
       }
     } else if (mode === 'save') {
       if (!saveFileName.trim()) {
-        setError('Please enter a project name');
+        setError(t('storyboard.fileBrowser.pleaseEnterProjectName'));
         return;
       }
       if (!state.currentPath) {
-        setError('Please select a folder to save in');
+        setError(t('storyboard.fileBrowser.pleaseSelectSaveFolder'));
         return;
       }
       if (onSaveProject) {
@@ -202,7 +204,7 @@ export function FileBrowserDialog({
         }),
       });
 
-      if (response.ok) {
+        if (response.ok) {
         const data = await response.json();
         if (data.success) {
           setShowNewFolderInput(false);
@@ -213,13 +215,13 @@ export function FileBrowserDialog({
             await navigateTo(data.folder_path);
           }
         } else {
-          setError(data.message || 'Failed to create folder');
+          setError(data.message || t('storyboard.fileBrowser.failedToCreateFolder'));
         }
       } else {
-        setError('Failed to create folder');
+        setError(t('storyboard.fileBrowser.failedToCreateFolder'));
       }
     } catch (err) {
-      setError(`Error creating folder: ${err}`);
+      setError(t('storyboard.fileBrowser.errorCreatingFolder', { error: String(err) }));
     }
   };
 
@@ -232,7 +234,7 @@ export function FileBrowserDialog({
       return (
         <>
           <FolderOpen size={18} />
-          <span>{title || 'Select Folder'}</span>
+          <span>{title || t('storyboard.fileBrowser.selectFolder')}</span>
         </>
       );
     }
@@ -240,26 +242,28 @@ export function FileBrowserDialog({
       return (
         <>
           <FolderOpen size={18} />
-          <span>{title || 'Load Project'}</span>
+          <span>{title || t('storyboard.fileBrowser.loadProject')}</span>
         </>
       );
     }
     return (
       <>
         <Save size={18} />
-        <span>{title || 'Save Project As'}</span>
+        <span>{title || t('storyboard.fileBrowser.saveProjectAs')}</span>
       </>
     );
   };
 
   const getPrimaryButtonText = () => {
     if (mode === 'select-folder') {
-      return 'Select Folder';
+      return t('storyboard.fileBrowser.selectFolder');
     }
     if (mode === 'open') {
-      return state.selectedItem?.type === 'project' ? 'Open Project' : 'Select Folder';
+      return state.selectedItem?.type === 'project'
+        ? t('storyboard.fileBrowser.openProject')
+        : t('storyboard.fileBrowser.selectFolder');
     }
-    return 'Save';
+    return t('storyboard.fileBrowser.save');
   };
 
   const isPrimaryButtonDisabled = () => {
@@ -333,12 +337,12 @@ export function FileBrowserDialog({
             {/* Save filename input */}
             {mode === 'save' && (
               <div className="file-browser-save-input">
-                <label>Project Name:</label>
+                <label>{t('storyboard.fileBrowser.projectNameLabel')}</label>
                 <input
                   type="text"
                   value={saveFileName}
                   onChange={(e) => setSaveFileName(e.target.value)}
-                  placeholder="Enter project name..."
+                  placeholder={t('storyboard.fileBrowser.projectNamePlaceholder')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handlePrimaryAction();
@@ -356,7 +360,7 @@ export function FileBrowserDialog({
                   type="text"
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="New folder name..."
+                  placeholder={t('storyboard.fileBrowser.newFolderNamePlaceholder')}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleCreateFolder();
@@ -367,14 +371,14 @@ export function FileBrowserDialog({
                   }}
                   autoFocus
                 />
-                <button onClick={handleCreateFolder}>Create</button>
+                <button onClick={handleCreateFolder}>{t('storyboard.fileBrowser.create')}</button>
                 <button
                   onClick={() => {
                     setShowNewFolderInput(false);
                     setNewFolderName('');
                   }}
                 >
-                  Cancel
+                  {t('storyboard.fileBrowser.cancel')}
                 </button>
               </div>
             )}
@@ -389,7 +393,7 @@ export function FileBrowserDialog({
             disabled={showNewFolderInput || !state.currentPath}
           >
             <FolderPlus size={16} />
-            <span>New Folder</span>
+            <span>{t('storyboard.fileBrowser.newFolder')}</span>
           </button>
 
           {mode === 'select-folder' && state.currentPath && (
@@ -398,7 +402,7 @@ export function FileBrowserDialog({
                 ? state.selectedItem.path
                 : state.currentPath
             }>
-              <span className="selected-path-label">Selected:</span>
+              <span className="selected-path-label">{t('storyboard.fileBrowser.selected')}</span>
               <span className="selected-path-value">
                 {(state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
                   ? state.selectedItem.path
@@ -409,7 +413,7 @@ export function FileBrowserDialog({
 
           <div className="file-browser-actions">
             <button className="cancel-btn" onClick={onClose}>
-              Cancel
+              {t('storyboard.fileBrowser.cancel')}
             </button>
             <button
               className="primary-btn"

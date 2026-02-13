@@ -3,6 +3,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Menu,
   Save,
@@ -55,6 +56,7 @@ export function MainMenu({
 }: MainMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -90,14 +92,14 @@ export function MainMenu({
         onClick={() => setIsOpen(!isOpen)}
       >
         <Menu size={18} />
-        <span className="project-name">{projectName || 'Untitled Project'}</span>
+        <span className="project-name">{projectName || t('storyboard.project.untitled')}</span>
         <ChevronDown size={14} className={`chevron ${isOpen ? 'rotated' : ''}`} />
       </button>
 
       {isOpen && (
         <div className="main-menu-dropdown">
           <div className="menu-section">
-            <div className="menu-section-title">Project</div>
+            <div className="menu-section-title">{t('storyboard.menu.project')}</div>
             
             <button
               className="menu-item"
@@ -107,7 +109,7 @@ export function MainMenu({
               }}
             >
               <FilePlus size={16} />
-              <span>New Project</span>
+              <span>{t('storyboard.menu.newProject')}</span>
               <span className="menu-shortcut">{mod}+N</span>
             </button>
 
@@ -120,7 +122,7 @@ export function MainMenu({
               disabled={isLoading}
             >
               <FolderInput size={16} />
-              <span>{isLoading ? 'Loading...' : 'Load Project'}</span>
+              <span>{isLoading ? t('storyboard.menu.loading') : t('storyboard.menu.loadProject')}</span>
               <span className="menu-shortcut">{mod}+O</span>
             </button>
 
@@ -133,7 +135,7 @@ export function MainMenu({
               disabled={isSaving}
             >
               <Save size={16} />
-              <span>{isSaving ? 'Saving...' : 'Save Project'}</span>
+              <span>{isSaving ? t('storyboard.menu.saving') : t('storyboard.menu.saveProject')}</span>
               <span className="menu-shortcut">{mod}+S</span>
             </button>
 
@@ -147,7 +149,7 @@ export function MainMenu({
                 disabled={isSaving}
               >
                 <SaveAll size={16} />
-                <span>Save As...</span>
+                <span>{t('storyboard.menu.saveAs')}</span>
                 <span className="menu-shortcut">{mod}+⇧+S</span>
               </button>
             )}
@@ -160,7 +162,7 @@ export function MainMenu({
               }}
             >
               <Settings size={16} />
-              <span>Project Settings</span>
+              <span>{t('storyboard.menu.projectSettings')}</span>
               <span className="menu-shortcut">{mod}+,</span>
             </button>
 
@@ -173,7 +175,7 @@ export function MainMenu({
                 }}
               >
                 <Printer size={16} />
-                <span>Print Storyboard</span>
+                <span>{t('storyboard.menu.printStoryboard')}</span>
                 <span className="menu-shortcut">{mod}+P</span>
               </button>
             )}
@@ -182,7 +184,7 @@ export function MainMenu({
           <div className="menu-divider" />
 
           <div className="menu-section">
-            <div className="menu-section-title">System</div>
+            <div className="menu-section-title">{t('storyboard.menu.system')}</div>
             
             <button 
               className="menu-item"
@@ -192,7 +194,7 @@ export function MainMenu({
               }}
             >
               <Server size={16} />
-              <span>Manage Nodes</span>
+              <span>{t('storyboard.menu.manageNodes')}</span>
               <span className="menu-badge">{nodeCount}</span>
             </button>
 
@@ -204,10 +206,10 @@ export function MainMenu({
                   setIsOpen(false);
                 }}
                 disabled={isRestarting || nodeCount === 0}
-                title={nodeCount === 0 ? "No nodes available to restart" : "Restart all ComfyUI backends"}
+                title={nodeCount === 0 ? t('storyboard.menu.noNodesToRestart') : t('storyboard.menu.restartNodesTitle')}
               >
                 <RefreshCw size={16} className={isRestarting ? 'spinning' : ''} />
-                <span>{isRestarting ? 'Restarting...' : 'Restart Nodes'}</span>
+                <span>{isRestarting ? t('storyboard.menu.restarting') : t('storyboard.menu.restartNodes')}</span>
               </button>
             )}
 
@@ -219,10 +221,10 @@ export function MainMenu({
                   setIsOpen(false);
                 }}
                 disabled={!isGenerating}
-                title={isGenerating ? "Cancel all running generations" : "No generations running"}
+                title={isGenerating ? t('storyboard.menu.cancelAllTitle') : t('storyboard.menu.cancelDisabledTitle')}
               >
                 <OctagonX size={16} />
-                <span>Cancel All Generations</span>
+                <span>{t('storyboard.menu.cancelAllGenerations')}</span>
               </button>
             )}
           </div>

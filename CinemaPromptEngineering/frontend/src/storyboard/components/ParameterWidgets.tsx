@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { WorkflowParameter } from '../services/workflow-parser';
 import { ImageDropZone } from './ImageDropZone';
 import { CameraAngle, parseAngleFromPrompt, removeAnglePrefix } from '../data/cameraAngleData';
@@ -162,6 +163,7 @@ export function FloatWidget({ parameter, value, onChange, disabled }: ParameterW
 // ============================================================================
 
 export function SeedWidget({ parameter, value, onChange, disabled }: ParameterWidgetProps) {
+  const { t } = useTranslation();
   const [localValue, setLocalValue] = useState(value ?? parameter.default);
   
   // Sync local state when value prop changes (e.g., when loading from a panel)
@@ -196,7 +198,7 @@ export function SeedWidget({ parameter, value, onChange, disabled }: ParameterWi
           className="seed-randomize-btn"
           onClick={handleRandomize}
           disabled={disabled}
-          title="Randomize seed"
+          title={t('storyboard.parameters.randomizeSeed')}
         >
           🎲
         </button>
@@ -292,6 +294,7 @@ export function BooleanWidget({ parameter, value, onChange, disabled }: Paramete
 // ============================================================================
 
 export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, cameraAngle, onCameraAngleChange }: PromptWidgetProps) {
+  const { t } = useTranslation();
   // Get CPE prompt from store for paste functionality
   const { cpePromptForStoryboard, setCpePromptForStoryboard } = useCinemaStore();
   
@@ -379,7 +382,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
           <button 
             className="badge-clear" 
             onClick={handleClearAngle}
-            title="Clear angle"
+            title={t('storyboard.parameters.clearAngle')}
             disabled={disabled}
           >
             ×
@@ -396,7 +399,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
               className="cpe-paste-btn"
               onClick={handlePasteFromCPE}
               disabled={disabled}
-              title="Paste prompt from Cinema Prompt Engineering"
+              title={t('storyboard.parameters.pasteFromCpe')}
             >
               🎬
             </button>
@@ -408,7 +411,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
               className={`angle-selector-btn ${cameraAngle ? 'has-angle' : ''}`}
               onClick={() => setIsAngleSelectorOpen(true)}
               disabled={disabled}
-              title="Select camera angle"
+              title={t('storyboard.parameters.selectCameraAngle')}
             >
               📐
             </button>
@@ -420,7 +423,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
               className={`ai-enhance-btn ${isEnhancing ? 'enhancing' : ''}`}
               onClick={handleEnhance}
               disabled={disabled || isEnhancing || !localValue.trim()}
-              title={isEnhancing ? 'Enhancing prompt...' : 'Enhance with AI'}
+              title={isEnhancing ? t('storyboard.parameters.enhancingPrompt') : t('storyboard.parameters.enhanceWithAi')}
             >
               {isEnhancing ? '✨...' : '✨'}
             </button>
@@ -433,7 +436,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
         onChange={handleChange}
         disabled={disabled}
         rows={4}
-        placeholder={`Enter ${isNegative ? 'negative' : 'positive'} prompt...`}
+        placeholder={isNegative ? t('storyboard.parameters.promptPlaceholderNegative') : t('storyboard.parameters.promptPlaceholderPositive')}
       />
       {parameter.description && (
         <span className="parameter-description">{parameter.description}</span>
@@ -575,6 +578,7 @@ export function LoRAWidget({
   onBypassChange,
   isBypassed = false
 }: LoRAWidgetProps) {
+  const { t } = useTranslation();
   // Value format: { lora_name: string, strength: number, bypassed?: boolean }
   // or just number for strength-only parameters
   const isComplex = typeof value === 'object' && value !== null;
@@ -667,9 +671,9 @@ export function LoRAWidget({
           className={`bypass-toggle ${localBypassed ? 'bypassed' : 'active'}`}
           onClick={handleBypassToggle}
           disabled={disabled}
-          title={localBypassed ? 'Enable this LoRA' : 'Bypass this LoRA'}
+          title={localBypassed ? t('storyboard.parameters.lora.enable') : t('storyboard.parameters.lora.bypass')}
         >
-          {localBypassed ? '⏸ Bypassed' : '▶ Active'}
+          {localBypassed ? `⏸ ${t('storyboard.parameters.lora.bypassed')}` : `▶ ${t('storyboard.parameters.lora.active')}`}
         </button>
       </div>
       
@@ -684,7 +688,7 @@ export function LoRAWidget({
                 onChange={handleLoraNameChange}
                 disabled={disabled}
               >
-                <option value="">-- Select LoRA --</option>
+                <option value="">{t('storyboard.parameters.lora.selectPlaceholder')}</option>
                 {availableLoras.map((lora) => (
                   <option key={lora} value={lora}>
                     {formatLoraDisplayName(lora)}
@@ -696,7 +700,7 @@ export function LoRAWidget({
           
           {/* Strength Slider */}
           <div className="lora-strength-container">
-            <label className="strength-label">Strength</label>
+            <label className="strength-label">{t('storyboard.parameters.lora.strength')}</label>
             <div className="parameter-control">
               <input
                 type="range"
@@ -726,7 +730,7 @@ export function LoRAWidget({
       {localBypassed && (
         <div className="lora-bypassed-placeholder">
           <span className="bypassed-icon">⏸</span>
-          <span className="bypassed-text">LoRA bypassed - will not be applied</span>
+          <span className="bypassed-text">{t('storyboard.parameters.lora.bypassedHint')}</span>
         </div>
       )}
       
@@ -799,17 +803,18 @@ export function ParameterWidget({ parameter, value, onChange, disabled, onEnhanc
 // ============================================================================
 
 export function ParameterPanel({ parameters, values, onChange, disabled, onEnhancePrompt, cameraAngles, onCameraAngleChange, comfyUrl }: ParameterPanelProps) {
+  const { t } = useTranslation();
   if (parameters.length === 0) {
     return (
       <div className="parameter-panel empty">
-        <p>No parameters available for this template.</p>
+        <p>{t('storyboard.parameters.empty')}</p>
       </div>
     );
   }
   
   return (
     <div className="parameter-panel">
-      <div className="parameter-panel-title">Parameters</div>
+      <div className="parameter-panel-title">{t('storyboard.parameters.title')}</div>
       <div className="parameter-list">
         {parameters.map((parameter) => (
           <ParameterWidget
