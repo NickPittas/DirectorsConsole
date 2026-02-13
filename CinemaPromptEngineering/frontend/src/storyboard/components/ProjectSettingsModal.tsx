@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FolderOpen, CheckCircle, XCircle } from 'lucide-react';
 import { ProjectSettings, projectManager, getDefaultOrchestratorUrl } from '../services/project-manager';
 import { FileBrowserDialog } from './FileBrowser/FileBrowserDialog';
@@ -16,6 +17,7 @@ interface ProjectSettingsModalProps {
 }
 
 export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: ProjectSettingsModalProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState(settings.name);
   const [path, setPath] = useState(settings.path);
   const [namingTemplate, setNamingTemplate] = useState(settings.namingTemplate);
@@ -98,24 +100,24 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
     <div className="modal-overlay" onClick={onClose}>
       <div className="project-settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Project Settings</h2>
+          <h2>{t('storyboard.projectSettings.title')}</h2>
           <button className="close-btn" onClick={onClose}>×</button>
         </div>
         
         <div className="modal-body">
           <div className="form-group">
-            <label htmlFor="project-name">Project Name</label>
+            <label htmlFor="project-name">{t('storyboard.projectSettings.projectName')}</label>
             <input
               id="project-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="My VFX Project"
+              placeholder={t('storyboard.projectSettings.projectNamePlaceholder')}
             />
           </div>
           
           <div className="form-group">
-            <label htmlFor="project-path">Output Folder Path</label>
+            <label htmlFor="project-path">{t('storyboard.projectSettings.outputPath')}</label>
             <div className="input-with-button">
               <input
                 id="project-path"
@@ -126,14 +128,14 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
                   setPathValidation(null);
                 }}
                 onBlur={handleValidatePath}
-                placeholder="e.g., Z:\Projects\MyProject\renders"
+                placeholder={t('storyboard.projectSettings.outputPathPlaceholder')}
               />
               <button
                 type="button"
                 className="browse-btn"
                 onClick={() => setShowFolderBrowser(true)}
                 disabled={orchestratorStatus !== 'online'}
-                title={orchestratorStatus !== 'online' ? 'Orchestrator must be online to browse folders' : 'Browse folders'}
+                title={orchestratorStatus !== 'online' ? t('storyboard.projectSettings.browseRequiresOnline') : t('storyboard.projectSettings.browseFolders')}
               >
                 <FolderOpen size={16} />
               </button>
@@ -142,9 +144,9 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
                 className="validate-btn"
                 onClick={handleValidatePath}
                 disabled={!path || !orchestratorUrl || validating}
-                title="Validate path"
+                title={t('storyboard.projectSettings.validatePathTitle')}
               >
-                {validating ? '...' : 'Validate'}
+                {validating ? '...' : t('storyboard.projectSettings.validate')}
               </button>
             </div>
             {pathValidation && (
@@ -154,15 +156,19 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
               </div>
             )}
             <small className="help-text">
-              Full path where images will be saved. Leave empty for browser downloads.
+              {t('storyboard.projectSettings.outputPathHelp')}
             </small>
           </div>
           
           <div className="form-group">
             <label htmlFor="orchestrator-url">
-              Orchestrator URL
+              {t('storyboard.projectSettings.orchestratorUrl')}
               <span className={`status-indicator ${orchestratorStatus}`}>
-                {orchestratorStatus === 'checking' ? '...' : orchestratorStatus === 'online' ? ' (Online)' : ' (Offline)'}
+                {orchestratorStatus === 'checking'
+                  ? '...'
+                  : orchestratorStatus === 'online'
+                    ? ` ${t('storyboard.projectSettings.statusOnline')}`
+                    : ` ${t('storyboard.projectSettings.statusOffline')}`}
               </span>
             </label>
             <input
@@ -170,29 +176,29 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
               type="text"
               value={orchestratorUrl}
               onChange={(e) => setOrchestratorUrl(e.target.value)}
-              placeholder="http://localhost:9820"
+              placeholder={t('storyboard.projectSettings.orchestratorUrlPlaceholder')}
             />
             <small className="help-text">
-              URL of the Director's Console Orchestrator API (for auto-save to filesystem).
+              {t('storyboard.projectSettings.orchestratorUrlHelp')}
             </small>
           </div>
           
           <div className="form-group">
-            <label htmlFor="naming-template">Naming Template</label>
+            <label htmlFor="naming-template">{t('storyboard.projectSettings.namingTemplate')}</label>
             <input
               id="naming-template"
               type="text"
               value={namingTemplate}
               onChange={(e) => setNamingTemplate(e.target.value)}
-              placeholder="{project}_Panel{panel}_{version}"
+              placeholder={t('storyboard.projectSettings.namingTemplatePlaceholder')}
             />
             <small className="help-text">
-              Available tokens: {'{project}'}, {'{panel}'}, {'{version}'}, {'{timestamp}'}, {'{date}'}, {'{time}'}, {'{seed}'}, {'{workflow}'}
+              {t('storyboard.projectSettings.availableTokens')} {'{project}'}, {'{panel}'}, {'{version}'}, {'{timestamp}'}, {'{date}'}, {'{time}'}, {'{seed}'}, {'{workflow}'}
               <br />
-              <strong>{'{panel}'}</strong> = Full panel name (e.g., "Panel_01", "Hero_Shot", "Opening_Scene")
+              <span>{t('storyboard.projectSettings.panelTokenExplanation')}</span>
             </small>
             <div className="preview">
-              <strong>Preview:</strong> {previewFilename()}
+              <strong>{t('storyboard.projectSettings.preview')}</strong> {previewFilename()}
             </div>
           </div>
           
@@ -203,63 +209,63 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
                 checked={autoSave}
                 onChange={(e) => setAutoSave(e.target.checked)}
               />
-              Auto-save on generation completion
+              {t('storyboard.projectSettings.autoSave')}
             </label>
             <small className="help-text">
-              Automatically save images when generation completes (requires output folder).
+              {t('storyboard.projectSettings.autoSaveHelp')}
             </small>
           </div>
           
           <div className="template-examples">
-            <h4>Common Templates:</h4>
+            <h4>{t('storyboard.projectSettings.commonTemplates')}</h4>
             <div className="template-list">
               <button 
                 type="button" 
                 className="template-btn"
                 onClick={() => setNamingTemplate('{project}_{panel}_{version}')}
               >
-                Panel-based: {'{project}_{panel}_{version}'}
-                <small>Result: Eliot_Panel_01_v001.png</small>
+                {t('storyboard.projectSettings.templatePanelBased')} {'{project}_{panel}_{version}'}
+                <small>{t('storyboard.projectSettings.templatePanelBasedResult')} Eliot_Panel_01_v001.png</small>
               </button>
               <button 
                 type="button" 
                 className="template-btn"
                 onClick={() => setNamingTemplate('{panel}\\{project}_{panel}_{version}')}
               >
-                Per-panel folders: {'{panel}\\{project}_{panel}_{version}'}
-                <small>Creates Panel_01\Eliot_Panel_01_v001.png</small>
+                {t('storyboard.projectSettings.templatePerPanelFolders')} {'{panel}\\{project}_{panel}_{version}'}
+                <small>{t('storyboard.projectSettings.templatePerPanelFoldersResult')} Panel_01\Eliot_Panel_01_v001.png</small>
               </button>
               <button 
                 type="button" 
                 className="template-btn"
                 onClick={() => setNamingTemplate('{project}_SHOT{panel}_{version}')}
               >
-                Shot-based: {'{project}_SHOT{panel}_{version}'}
-                <small>Result: Eliot_SHOTPanel_01_v001.png</small>
+                {t('storyboard.projectSettings.templateShotBased')} {'{project}_SHOT{panel}_{version}'}
+                <small>{t('storyboard.projectSettings.templatePanelBasedResult')} Eliot_SHOTPanel_01_v001.png</small>
               </button>
               <button 
                 type="button" 
                 className="template-btn"
                 onClick={() => setNamingTemplate('{project}_{panel}_{timestamp}')}
               >
-                Timestamped: {'{project}_{panel}_{timestamp}'}
-                <small>Result: Eliot_Panel_01_20250206_143022.png</small>
+                {t('storyboard.projectSettings.templateTimestamped')} {'{project}_{panel}_{timestamp}'}
+                <small>{t('storyboard.projectSettings.templatePanelBasedResult')} Eliot_Panel_01_20250206_143022.png</small>
               </button>
               <button 
                 type="button" 
                 className="template-btn"
                 onClick={() => setNamingTemplate('{workflow}_{seed}_{version}')}
               >
-                Seed-based: {'{workflow}_{seed}_{version}'}
-                <small>Result: MyWorkflow_12345678_v001.png</small>
+                {t('storyboard.projectSettings.templateSeedBased')} {'{workflow}_{seed}_{version}'}
+                <small>{t('storyboard.projectSettings.templatePanelBasedResult')} MyWorkflow_12345678_v001.png</small>
               </button>
             </div>
           </div>
         </div>
         
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={handleSave}>Save Settings</button>
+          <button className="btn-secondary" onClick={onClose}>{t('storyboard.projectSettings.cancel')}</button>
+          <button className="btn-primary" onClick={handleSave}>{t('storyboard.projectSettings.save')}</button>
         </div>
       </div>
       
@@ -270,7 +276,7 @@ export function ProjectSettingsModal({ isOpen, onClose, settings, onSave }: Proj
         mode="select-folder"
         orchestratorUrl={orchestratorUrl}
         initialPath={path}
-        title="Select Output Folder"
+        title={t('storyboard.projectSettings.selectOutputFolder')}
         onOpenProject={() => {}}
         onSelectFolder={(selectedPath) => {
           setPath(selectedPath);

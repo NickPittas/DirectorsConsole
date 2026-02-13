@@ -4,6 +4,7 @@
  */
 
 import { HardDrive, Folder, FolderOpen, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { TreeNode } from '../hooks/useFileBrowser';
 
 interface DriveTreeViewProps {
@@ -23,6 +24,7 @@ function TreeNodeItem({
   onSelectFolder,
   onExpandFolder,
   onCollapseFolder,
+  emptyLabel,
 }: {
   node: TreeNode;
   level: number;
@@ -31,6 +33,7 @@ function TreeNodeItem({
   onSelectFolder: (path: string) => void;
   onExpandFolder: (path: string) => void;
   onCollapseFolder: (path: string) => void;
+  emptyLabel: string;
 }) {
   const isSelected = node.path === selectedPath;
   const isExpanded = expandedPaths.has(node.path);
@@ -100,6 +103,7 @@ function TreeNodeItem({
               onSelectFolder={onSelectFolder}
               onExpandFolder={onExpandFolder}
               onCollapseFolder={onCollapseFolder}
+              emptyLabel={emptyLabel}
             />
           ))}
         </div>
@@ -111,7 +115,7 @@ function TreeNodeItem({
           className="tree-empty-children"
           style={{ paddingLeft: `${(level + 1) * 12 + 32}px` }}
         >
-          (empty)
+          {emptyLabel}
         </div>
       )}
     </div>
@@ -126,14 +130,16 @@ export function DriveTreeView({
   onExpandFolder,
   onCollapseFolder,
 }: DriveTreeViewProps) {
+  const { t } = useTranslation();
+  const emptyLabel = t('storyboard.fileBrowser.tree.empty');
   return (
     <div className="drive-tree-view">
       <div className="tree-header">
-        <span>Quick Access</span>
+        <span>{t('storyboard.fileBrowser.tree.quickAccess')}</span>
       </div>
       <div className="tree-content">
         {nodes.length === 0 ? (
-          <div className="tree-empty">No drives found</div>
+          <div className="tree-empty">{t('storyboard.fileBrowser.tree.noDrives')}</div>
         ) : (
           nodes.map((node) => (
             <TreeNodeItem
@@ -145,6 +151,7 @@ export function DriveTreeView({
               onSelectFolder={onSelectFolder}
               onExpandFolder={onExpandFolder}
               onCollapseFolder={onCollapseFolder}
+              emptyLabel={emptyLabel}
             />
           ))
         )}

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { useTranslation } from 'react-i18next';
 import { Edit3, Eye, MessageSquare } from 'lucide-react';
 import './PanelNotes.css';
 
@@ -10,6 +11,7 @@ interface PanelNotesProps {
 }
 
 export function PanelNotes({ notes, onNotesChange }: PanelNotesProps) {
+  const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
   const [localNotes, setLocalNotes] = useState(notes);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -61,13 +63,13 @@ export function PanelNotes({ notes, onNotesChange }: PanelNotesProps) {
       <div className="panel-notes-header">
         <div className="panel-notes-title">
           <MessageSquare size={12} />
-          <span>Notes</span>
+          <span>{t('storyboard.notes.title')}</span>
           {hasNotes && <span className="notes-indicator">●</span>}
         </div>
         <button
           className="panel-notes-toggle"
           onClick={toggleEditMode}
-          title={isEditing ? 'View mode' : 'Edit mode'}
+          title={isEditing ? t('storyboard.notes.viewMode') : t('storyboard.notes.editMode')}
         >
           {isEditing ? <Eye size={12} /> : <Edit3 size={12} />}
         </button>
@@ -79,7 +81,7 @@ export function PanelNotes({ notes, onNotesChange }: PanelNotesProps) {
           className="panel-notes-textarea"
           value={localNotes}
           onChange={handleChange}
-          placeholder="Add notes (supports Markdown)..."
+          placeholder={t('storyboard.notes.placeholder')}
           rows={3}
         />
       ) : (
@@ -99,7 +101,7 @@ export function PanelNotes({ notes, onNotesChange }: PanelNotesProps) {
               {notes}
             </ReactMarkdown>
           ) : (
-            <span className="panel-notes-placeholder">Click edit to add notes...</span>
+            <span className="panel-notes-placeholder">{t('storyboard.notes.empty')}</span>
           )}
         </div>
       )}

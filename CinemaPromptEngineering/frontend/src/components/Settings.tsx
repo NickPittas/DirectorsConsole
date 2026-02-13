@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
+import type { TFunction } from 'i18next';
+import { useTranslation } from 'react-i18next';
 import { api } from '@/api/client';
 
 // =============================================================================
@@ -574,12 +576,12 @@ function getStatusColor(status: ConnectionStatus): string {
   return colors[status];
 }
 
-function getStatusText(status: ConnectionStatus): string {
+function getStatusTextI18n(t: TFunction, status: ConnectionStatus): string {
   const texts: Record<ConnectionStatus, string> = {
-    disconnected: 'Not connected',
-    connecting: 'Connecting...',
-    connected: 'Connected',
-    error: 'Connection failed',
+    disconnected: t('settings.status.disconnected'),
+    connecting: t('settings.status.connecting'),
+    connected: t('settings.status.connected'),
+    error: t('settings.status.error'),
   };
   return texts[status];
 }
@@ -725,6 +727,7 @@ export function saveTargetModel(model: string): void {
 // =============================================================================
 
 export default function Settings({ isOpen, onClose }: SettingsProps) {
+  const { t } = useTranslation();
   // State
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<Record<string, ProviderCredentials>>({});
@@ -750,9 +753,6 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   } | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollingError, setPollingError] = useState<string | null>(null);
-  
-  // Track if current OAuth provider has a built-in client ID
-  const [hasBuiltinClient, setHasBuiltinClient] = useState(false);
 
   // Helper to refresh OAuth tokens for providers that need it
   const refreshExpiredTokens = async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
@@ -935,24 +935,6 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   // Get credentials for the selected provider
   const currentCredentials = activeProvider ? credentials[activeProvider] || {} : {};
   
-  // Fetch OAuth flow type info when OAuth provider is selected
-  useEffect(() => {
-    if (!activeProvider || selectedProvider?.type !== 'oauth') {
-      setHasBuiltinClient(false);
-      return;
-    }
-    
-    // Fetch flow type to check if provider has built-in client
-    api.getOAuthFlowType(activeProvider)
-      .then((flowInfo) => {
-        setHasBuiltinClient(flowInfo.has_builtin_client || false);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch OAuth flow type:', err);
-        setHasBuiltinClient(false);
-      });
-  }, [activeProvider, selectedProvider?.type]);
-
   // Handle provider selection change
   const handleProviderChange = useCallback((providerId: string) => {
     setActiveProvider(providerId || null);
@@ -1384,11 +1366,11 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   // Cancel without saving
   const handleCancel = useCallback(() => {
     if (hasUnsavedChanges) {
-      const confirmed = window.confirm('You have unsaved changes. Discard them?');
+      const confirmed = window.confirm(t('settings.unsavedChangesConfirm'));
       if (!confirmed) return;
     }
     onClose();
-  }, [hasUnsavedChanges, onClose]);
+  }, [hasUnsavedChanges, onClose, t]);
 
   if (!isOpen) return null;
 
@@ -1402,11 +1384,11 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
     >
       <div style={styles.panel}>
         <header style={styles.header}>
-          <h2 id="settings-title" style={styles.headerTitle}>AI Provider Settings</h2>
+          <h2 id="settings-title" style={styles.headerTitle}>{t('settings.title')}</h2>
           <button
             style={styles.closeButton}
             onClick={handleCancel}
-            aria-label="Close settings"
+            aria-label={t('settings.close')}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = 'var(--bg-light)';
               e.currentTarget.style.color = 'var(--text-primary)';
@@ -1427,7 +1409,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           {/* Provider Selection */}
           <section style={styles.section}>
             <label style={styles.label} htmlFor="provider-select">
-              Select AI Provider
+              {t('settings.selectProvider')}
             </label>
             <select
               id="provider-select"
@@ -1435,18 +1417,18 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
               value={activeProvider || ''}
               onChange={(e) => handleProviderChange(e.target.value)}
             >
-              <option value="">-- Select a provider --</option>
-              <optgroup label="Cloud API (API Key)">
+              <option value="">{t('settings.selectProviderPlaceholder')}</option>
+              <optgroup label={t('settings.cloudApi')}>
                 {LLM_PROVIDERS.filter(p => p.type === 'api_key').map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </optgroup>
-              <optgroup label="Local (No Auth)">
+              <optgroup label={t('settings.localNoAuth')}>
                 {LLM_PROVIDERS.filter(p => p.type === 'local').map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </optgroup>
-              <optgroup label="OAuth">
+              <optgroup label={t('settings.oauth')}>
                 {LLM_PROVIDERS.filter(p => p.type === 'oauth').map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -1457,7 +1439,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           {/* Provider Configuration */}
           {selectedProvider && (
             <section style={styles.section}>
-              <h3 style={styles.sectionTitle}>Configuration</h3>
+              <h3 style={styles.sectionTitle}>{t('settings.configuration')}</h3>
               
               <div style={styles.providerInfo}>
                 <div style={styles.providerName}>{selectedProvider.name}</div>
@@ -1773,7 +1755,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                       }} 
                     />
                     <span style={{ color: 'var(--text-secondary)' }}>
-                      {getStatusText(connectionStatus)}
+            {getStatusTextI18n(t, connectionStatus)}
                     </span>
                   </div>
                 )}

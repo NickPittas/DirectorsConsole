@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Home, ChevronRight, RefreshCw } from 'lucide-react';
 
 interface BreadcrumbBarProps {
@@ -15,6 +16,7 @@ interface BreadcrumbBarProps {
 }
 
 export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: BreadcrumbBarProps) {
+  const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
   const [editPath, setEditPath] = useState(path);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -37,7 +39,7 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
   // Parse path into segments
   const parsePath = useCallback((fullPath: string): Array<{ name: string; path: string }> => {
     if (!fullPath) {
-      return [{ name: 'Computer', path: '' }];
+      return [{ name: t('storyboard.fileBrowser.breadcrumb.computer'), path: '' }];
     }
 
     // Normalize path separators
@@ -64,7 +66,7 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
       }
     } else {
       // Unix-style or relative path
-      result.push({ name: 'Computer', path: '' });
+      result.push({ name: t('storyboard.fileBrowser.breadcrumb.computer'), path: '' });
 
       for (const segment of segments) {
         currentPath += (currentPath ? '/' : '') + segment;
@@ -76,7 +78,7 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
     }
 
     return result;
-  }, []);
+  }, [t]);
 
   const segments = parsePath(path);
 
@@ -120,7 +122,7 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
       <button
         className="breadcrumb-home-btn"
         onClick={handleHomeClick}
-        title="Go to Computer"
+        title={t('storyboard.fileBrowser.breadcrumb.goToComputer')}
       >
         <Home size={14} />
       </button>
@@ -135,11 +137,11 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
             onChange={(e) => setEditPath(e.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={handlePathSubmit}
-            placeholder="Enter path..."
+            placeholder={t('storyboard.fileBrowser.breadcrumb.enterPath')}
           />
         </div>
       ) : (
-        <div className="breadcrumb-segments" onClick={handlePathClick} title="Click to edit path">
+        <div className="breadcrumb-segments" onClick={handlePathClick} title={t('storyboard.fileBrowser.breadcrumb.clickToEdit')}>
           {segments.map((segment, index) => (
             <div key={segment.path} className="breadcrumb-segment-wrapper">
               {index > 0 && (
@@ -164,7 +166,7 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
         className="breadcrumb-refresh-btn"
         onClick={onRefresh}
         disabled={isLoading}
-        title="Refresh"
+        title={t('storyboard.fileBrowser.breadcrumb.refresh')}
       >
         <RefreshCw size={14} className={isLoading ? 'spinning' : ''} />
       </button>

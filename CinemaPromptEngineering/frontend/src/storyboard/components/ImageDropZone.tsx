@@ -8,6 +8,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CropMaskEditor } from './CropMaskEditor';
 import './ImageDropZone.css';
 
@@ -169,6 +170,7 @@ export function ImageDropZone({
   onBypassChange,
   comfyUrl: _comfyUrl, // eslint-disable-line @typescript-eslint/no-unused-vars
 }: ImageDropZoneProps) {
+  const { t } = useTranslation();
   const [isDragging, setIsDragging] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
@@ -532,11 +534,11 @@ export function ImageDropZone({
   const getPlaceholderContent = () => {
     switch (acceptType) {
       case 'video':
-        return { icon: '🎬', text: isDragging ? 'Drop video here' : 'Drag video or browse' };
+        return { icon: '🎬', text: isDragging ? t('storyboard.mediaInput.dropVideoHere') : t('storyboard.mediaInput.dragVideoOrBrowse') };
       case 'any':
-        return { icon: '🎞️', text: isDragging ? 'Drop media here' : 'Drag image/video or browse' };
+        return { icon: '🎞️', text: isDragging ? t('storyboard.mediaInput.dropMediaHere') : t('storyboard.mediaInput.dragImageVideoOrBrowse') };
       default:
-        return { icon: '🖼️', text: isDragging ? 'Drop image here' : 'Drag image from canvas or browse' };
+        return { icon: '🖼️', text: isDragging ? t('storyboard.mediaInput.dropImageHere') : t('storyboard.mediaInput.dragImageFromCanvasOrBrowse') };
     }
   };
   
@@ -547,13 +549,13 @@ export function ImageDropZone({
       <div className="image-drop-zone-header">
         <label className="image-drop-zone-label">{displayName}</label>
         {onBypassChange && (
-          <label className="bypass-toggle" title={isBypassed ? 'Enable this input' : 'Bypass this input (skip in workflow)'}>
+          <label className="bypass-toggle" title={isBypassed ? t('storyboard.mediaInput.enableThisInput') : t('storyboard.mediaInput.bypassThisInput')}>
             <input
               type="checkbox"
               checked={isBypassed}
               onChange={(e) => onBypassChange(e.target.checked)}
             />
-            <span className="bypass-label">{isBypassed ? 'Bypassed' : 'Active'}</span>
+            <span className="bypass-label">{isBypassed ? t('storyboard.mediaInput.bypassed') : t('storyboard.mediaInput.active')}</span>
           </label>
         )}
       </div>
@@ -562,8 +564,8 @@ export function ImageDropZone({
         <div className="image-drop-zone bypassed-placeholder">
           <div className="bypassed-content">
             <div className="bypassed-icon">⏸️</div>
-            <div className="bypassed-text">Input bypassed</div>
-            <div className="bypassed-hint">This input will be skipped</div>
+            <div className="bypassed-text">{t('storyboard.mediaInput.inputBypassed')}</div>
+            <div className="bypassed-hint">{t('storyboard.mediaInput.inputSkipped')}</div>
           </div>
         </div>
       ) : (
@@ -599,7 +601,7 @@ export function ImageDropZone({
                     className="image-action-btn crop-btn"
                     onClick={handleCropClick}
                     disabled={disabled || currentMediaType === 'video'}
-                    title="Crop image"
+                    title={t('storyboard.mediaInput.cropImage')}
                   >
                     ✂
                   </button>
@@ -607,7 +609,7 @@ export function ImageDropZone({
                     className="image-action-btn mask-btn"
                     onClick={handleMaskClick}
                     disabled={disabled || currentMediaType === 'video'}
-                    title="Add mask"
+                    title={t('storyboard.mediaInput.addMask')}
                   >
                     �
                   </button>
@@ -615,7 +617,7 @@ export function ImageDropZone({
                     className="image-action-btn paint-btn"
                     onClick={handlePaintClick}
                     disabled={disabled || currentMediaType === 'video'}
-                    title="Paint on image"
+                    title={t('storyboard.mediaInput.paintOnImage')}
                   >
                     🖌️
                   </button>
@@ -623,7 +625,7 @@ export function ImageDropZone({
                     className="image-action-btn clear-btn"
                     onClick={handleClear}
                     disabled={disabled}
-                    title="Remove media"
+                    title={t('storyboard.mediaInput.removeMedia')}
                   >
                     ✕
                   </button>
@@ -639,7 +641,7 @@ export function ImageDropZone({
                     onClick={handleBrowse}
                     disabled={disabled}
                   >
-                    Browse...
+                    {t('storyboard.mediaInput.browse')}
                   </button>
                 </div>
               </div>

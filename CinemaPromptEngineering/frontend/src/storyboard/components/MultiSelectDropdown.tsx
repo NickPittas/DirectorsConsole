@@ -3,6 +3,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, Check } from 'lucide-react';
 import './MultiSelectDropdown.css';
 
@@ -22,11 +23,14 @@ interface MultiSelectDropdownProps {
 export function MultiSelectDropdown({
   options,
   onChange,
-  placeholder = 'Select options...',
+  placeholder,
   title
 }: MultiSelectDropdownProps) {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const effectivePlaceholder = placeholder ?? t('common.selectOptionsPlaceholder');
 
   const selectedCount = options.filter(o => o.selected).length;
   const allSelected = selectedCount === options.length;
@@ -60,13 +64,13 @@ export function MultiSelectDropdown({
   };
 
   const getButtonLabel = () => {
-    if (noneSelected) return placeholder;
-    if (allSelected) return `All (${options.length})`;
+    if (noneSelected) return effectivePlaceholder;
+    if (allSelected) return t('common.allWithCount', { count: options.length });
     if (selectedCount === 1) {
       const selected = options.find(o => o.selected);
-      return selected?.label || '1 selected';
+      return selected?.label || t('common.oneSelected');
     }
-    return `${selectedCount} selected`;
+    return t('common.selectedWithCount', { count: selectedCount });
   };
 
   return (
@@ -90,14 +94,14 @@ export function MultiSelectDropdown({
               onClick={selectAll}
               disabled={allSelected}
             >
-              Select All
+              {t('common.selectAll')}
             </button>
             <button 
               className="action-btn"
               onClick={selectNone}
               disabled={noneSelected}
             >
-              Clear
+              {t('common.clear')}
             </button>
           </div>
           

@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { 
   ComfyUIWorkflow,
   ParsedWorkflow 
@@ -174,6 +175,7 @@ export function WorkflowEditor({
   onSave, 
   onCancel 
 }: WorkflowEditorProps) {
+  const { t } = useTranslation();
   const [configs, setConfigs] = useState<ParameterConfig[]>([]);
   const [selectedConfig, setSelectedConfig] = useState<ParameterConfig | null>(null);
   const [activeTab, setActiveTab] = useState<'exposed' | 'all' | 'nodes'>('exposed');
@@ -508,8 +510,8 @@ export function WorkflowEditor({
     return (
       <div className="workflow-editor">
         <div className="editor-empty">
-          <p>No workflow loaded. Please import a workflow first.</p>
-          <button className="editor-btn" onClick={onCancel}>Close</button>
+          <p>{t('storyboard.workflowEditor.noWorkflow')}</p>
+          <button className="editor-btn" onClick={onCancel}>{t('storyboard.workflowEditor.close')}</button>
         </div>
       </div>
     );
@@ -519,19 +521,19 @@ export function WorkflowEditor({
     <div className="workflow-editor">
       {/* Header */}
       <div className="editor-header">
-        <h2>Workflow Editor</h2>
+        <h2>{t('storyboard.workflowEditor.title')}</h2>
         <div className="editor-actions">
           <button 
             className="editor-btn secondary"
             onClick={onCancel}
           >
-            Cancel
+            {t('storyboard.workflowEditor.cancel')}
           </button>
           <button 
             className="editor-btn primary"
             onClick={handleSave}
           >
-            Save Configuration
+            {t('storyboard.workflowEditor.saveConfiguration')}
           </button>
         </div>
       </div>
@@ -542,13 +544,13 @@ export function WorkflowEditor({
           className={`editor-tab ${activeTab === 'exposed' ? 'active' : ''}`}
           onClick={() => setActiveTab('exposed')}
         >
-          Exposed Parameters ({configs.filter(c => c.exposed).length})
+          {t('storyboard.workflowEditor.tabExposed', { count: configs.filter(c => c.exposed).length })}
         </button>
         <button 
           className={`editor-tab ${activeTab === 'all' ? 'active' : ''}`}
           onClick={() => setActiveTab('all')}
         >
-          All Nodes
+          {t('storyboard.workflowEditor.tabAllNodes')}
         </button>
       </div>
       
@@ -556,7 +558,7 @@ export function WorkflowEditor({
       <div className="editor-search">
         <input
           type="text"
-          placeholder="Search parameters..."
+          placeholder={t('storyboard.workflowEditor.searchPlaceholder')}
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
@@ -567,7 +569,7 @@ export function WorkflowEditor({
         {activeTab === 'exposed' && (
           <div className="parameters-list">
             {filteredConfigs.length === 0 ? (
-              <p className="empty-message">No exposed parameters. Add parameters from the "All Nodes" tab.</p>
+              <p className="empty-message">{t('storyboard.workflowEditor.noExposed')}</p>
             ) : (
               filteredConfigs.map((config, index) => (
                 <ParameterConfigCard
@@ -605,7 +607,7 @@ export function WorkflowEditor({
       
       {hasChanges && (
         <div className="editor-status">
-          Unsaved changes will be auto-saved
+          {t('storyboard.workflowEditor.unsaved')}
         </div>
       )}
     </div>
@@ -645,6 +647,7 @@ function ParameterConfigCard({
   onDragEnd,
   isDragging,
 }: ParameterConfigCardProps) {
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
@@ -659,7 +662,7 @@ function ParameterConfigCard({
         <div className="config-order">
           <div
             className="drag-handle"
-            title="Drag to reorder"
+            title={t('storyboard.workflowEditor.dragToReorder')}
             draggable="true"
             onDragStart={(e) => {
               e.stopPropagation();
@@ -682,7 +685,7 @@ function ParameterConfigCard({
             value={config.display_name}
             onChange={(e) => onUpdate({ display_name: e.target.value })}
             onClick={(e) => e.stopPropagation()}
-            placeholder="Display Name"
+            placeholder={t('storyboard.workflowEditor.displayNamePlaceholder')}
           />
           <span className="config-meta">
             {config.node_id} → {config.input_name} ({config.type})
@@ -698,7 +701,7 @@ function ParameterConfigCard({
           <button 
             className="config-remove"
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            title="Remove parameter"
+            title={t('storyboard.workflowEditor.removeParameter')}
           >
             ✕
           </button>
@@ -708,12 +711,12 @@ function ParameterConfigCard({
       {isExpanded && (
         <div className="config-details" onClick={(e) => e.stopPropagation()}>
           <div className="config-row">
-            <label>Name (internal):</label>
+            <label>{t('storyboard.workflowEditor.internalNameLabel')}</label>
             <input
               type="text"
               value={config.name}
               onChange={(e) => onUpdate({ name: e.target.value })}
-              placeholder="snake_case_name"
+              placeholder={t('storyboard.workflowEditor.internalNamePlaceholder')}
             />
           </div>
           
@@ -734,7 +737,7 @@ function ParameterConfigCard({
           </div>
           
           <div className="config-row">
-            <label>Default Value:</label>
+            <label>{t('storyboard.workflowEditor.defaultValueLabel')}</label>
             <input
               type="text"
               value={String(config.default)}
@@ -753,19 +756,19 @@ function ParameterConfigCard({
           </div>
           
           <div className="config-row">
-            <label>Description:</label>
+            <label>{t('storyboard.workflowEditor.descriptionLabel')}</label>
             <input
               type="text"
               value={config.description}
               onChange={(e) => onUpdate({ description: e.target.value })}
-              placeholder="Parameter description"
+              placeholder={t('storyboard.workflowEditor.parameterDescriptionPlaceholder')}
             />
           </div>
           
           {(config.type === 'integer' || config.type === 'float' || config.type === 'seed') && (
             <div className="config-constraints">
               <div className="config-row">
-                <label>Min:</label>
+                <label>{t('storyboard.workflowEditor.min')}</label>
                 <input
                   type="number"
                   value={config.constraints?.min ?? 0}
@@ -775,7 +778,7 @@ function ParameterConfigCard({
                 />
               </div>
               <div className="config-row">
-                <label>Max:</label>
+                <label>{t('storyboard.workflowEditor.max')}</label>
                 <input
                   type="number"
                   value={config.constraints?.max ?? 100}
@@ -785,7 +788,7 @@ function ParameterConfigCard({
                 />
               </div>
               <div className="config-row">
-                <label>Step:</label>
+                <label>{t('storyboard.workflowEditor.step')}</label>
                 <input
                   type="number"
                   value={config.constraints?.step ?? 1}
@@ -799,7 +802,7 @@ function ParameterConfigCard({
           
           {config.type === 'enum' && (
             <div className="config-row">
-              <label>Options (comma-separated):</label>
+              <label>{t('storyboard.workflowEditor.optionsCommaSeparated')}</label>
               <div className="enum-options-row">
                 <input
                   type="text"
@@ -810,7 +813,7 @@ function ParameterConfigCard({
                       options: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
                     }
                   })}
-                  placeholder="option1, option2, option3"
+                  placeholder={t('storyboard.workflowEditor.enumOptionsPlaceholder')}
                 />
                 <button
                   type="button"
@@ -828,29 +831,29 @@ function ParameterConfigCard({
                           }
                         });
                       } else {
-                        alert(`No enum options found for ${node.class_type}.${config.input_name}.\nMake sure ComfyUI is connected.`);
+                        alert(t('storyboard.workflowEditor.noEnumOptionsFound', { classType: node.class_type, inputName: config.input_name }));
                       }
                     }
                   }}
-                  title="Fetch options from ComfyUI"
+                  title={t('storyboard.workflowEditor.fetchOptionsTitle')}
                 >
-                  🔄 Fetch
+                  🔄 {t('storyboard.workflowEditor.fetchOptions')}
                 </button>
               </div>
             </div>
           )}
           
-          <div className="config-flags">
-            <label className="flag">
+            <div className="config-flags">
+              <label className="flag">
               <input
                 type="checkbox"
                 checked={config.exposed}
                 onChange={(e) => onUpdate({ exposed: e.target.checked })}
               />
-              Exposed in UI
+              {t('storyboard.workflowEditor.exposedInUi')}
             </label>
             <span className="config-source">
-              {config.auto_detected ? '🤖 Auto-detected' : '👤 User-defined'}
+              {config.auto_detected ? `🤖 ${t('storyboard.workflowEditor.autoDetected')}` : `👤 ${t('storyboard.workflowEditor.userDefined')}`}
             </span>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
+import { useTranslation } from 'react-i18next';
 import { PanelHeader } from './PanelHeader';
 import type { Panel } from '../StoryboardUI';
 import './DraggablePanel.css';
@@ -23,6 +24,7 @@ export function DraggablePanel({
   onMouseDown,
   onResizeStart,
 }: DraggablePanelProps) {
+  const { t } = useTranslation();
   const { listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `panel-${panel.id}`,
     data: {
@@ -60,7 +62,7 @@ export function DraggablePanel({
       {/* Resize handle */}
       <div 
         className="panel-resize-handle"
-        title="Drag to resize"
+        title={t('storyboard.panel.dragToResize')}
         onMouseDown={onResizeStart}
       />
     </div>

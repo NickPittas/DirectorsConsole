@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Printer, CheckSquare, Square } from 'lucide-react';
 import './PrintDialog.css';
 
@@ -40,10 +41,12 @@ type ColumnCount = 1 | 2 | 3 | 4;
 export function PrintDialog({
   isOpen,
   onClose,
-  projectName = 'Untitled Project',
+  projectName,
   selectedPanelId,
   panels,
 }: PrintDialogProps) {
+  const { t, i18n } = useTranslation();
+  const effectiveProjectName = projectName || t('storyboard.project.untitled');
   const [columns, setColumns] = useState<ColumnCount>(3);
   const [printMode, setPrintMode] = useState<'all' | 'selected'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -96,13 +99,20 @@ export function PrintDialog({
     const cellWidth = Math.floor(100 / columns);
     const fontSize = columns <= 2 ? 11 : 9;
 
+    const locale = (i18n.resolvedLanguage || i18n.language) === 'zh-CN' ? 'zh-CN' : undefined;
+    const subtitle = t('storyboard.print.subtitle', {
+      count: panelsToPrint.length,
+      date: new Date().toLocaleDateString(locale),
+    });
+    const documentTitle = t('storyboard.print.documentTitle', { projectName: effectiveProjectName });
+
     // Page size CSS
     const pageSizeCSS = pageSize === 'a4'
       ? (orientation === 'landscape' ? 'size: A4 landscape;' : 'size: A4 portrait;')
       : (orientation === 'landscape' ? 'size: letter landscape;' : 'size: letter portrait;');
 
     const panelCells = panelsToPrint.map(panel => {
-      const label = panel.name || `Panel ${panel.id}`;
+      const label = panel.name || t('storyboard.panel.defaultLabel', { id: panel.id });
       const ratingStars = panel.rating && panel.rating > 0
         ? `<span class="cell-rating">${'★'.repeat(panel.rating)}${'☆'.repeat(5 - panel.rating)}</span>`
         : '';
@@ -143,7 +153,7 @@ export function PrintDialog({
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>${escapeHtml(projectName)} – Storyboard</title>
+<title>${escapeHtml(documentTitle)}</title>
 <style>
   @page { ${pageSizeCSS} margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -227,15 +237,15 @@ export function PrintDialog({
 </head>
 <body>
   <div class="header">
-    <h1>${escapeHtml(projectName)}</h1>
-    <div class="subtitle">${panelsToPrint.length} panel${panelsToPrint.length !== 1 ? 's' : ''} · ${new Date().toLocaleDateString()}</div>
+    <h1>${escapeHtml(effectiveProjectName)}</h1>
+    <div class="subtitle">${escapeHtml(subtitle)}</div>
   </div>
   <div class="grid">
     ${panelCells}
   </div>
 </body>
 </html>`;
-  }, [panelsToPrint, columns, projectName, pageSize, orientation]);
+  }, [columns, effectiveProjectName, i18n.language, i18n.resolvedLanguage, orientation, pageSize, panelsToPrint, t]);
 
   // Rebuild preview whenever inputs change
   useEffect(() => {
@@ -271,7 +281,7 @@ export function PrintDialog({
         <div className="print-dialog-header">
           <h2>
             <Printer size={18} />
-            Print Storyboard
+            {t('storyboard.print.title')}
           </h2>
           <button className="close-btn" onClick={onClose}><X size={18} /></button>
         </div>
@@ -280,52 +290,52 @@ export function PrintDialog({
         <div className="print-toolbar">
           {/* Grid columns */}
           <div className="print-toolbar-group">
-            <span className="toolbar-label">Grid:</span>
+            <span className="toolbar-label">{t('storyboard.print.grid')}</span>
             {([1, 2, 3, 4] as ColumnCount[]).map(n => (
               <button
                 key={n}
                 className={`grid-btn ${columns === n ? 'active' : ''}`}
                 onClick={() => setColumns(n)}
-              >{n} col</button>
+              >{t('storyboard.print.columns', { count: n })}</button>
             ))}
           </div>
 
           {/* Page settings */}
           <div className="print-toolbar-group">
-            <span className="toolbar-label">Page:</span>
+            <span className="toolbar-label">{t('storyboard.print.page')}</span>
             <select
               className="page-select"
               value={pageSize}
               onChange={e => setPageSize(e.target.value as 'a4' | 'letter')}
             >
-              <option value="a4">A4</option>
-              <option value="letter">Letter</option>
+              <option value="a4">{t('storyboard.print.pageA4')}</option>
+              <option value="letter">{t('storyboard.print.pageLetter')}</option>
             </select>
             <select
               className="page-select"
               value={orientation}
               onChange={e => setOrientation(e.target.value as 'portrait' | 'landscape')}
             >
-              <option value="landscape">Landscape</option>
-              <option value="portrait">Portrait</option>
+              <option value="landscape">{t('storyboard.print.orientationLandscape')}</option>
+              <option value="portrait">{t('storyboard.print.orientationPortrait')}</option>
             </select>
           </div>
 
           {/* Print mode */}
           <div className="print-toolbar-group">
-            <span className="toolbar-label">Panels:</span>
+            <span className="toolbar-label">{t('storyboard.print.panels')}</span>
             <button
               className={`mode-btn ${printMode === 'all' ? 'active' : ''}`}
               onClick={() => setPrintMode('all')}
-            >All ({panelsWithImages.length})</button>
+            >{t('storyboard.print.all')} ({panelsWithImages.length})</button>
             <button
               className={`mode-btn ${printMode === 'selected' ? 'active' : ''}`}
               onClick={() => setPrintMode('selected')}
-            >Selected ({selectedIds.size})</button>
+            >{t('storyboard.print.selected')} ({selectedIds.size})</button>
           </div>
 
           <button className="print-action-btn" onClick={handlePrint} disabled={panelsToPrint.length === 0}>
-            <Printer size={16} /> Print
+            <Printer size={16} /> {t('storyboard.print.print')}
           </button>
         </div>
 
@@ -333,8 +343,8 @@ export function PrintDialog({
         {printMode === 'selected' && (
           <div className="print-panel-selector">
             <div className="selector-actions">
-              <button onClick={selectAll} className="selector-action-btn">Select All</button>
-              <button onClick={deselectAll} className="selector-action-btn">Deselect All</button>
+              <button onClick={selectAll} className="selector-action-btn">{t('storyboard.print.selectAll')}</button>
+              <button onClick={deselectAll} className="selector-action-btn">{t('storyboard.print.deselectAll')}</button>
             </div>
             <div className="panel-chips">
               {panelsWithImages.map(panel => (
@@ -347,7 +357,7 @@ export function PrintDialog({
                   <span className="chip-thumb">
                     {panel.image && <img src={panel.image} alt="" />}
                   </span>
-                  <span>{panel.name || `Panel ${panel.id}`}</span>
+                  <span>{panel.name || t('storyboard.panel.defaultLabel', { id: panel.id })}</span>
                 </button>
               ))}
             </div>
@@ -358,14 +368,14 @@ export function PrintDialog({
         <div className="print-preview-container">
           {panelsToPrint.length === 0 ? (
             <div className="print-empty">
-              <p>No panels selected for printing.</p>
-              <p className="hint">Choose panels with images above, or switch to "All" mode.</p>
+              <p>{t('storyboard.print.emptyTitle')}</p>
+              <p className="hint">{t('storyboard.print.emptyHint')}</p>
             </div>
           ) : (
             <iframe
               ref={iframeRef}
               className="print-preview-iframe"
-              title="Print Preview"
+              title={t('storyboard.print.previewTitle')}
             />
           )}
         </div>

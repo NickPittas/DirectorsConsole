@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { useCinemaStore } from '@/store';
 import { api } from '@/api/client';
 import type { RuleSeverity, FilmPresetSummary, AnimationPresetSummary, CinematographyStyle, OptionsResponse } from '@/types';
@@ -2072,6 +2073,8 @@ function App() {
     setCpePromptForStoryboard,
   } = useCinemaStore();
 
+  const { t } = useTranslation();
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingPresets, setIsLoadingPresets] = useState(false);
   const [isApplyingPreset, setIsApplyingPreset] = useState(false);
@@ -3282,10 +3285,10 @@ function App() {
           <>
             {/* Camera Section */}
             <div className="section">
-              <h2>Camera</h2>
+              <h2>{t('cpe.sections.camera')}</h2>
               {/* Camera Type (Digital vs Film) */}
               <div className="field">
-                <label title="Choose between digital cinema cameras or traditional film cameras">Camera Type</label>
+                <label title={t('cpe.descriptions.cameraTypeChoice')}>{t('cpe.fields.cameraType')}</label>
                 <select
                   value={liveActionConfig.camera.camera_type || 'Digital'}
                   onChange={(e) => {
@@ -3313,7 +3316,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.camera_manufacturer}>Manufacturer</label>
+                <label title={FIELD_DESCRIPTIONS.camera_manufacturer}>{t('cpe.fields.manufacturer')}</label>
                 <select
                   value={liveActionConfig.camera.manufacturer}
                   onChange={(e) => {
@@ -3340,7 +3343,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.camera_body}>Body</label>
+                <label title={FIELD_DESCRIPTIONS.camera_body}>{t('cpe.fields.body')}</label>
                 <select
                   value={liveActionConfig.camera.body}
                   onChange={(e) => updateLiveAction('camera', { body: e.target.value })}
@@ -3366,12 +3369,12 @@ function App() {
               {/* Film Stock (only visible for film cameras) */}
               {liveActionConfig.camera.camera_type === 'Film' && (
                 <div className="field">
-                  <label title="Film stock determines the visual character - color rendition, grain, and latitude">Film Stock</label>
+                <label title={t('cpe.descriptions.filmStockCharacter')}>{t('cpe.fields.filmStock')}</label>
                   <select
                     value={liveActionConfig.camera.film_stock || ''}
                     onChange={(e) => updateLiveAction('camera', { film_stock: e.target.value })}
                   >
-                    <option value="">Select Film Stock...</option>
+                  <option value="">{t('cpe.placeholders.selectFilmStock')}</option>
                   {getEffectiveOptions(
                     'camera.film_stock',
                     getFilmStockOptions(liveActionConfig.camera.body).map(s => ({ value: s, disabled: false }))
@@ -3385,7 +3388,7 @@ function App() {
               )}
               {/* Aspect Ratio */}
               <div className="field">
-                <label title="Aspect ratio determines the frame shape - wider ratios are more cinematic">Aspect Ratio</label>
+                <label title={t('cpe.descriptions.aspectRatioShape')}>{t('cpe.fields.aspectRatio')}</label>
                 <select
                   value={liveActionConfig.camera.aspect_ratio || '1.85:1'}
                   onChange={(e) => updateLiveAction('camera', { aspect_ratio: e.target.value })}
@@ -3404,9 +3407,9 @@ function App() {
 
             {/* Lens Section */}
             <div className="section">
-              <h2>Lens</h2>
+              <h2>{t('cpe.sections.lens')}</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.lens_manufacturer}>Manufacturer</label>
+                <label title={FIELD_DESCRIPTIONS.lens_manufacturer}>{t('cpe.fields.manufacturer')}</label>
                 <select
                   value={liveActionConfig.lens.manufacturer}
                   onChange={(e) => {
@@ -3538,7 +3541,7 @@ function App() {
 
             {/* Movement Section */}
             <div className="section">
-              <h2>Movement</h2>
+              <h2>{t('cpe.sections.movement')}</h2>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.movement_equipment}>
                   Equipment 
@@ -3649,9 +3652,9 @@ function App() {
 
             {/* Lighting Section */}
             <div className="section">
-              <h2>Lighting</h2>
+              <h2>{t('cpe.sections.lighting')}</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.time_of_day}>Time of Day</label>
+                <label title={FIELD_DESCRIPTIONS.time_of_day}>{t('cpe.fields.timeOfDay')}</label>
                 <select
                   value={liveActionConfig.lighting.time_of_day}
                   onChange={(e) => {
@@ -3747,7 +3750,7 @@ function App() {
 
             {/* Visual Grammar Section */}
             <div className="section">
-              <h2>Visual Grammar</h2>
+              <h2>{t('cpe.sections.visualGrammar')}</h2>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.shot_size}>
                   Shot Size
@@ -3767,7 +3770,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.composition}>Composition</label>
+                <label title={FIELD_DESCRIPTIONS.composition}>{t('cpe.fields.composition')}</label>
                 <select
                   value={liveActionConfig.visual_grammar.composition}
                   onChange={(e) => updateLiveAction('visual_grammar', { composition: e.target.value })}
@@ -3825,7 +3828,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.color_tone}>Color Tone</label>
+                <label title={FIELD_DESCRIPTIONS.color_tone}>{t('cpe.fields.colorTone')}</label>
                 <select
                   value={liveActionConfig.visual_grammar.color_tone}
                   onChange={(e) => updateLiveAction('visual_grammar', { color_tone: e.target.value })}
@@ -3841,9 +3844,9 @@ function App() {
           <>
             {/* Animation: Style Section */}
             <div className="section">
-              <h2>Style</h2>
+              <h2>{t('cpe.sections.style')}</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.animation_medium}>Medium</label>
+                <label title={FIELD_DESCRIPTIONS.animation_medium}>{t('cpe.fields.medium')}</label>
                 <select
                   value={animationConfig.medium}
                   onChange={(e) => updateAnimation('medium', e.target.value as never)}
@@ -3857,7 +3860,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.style_domain}>Style Domain</label>
+                <label title={FIELD_DESCRIPTIONS.style_domain}>{t('cpe.fields.styleDomain')}</label>
                 <select
                   value={animationConfig.style_domain}
                   onChange={(e) => {
@@ -3916,9 +3919,9 @@ function App() {
 
             {/* Animation: Rendering Section */}
             <div className="section">
-              <h2>Rendering</h2>
+              <h2>{t('cpe.sections.rendering')}</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.line_treatment}>Line Treatment</label>
+                <label title={FIELD_DESCRIPTIONS.line_treatment}>{t('cpe.fields.lineTreatment')}</label>
                 <select
                   value={animationConfig.rendering.line_treatment}
                   onChange={(e) => updateAnimation('rendering', { line_treatment: e.target.value })}
@@ -3932,7 +3935,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.color_application}>Color Application {animationConfig.style_domain === 'Manga' && <span className="field-hint">(Manga: Monochrome only)</span>}</label>
+                <label title={FIELD_DESCRIPTIONS.color_application}>{t('cpe.fields.colorApplication')} {animationConfig.style_domain === 'Manga' && <span className="field-hint">{t('cpe.hints.mangaMonochromeOnly')}</span>}</label>
                 <select
                   value={animationConfig.rendering.color_application}
                   onChange={(e) => updateAnimation('rendering', { color_application: e.target.value })}
@@ -3978,7 +3981,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.surface_detail}>Surface Detail</label>
+                <label title={FIELD_DESCRIPTIONS.surface_detail}>{t('cpe.fields.surfaceDetail')}</label>
                 <select
                   value={animationConfig.rendering.surface_detail}
                   onChange={(e) => updateAnimation('rendering', { surface_detail: e.target.value })}
@@ -3995,7 +3998,7 @@ function App() {
 
             {/* Animation: Motion Section */}
             <div className="section">
-              <h2>Motion</h2>
+              <h2>{t('cpe.sections.motion')}</h2>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.motion_style}>Motion Style {(animationConfig.style_domain === 'Manga' || animationConfig.style_domain === 'Illustration') && <span className="field-hint">(static only)</span>}</label>
                 <select
@@ -4051,9 +4054,9 @@ function App() {
 
             {/* Animation: Visual Grammar */}
             <div className="section">
-              <h2>Visual Grammar</h2>
+              <h2>{t('cpe.sections.visualGrammar')}</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.shot_size}>Shot Size</label>
+                <label title={FIELD_DESCRIPTIONS.shot_size}>{t('cpe.fields.shotSize')}</label>
                 <select
                   value={animationConfig.visual_grammar.shot_size}
                   onChange={(e) => updateAnimation('visual_grammar', { shot_size: e.target.value })}
@@ -4064,7 +4067,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.mood}>Mood</label>
+                <label title={FIELD_DESCRIPTIONS.mood}>{t('cpe.fields.mood')}</label>
                 <select
                   value={animationConfig.visual_grammar.mood}
                   onChange={(e) => updateAnimation('visual_grammar', { mood: e.target.value })}
@@ -4084,7 +4087,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.color_tone}>Color Tone</label>
+                <label title={FIELD_DESCRIPTIONS.color_tone}>{t('cpe.fields.colorTone')}</label>
                 <select
                   value={animationConfig.visual_grammar.color_tone}
                   onChange={(e) => updateAnimation('visual_grammar', { color_tone: e.target.value })}
