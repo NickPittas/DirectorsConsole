@@ -967,6 +967,10 @@ export class WorkflowParser {
     // First, normalize to API format
     const normalizedBase = this.normalizeWorkflowFormat(baseWorkflow);
     const workflow = JSON.parse(JSON.stringify(normalizedBase)) as ComfyUIWorkflow;
+    
+    // Normalize all model/Lora paths in the workflow (Windows backslashes to forward slashes)
+    // This ensures paths like "Qwen\model.safetensors" become "Qwen/model.safetensors"
+    this.normalizeWorkflowPaths(workflow);
 
     // Get parameter definitions from auto-detection
     const parsed = this.parseWorkflow(baseWorkflow);
@@ -1033,7 +1037,19 @@ export class WorkflowParser {
           if (!node.inputs) {
             node.inputs = {};
           }
-          node.inputs[param.input_name] = value;
+          
+          // Normalize Windows backslashes to forward slashes for model/UNET paths
+          // This fixes paths like "Qwen\model.safetensors" -> "Qwen/model.safetensors"
+          let normalizedValue = value;
+          if (param.input_name === 'unet_name' || param.input_name === 'ckpt_name' || 
+              param.input_name === 'model_name' || param.input_name === 'lora_name') {
+            if (typeof value === 'string' && value.includes('\\')) {
+              normalizedValue = value.replace(/\\/g, '/');
+              console.log(`[buildWorkflow] Normalized path for ${param.input_name}: ${value} -> ${normalizedValue}`);
+            }
+          }
+          
+          node.inputs[param.input_name] = normalizedValue;
         }
       } else {
         console.log(`[buildWorkflow] No match for param "${paramName}"`);
@@ -1139,6 +1155,19 @@ export class WorkflowParser {
       }
     }
     console.log(`[buildWorkflow] Total bypassed nodes: ${bypassedNodeIds.size}`, Array.from(bypassedNodeIds));
+    
+    // NEW: Cascade bypass to downstream nodes that depend on bypassed nodes
+    // This ensures that when an image/Lora is disabled, all nodes that require 
+    // that input are also disabled to prevent ComfyUI errors
+    if (bypassedNodeIds.size > 0) {
+      console.log('[buildWorkflow] === CASCADE BYPASS TO DOWNSTREAM ===');
+      const cascadedBypassed = this.cascadeBypassToDownstream(workflow, bypassedNodeIds);
+      // Update bypassedNodeIds with the cascaded ones
+      for (const nodeId of cascadedBypassed) {
+        bypassedNodeIds.add(nodeId);
+      }
+      console.log(`[buildWorkflow] After cascade: ${bypassedNodeIds.size} bypassed nodes`, Array.from(bypassedNodeIds));
+    }
     
     // Second pass: build workflow, skipping bypassed/UI-only nodes
     for (const [nodeId, node] of Object.entries(workflow)) {
@@ -1453,6 +1482,243 @@ export class WorkflowParser {
       return indices[inputName] ?? -1;
     }
     return -1;
+  }
+
+  /**
+   * Normalize all model/Lora paths in the workflow from Windows backslashes to forward slashes.
+   * This fixes issues where paths like "Qwen\model.safetensors" don't work on Linux.
+   */
+  private normalizeWorkflowPaths(workflow: ComfyUIWorkflow): void {
+    const pathInputNames = [
+      'unet_name', 'ckpt_name', 'model_name', 'lora_name',
+      'clip_name', 'vae_name', 'control_net_name', 'style_model_name',
+      'positive', 'negative', // Sometimes these contain paths too
+    ];
+    
+    for (const [nodeId, node] of Object.entries(workflow)) {
+      if (nodeId === 'meta' || nodeId === 'version') continue;
+      if (!('inputs' in node) || !node.inputs) continue;
+      
+      for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+        if (pathInputNames.includes(inputName) && typeof inputValue === 'string' && inputValue.includes('\\')) {
+          const normalized = inputValue.replace(/\\/g, '/');
+          (node.inputs as Record<string, any>)[inputName] = normalized;
+          console.log(`[normalizeWorkflowPaths] Node ${nodeId} ${inputName}: ${inputValue} -> ${normalized}`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Find all downstream nodes that depend on a given node's outputs.
+   * Uses BFS to traverse the workflow graph in reverse (from outputs to inputs).
+   * 
+   * @param workflow - The workflow to analyze
+   * @param sourceNodeId - The node ID to find downstream dependencies for
+   * @returns Map of nodeId -> inputName that depends on the source node
+   */
+  findDownstreamNodes(
+    workflow: ComfyUIWorkflow,
+    sourceNodeId: string
+  ): Map<string, string[]> {
+    const downstream = new Map<string, string[]>();
+    const visited = new Set<string>();
+    const queue: string[] = [sourceNodeId];
+    
+    while (queue.length > 0) {
+      const nodeId = queue.shift()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+      
+      // Find all nodes that have inputs connected to this node's outputs
+      for (const [otherId, node] of Object.entries(workflow)) {
+        if (otherId === 'meta' || otherId === 'version') continue;
+        if (!('inputs' in node) || !node.inputs) continue;
+        
+        const typedNode = node as ComfyUINode;
+        const dependingInputs: string[] = [];
+        
+        for (const [inputName, inputValue] of Object.entries(typedNode.inputs || {})) {
+          // Check if this input references the current node
+          // Node references are arrays: ["nodeId", outputIndex]
+          if (Array.isArray(inputValue) && inputValue.length >= 2) {
+            const referencedNodeId = String(inputValue[0]);
+            if (referencedNodeId === nodeId) {
+              dependingInputs.push(inputName);
+            }
+          }
+        }
+        
+        if (dependingInputs.length > 0) {
+          downstream.set(otherId, dependingInputs);
+          queue.push(otherId);
+        }
+      }
+    }
+    
+    return downstream;
+  }
+
+  /**
+   * Check if a node type requires a specific input type.
+   * Used to determine if bypassing a source should cascade to this node.
+   */
+  private _isRequiredInputForNode(
+    classType: string | undefined,
+    inputName: string
+  ): boolean {
+    if (!classType) return false;
+    
+    // Image processing nodes that require an image input
+    const imageRequiredNodes = [
+      'LoadImage', 'ImageScale', 'ImageScaleToTotalPixels', 'ImageResize',
+      'ImageResizeKJv2', 'ImageCrop', 'VAEEncode', 'DWPose', 'OpenposePreprocessor',
+      'CannyEdgePreprocessor', 'LineartPreprocessor', 'DepthAnything',
+      'InstantIDFaceAnalysis', 'ReActorFaceSwap', 'IPAdapter', 'ControlNetLoader',
+      'ControlNetApply', 'ControlNetApplyAdvanced', 'ControlNetStack',
+      'DWPreprocessor', 'AIO_Preprocessor', 'MiDaS', 'BAE', 'LineaArt',
+      'ScribblePreprocessor', 'SemanticSegmentationPreprocessor', 'MediaPipe',
+      'FaceDetect', 'FaceRestore', 'FaceRestoreModel', 'GFPGAN', 'CodeFormer',
+      'IPAdapterApply', 'IPAdapterApplyLoader', 'IPAdapterIdentity',
+      'Inspire', 'FreeU', 'FreeUChen', 'ImagePass', 'ImageBatch',
+      'LoraLoader', 'LoraLoaderModelOnly', 'LoraLoaderStack',
+      'StyleModelLoader', 'CLIPVisionLoader', 'Sigmas',
+      // Qwen-specific nodes
+      'QwenImageControlNetIntegratedLoader', 'QwenImageEdit',
+    ];
+    
+    // Nodes that require model input
+    const modelRequiredNodes = [
+      'KSampler', 'KSamplerAdvanced', 'SamplerCustom', 'SamplerEuler',
+      'QwenImageIntegratedKSampler', 'ImageOnlyKSampler',
+    ];
+    
+    // Nodes that require CLIP input
+    const clipRequiredNodes = [
+      'CLIPTextEncode', 'CLIPTextEncodeSDXL', 'CLIPTextEncodeThree',
+      'CLIPSetLastLayer', 'CLIPLoader', 'DualCLIPLoader',
+    ];
+    
+    // For image input
+    if (inputName === 'image' || inputName === 'pixels' || inputName === 'background') {
+      if (imageRequiredNodes.some(t => classType.includes(t))) {
+        return true;
+      }
+      // VAEEncode uses 'pixels' instead of 'image'
+      if ((inputName === 'pixels' || inputName === 'image') && classType.includes('VAEEncode')) {
+        return true;
+      }
+    }
+    
+    // For mask input
+    if (inputName === 'mask') {
+      // Nodes that can use mask
+      const maskNodes = ['VAEEncode', 'ImageBatchWithMask', 'ImageCropByMask', 'InpaintModelConditioning'];
+      if (maskNodes.some(t => classType.includes(t))) {
+        return true;
+      }
+    }
+    
+    // For model input
+    if (inputName === 'model') {
+      if (modelRequiredNodes.some(t => classType.includes(t))) {
+        return true;
+      }
+    }
+    
+    // For CLIP input
+    if (inputName === 'clip') {
+      if (clipRequiredNodes.some(t => classType.includes(t))) {
+        return true;
+      }
+    }
+    
+    // For control_net input
+    if (inputName === 'control_net' || inputName === 'controlnet') {
+      if (classType.includes('ControlNetApply') || classType.includes('ControlNet')) {
+        return true;
+      }
+    }
+    
+    // For lora_name input (LoraLoader)
+    if (inputName === 'lora_name' || inputName.startsWith('lora_name_')) {
+      if (classType.includes('LoraLoader')) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Cascade bypass mode to all downstream nodes that depend on bypassed nodes.
+   * This ensures that when an image/Lora is disabled, all nodes that require 
+   * that input are also disabled to prevent ComfyUI errors.
+   * 
+   * @param workflow - The workflow to modify
+   * @param bypassedNodeIds - Set of node IDs that are already bypassed
+   */
+  cascadeBypassToDownstream(
+    workflow: ComfyUIWorkflow,
+    bypassedNodeIds: Set<string>
+  ): Set<string> {
+    const allBypassed = new Set<string>(bypassedNodeIds);
+    let changed = true;
+    let iterations = 0;
+    const maxIterations = 20; // Safety limit
+    
+    console.log('[cascadeBypass] Starting with bypassed nodes:', Array.from(bypassedNodeIds));
+    
+    while (changed && iterations < maxIterations) {
+      changed = false;
+      iterations++;
+      
+      // For each currently bypassed node, find downstream nodes
+      for (const bypassedNodeId of allBypassed) {
+        const downstream = this.findDownstreamNodes(workflow, bypassedNodeId);
+        
+        for (const [downstreamNodeId, dependingInputs] of downstream) {
+          // Skip if already bypassed
+          if (allBypassed.has(downstreamNodeId)) continue;
+          
+          const downstreamNode = workflow[downstreamNodeId] as ComfyUINode;
+          if (!downstreamNode || !downstreamNode.inputs) continue;
+          
+          // Check if any of the depending inputs are required for this node
+          const hasRequiredDependency = dependingInputs.some(inputName => 
+            this._isRequiredInputForNode(downstreamNode.class_type, inputName)
+          );
+          
+          if (hasRequiredDependency) {
+            // Check if ALL required inputs come from bypassed nodes
+            // If so, we can safely bypass this node too
+            const allInputsFromBypassed = Object.entries(downstreamNode.inputs || {}).every(([_inputName, inputValue]) => {
+              if (Array.isArray(inputValue) && inputValue.length >= 2) {
+                const refNodeId = String(inputValue[0]);
+                return allBypassed.has(refNodeId);
+              }
+              // Non-node references (primitives) are OK
+              return true;
+            });
+            
+            if (allInputsFromBypassed || downstreamNode.mode === 4) {
+              // Bypass this downstream node
+              downstreamNode.mode = 4;
+              allBypassed.add(downstreamNodeId);
+              changed = true;
+              console.log(`[cascadeBypass] Cascaded bypass to node ${downstreamNodeId} (${downstreamNode.class_type}) - depends on ${bypassedNodeId} via inputs: ${dependingInputs.join(', ')}`);
+            }
+          }
+        }
+      }
+    }
+    
+    if (iterations >= maxIterations) {
+      console.warn('[cascadeBypass] Warning: Hit max iterations');
+    }
+    
+    console.log('[cascadeBypass] Final bypassed nodes:', Array.from(allBypassed));
+    return allBypassed;
   }
 }
 
