@@ -616,6 +616,8 @@ No API key needed — these connect to LLMs running on your machine:
 
 Just start the local LLM server and Director's Console will detect it automatically.
 
+> **Note for Ollama users:** If you encounter issues, ensure you're using the latest Ollama version. Model names with tags (e.g., `llama3:latest`) are supported. Embedding models are automatically filtered from the chat model list.
+
 ---
 
 ## Technical Reference
@@ -838,6 +840,20 @@ cd CinemaPromptEngineering
 | Rendering | ComfyUI (direct WebSocket) |
 | Storage | Local filesystem, SQLite (encrypted credentials) |
 | Logging | Loguru |
+
+---
+
+## Changelog
+
+### February 14, 2026
+
+**Features:**
+- **Intelligent Parameter Disable Propagation**: When disabling an image or Lora input, all downstream nodes that depend on it are now automatically disabled. This prevents ComfyUI errors when bypassing inputs that have downstream dependencies (e.g., LoadImage → DWPreprocessor → ControlNetApply → KSampler chain).
+
+**Bug Fixes:**
+- **Path Normalization**: Fixed Windows backslash handling in model paths. Paths like `Qwen\model.safetensors` are now correctly converted to `Qwen/model.safetensors` for Linux compatibility.
+- **Ollama Integration**: Fixed 405 error by appending `/api/chat` to the endpoint. Model names with `ollama:` prefix are now stripped before sending to the API. Embedding models are filtered from the chat model list.
+- **Settings Persistence**: Fixed model ID parsing to correctly handle colons in model names (e.g., `ollama:llama3:latest`).
 
 ---
 

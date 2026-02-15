@@ -620,11 +620,17 @@ async function loadLlmSettingsFromServer(): Promise<LlmSettings | null> {
     const settings = await api.getSettings();
     // The server stores selected_model directly; we need to also get the provider
     // For now, we store provider + model together in selected_model as "provider:model"
+    // Handle model IDs that contain colons (e.g., "ollama:llama3:latest")
     if (settings.selected_model) {
-      const [provider, model] = settings.selected_model.includes(':') 
-        ? settings.selected_model.split(':')
-        : ['', settings.selected_model];
-      return { provider, model };
+      const firstColonIndex = settings.selected_model.indexOf(':');
+      if (firstColonIndex !== -1) {
+        return {
+          provider: settings.selected_model.substring(0, firstColonIndex),
+          model: settings.selected_model.substring(firstColonIndex + 1)
+        };
+      }
+      // No colon - return as-is
+      return { provider: '', model: settings.selected_model };
     }
     return null;
   } catch (e) {

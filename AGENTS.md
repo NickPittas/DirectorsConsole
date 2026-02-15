@@ -437,6 +437,36 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 
 ---
 
+### Recent Fixes (Feb 14, 2026)
+
+**Intelligent Parameter Disable Propagation** (Completed)
+- **Downstream Cascade Bypass**: When disabling an image/Lora input, all downstream nodes that depend on it are now automatically disabled to prevent ComfyUI errors
+- **Graph Traversal**: Implemented BFS-based downstream node discovery in `workflow-parser.ts`
+- **Node Type Detection**: Added comprehensive list of node types that require specific input types (image, model, CLIP, control_net, etc.)
+- **Multi-Level Cascade**: The cascade propagates through multiple levels (e.g., LoadImage → DWPreprocessor → ControlNetApply → KSampler)
+- Added methods: `findDownstreamNodes()`, `cascadeBypassToDownstream()`, `_isRequiredInputForNode()`
+- Added `QwenImageControlNetIntegratedLoader` to the list of nodes that require image input
+
+**Path Normalization Fix** (Completed)
+- **Windows Path Handling**: Fixed issue where Windows backslashes in model paths (e.g., `Qwen\model.safetensors`) weren't being converted to forward slashes for Linux
+- **Dual Normalization**: Added path normalization in two places:
+  1. `normalizeWorkflowPaths()` - scans entire workflow and normalizes all model/Lora paths at build time
+  2. Inline normalization when applying parameter values
+- **Supported Path Types**: unet_name, ckpt_name, model_name, lora_name, clip_name, vae_name, control_net_name, style_model_name
+
+**Ollama Integration Fix** (Completed)
+- **Endpoint Fix**: Changed to explicitly append `/api/chat` to Ollama endpoint (was causing 405 error)
+- **Model Name Sanitization**: Strip `ollama:` prefix from model names before sending request
+- **Embedding Model Filter**: Filter out embedding models (e.g., `nomic-embed-text`) from chat model list
+- **Frontend Model Parsing**: Fixed parsing of model IDs containing colons (e.g., `ollama:llama3:latest`)
+
+**Files Modified:**
+- `workflow-parser.ts` - Downstream cascade bypass, path normalization, QwenImageControlNetIntegratedLoader
+- `llm_service.py` - Ollama endpoint, model sanitization, embedding filter
+- `Settings.tsx` - Model ID parsing for colons
+
+---
+
 ### Recent Fixes (Feb 9, 2026)
 
 **Video Generation Pipeline** (Completed)
@@ -582,5 +612,5 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 
 ---
 
-*Last Updated: February 9, 2026 - Video pipeline, progress sidebar, per-node stage tracking*
+*Last Updated: February 14, 2026 - Intelligent parameter disable propagation, Ollama fixes, path normalization*
 *Project: Director's Console - Project Eliot*
