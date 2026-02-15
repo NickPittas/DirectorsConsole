@@ -238,14 +238,16 @@ export function WorkflowEditor({
         });
       });
       
-      // Add image inputs
+      // Add image/video inputs
       parsedWorkflow.image_inputs.forEach((input, idx) => {
+        // Preserve the parsed type: 'video' for video loaders, 'image' for images/masks
+        const configType = input.type === 'video' ? 'video' : 'image';
         newConfigs.push({
           name: input.name,
           display_name: input.display_name,
           node_id: input.node_id,
           input_name: input.input_name,
-          type: 'image',
+          type: configType,
           default: '',
           description: input.description,
           order: parsedWorkflow.parameters.length + idx,
@@ -730,6 +732,9 @@ function ParameterConfigCard({
               <option value="enum">Enum</option>
               <option value="prompt">Prompt</option>
               <option value="string">String</option>
+              <option value="image">Image</option>
+              <option value="video">Video</option>
+              <option value="media">Media (Image/Video)</option>
             </select>
           </div>
           

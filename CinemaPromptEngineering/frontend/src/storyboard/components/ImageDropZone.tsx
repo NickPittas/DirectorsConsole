@@ -268,13 +268,14 @@ export function ImageDropZone({
     const droppedData = e.dataTransfer.getData('text/plain');
     if (!droppedData) return;
 
-    // Reset crop/mask/paint state when loading new image
+    // Reset crop/mask/paint state when loading new media
     setOriginalImage(null);
     setMaskData(null);
     setPaintData(null);
     setCropRect(null);
     setDisplayMask(null);
-    setMediaType('image');
+    // Detect media type from dropped URL if possible, default to acceptType hint
+    setMediaType(acceptType === 'video' ? 'video' : 'image');
 
     // Try to parse as JSON (from canvas drag with url + filePath)
     try {
@@ -283,7 +284,14 @@ export function ImageDropZone({
       
       // Case 1: Has URL - try direct fetch first, fallback to CPE proxy if CORS fails
       if (parsed.url && typeof parsed.url === 'string') {
-        console.log('[DropZone] Fetching image from URL:', parsed.url.substring(0, 80));
+        console.log('[DropZone] Fetching media from URL:', parsed.url.substring(0, 80));
+        
+        // Detect media type from URL extension
+        const urlLower = parsed.url.toLowerCase();
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+        if (videoExtensions.some(ext => urlLower.includes(ext))) {
+          setMediaType('video');
+        }
         
         // Try direct fetch first (works for ComfyUI and same-origin)
         try {

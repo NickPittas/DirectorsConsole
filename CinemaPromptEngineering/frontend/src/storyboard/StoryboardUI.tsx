@@ -1049,11 +1049,52 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const loadWorkflows = async () => {
+      // Migration helper: fix video inputs that were incorrectly stored as type 'image'
+      const migrateVideoInputTypes = (wfs: typeof workflows): { migrated: typeof workflows; changed: boolean } => {
+        let changed = false;
+        const migrated = wfs.map(wf => {
+          let wfChanged = false;
+          // Fix config entries
+          const newConfig = wf.config?.map(cfg => {
+            if (cfg.category === 'image_input' && cfg.name?.includes('video') && cfg.type === 'image') {
+              wfChanged = true;
+              return { ...cfg, type: 'video' as const };
+            }
+            return cfg;
+          }) || [];
+          // Fix parsed.image_inputs entries
+          const newParsed = wf.parsed ? {
+            ...wf.parsed,
+            image_inputs: wf.parsed.image_inputs?.map(inp => {
+              if (inp.name?.includes('video') && inp.type !== 'video') {
+                wfChanged = true;
+                return { ...inp, type: 'video' as const };
+              }
+              return inp;
+            }) || []
+          } : wf.parsed;
+          if (wfChanged) {
+            changed = true;
+            return { ...wf, config: newConfig, parsed: newParsed };
+          }
+          return wf;
+        });
+        return { migrated, changed };
+      };
+
       try {
         // Load from persistent backend storage
         const result = await workflowStorage.loadAll();
         if (result.workflows && result.workflows.length > 0) {
-          setWorkflows(result.workflows as typeof workflows);
+          const { migrated, changed } = migrateVideoInputTypes(result.workflows as typeof workflows);
+          setWorkflows(migrated);
+          if (changed) {
+            console.log('[Workflows] Migrated video input types from "image" to "video" in stored workflows');
+            // Persist the corrected data back to storage
+            await workflowStorage.saveAll(migrated as unknown as Record<string, unknown>[]).catch(e => 
+              console.warn('[Workflows] Failed to persist video type migration:', e)
+            );
+          }
           if (!selectedWorkflowId) {
             setSelectedWorkflowId((result.workflows[0] as { id: string }).id);
           }
@@ -1540,14 +1581,16 @@ export function StoryboardUI() {
           user_modified: false,
         }));
         
-        // Add image inputs
+        // Add image/video inputs
         parsed.image_inputs.forEach((input, index) => {
+          // Preserve the parsed type: 'video' for video loaders, 'image' for images/masks
+          const configType = input.type === 'video' ? 'video' : 'image';
           newWorkflow.config.push({
             name: input.name,
             display_name: input.display_name,
             node_id: input.node_id,
             input_name: input.input_name,
-            type: 'image',
+            type: configType,
             default: '',
             description: input.description,
             order: parsed.parameters.length + index,
@@ -1876,23 +1919,24 @@ export function StoryboardUI() {
           }
         }
         
-        // Handle data:image URLs - upload to ALL nodes' input folders
-        if (typeof value === 'string' && value.startsWith('data:image')) {
-          console.log(`[Parallel] Image parameter ${key} has data URL, uploading to ALL nodes`);
-          addLog('info', `Uploading data URL image for ${key} to all ${backendIds.length} nodes`);
+        // Handle data:image and data:video URLs - upload to ALL nodes' input folders
+        if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('data:video'))) {
+          const isVideo = value.startsWith('data:video');
+          console.log(`[Parallel] ${isVideo ? 'Video' : 'Image'} parameter ${key} has data URL, uploading to ALL nodes`);
+          addLog('info', `Uploading data URL ${isVideo ? 'video' : 'image'} for ${key} to all ${backendIds.length} nodes`);
           
           // Get all selected nodes
           const selectedNodes = renderNodes.filter(n => backendIds.includes(n.id) && n.status === 'online');
           if (selectedNodes.length === 0) {
-            const errorMsg = `Cannot upload data URL image: no online render nodes`;
+            const errorMsg = `Cannot upload data URL media: no online render nodes`;
             addLog('error', errorMsg);
             showError(errorMsg);
             return;
           }
           
           try {
-            // Extract MIME type and base64 data
-            const matches = value.match(/^data:(image\/[^;]+);base64,(.+)$/);
+            // Extract MIME type and base64 data (supports both image/* and video/*)
+            const matches = value.match(/^data:((?:image|video)\/[^;]+);base64,(.+)$/);
             if (!matches) {
               throw new Error('Invalid data URL format');
             }
@@ -2417,17 +2461,20 @@ export function StoryboardUI() {
         }
       }
       
-      if (typeof value === 'string' && value.startsWith('data:image')) {
-        console.log(`[Generation] ${key} is a data:image URL, uploading...`);
+      if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('data:video'))) {
+        const isVideo = value.startsWith('data:video');
+        console.log(`[Generation] ${key} is a data:${isVideo ? 'video' : 'image'} URL, uploading...`);
         try {
-          addLog('info', `Uploading image for parameter: ${key}`);
+          addLog('info', `Uploading ${isVideo ? 'video' : 'image'} for parameter: ${key}`);
           // Convert data URL to blob
           const response = await fetch(value);
           const blob = await response.blob();
-          const filename = `storyboard_${Date.now()}_${key}.png`;
+          // Use correct extension based on MIME type
+          const mimeExt = blob.type.split('/')[1] || (isVideo ? 'mp4' : 'png');
+          const filename = `storyboard_${Date.now()}_${key}.${mimeExt}`;
           const file = new File([blob], filename, { type: blob.type });
           
-          // Upload to ComfyUI
+          // Upload to ComfyUI (upload/image endpoint handles both images and videos)
           const formData = new FormData();
           formData.append('image', file);
           formData.append('overwrite', 'true');
@@ -2443,7 +2490,7 @@ export function StoryboardUI() {
           
           const uploadData = await uploadResponse.json();
           const uploadedFilename = uploadData.name;
-          addLog('info', `Image uploaded as: ${uploadedFilename}`);
+          addLog('info', `${isVideo ? 'Video' : 'Image'} uploaded as: ${uploadedFilename}`);
           console.log(`[Generation] ${key} uploaded as: ${uploadedFilename}`);
           
           // Store the filename for buildWorkflow
@@ -2451,7 +2498,7 @@ export function StoryboardUI() {
           // Also track in imageInputs for explicit image input handling
           imageInputs[key] = uploadedFilename;
         } catch (uploadError) {
-          const errorMsg = `Failed to upload image ${key}: ${uploadError}`;
+          const errorMsg = `Failed to upload ${isVideo ? 'video' : 'image'} ${key}: ${uploadError}`;
           addLog('error', errorMsg);
           showError(errorMsg);
           setPanels(prev => prev.map(p => 
@@ -2460,7 +2507,7 @@ export function StoryboardUI() {
           return;
         }
       } else {
-        console.log(`[Generation] ${key} is not an image (type: ${typeof value}, startsWith data:image: ${typeof value === 'string' ? value.startsWith('data:image') : 'N/A'})`);
+        console.log(`[Generation] ${key} is not media (type: ${typeof value}, startsWith data: ${typeof value === 'string' ? value.startsWith('data:') : 'N/A'})`);
       }
     }
     
@@ -4594,6 +4641,11 @@ export function StoryboardUI() {
                       const workflow = workflows.find(w => w.id === selectedWorkflowId);
                       setWorkflows(prev => prev.filter(w => w.id !== selectedWorkflowId));
                       setSelectedWorkflowId(null);
+                      // Delete from persistent backend storage so it doesn't reappear on restart
+                      workflowStorage.delete(selectedWorkflowId).catch(err => {
+                        console.error('[Workflows] Failed to delete from backend:', err);
+                        addLog('error', `Failed to delete workflow file from storage: ${err}`);
+                      });
                       if (workflow) {
                         addLog('info', `Deleted workflow: ${workflow.name}`);
                       }

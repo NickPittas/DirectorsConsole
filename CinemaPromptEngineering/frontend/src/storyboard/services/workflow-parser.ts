@@ -35,7 +35,7 @@ export interface WorkflowImageInput {
   display_name: string;
   node_id: string;
   input_name: string;
-  type: 'image' | 'mask';
+  type: 'image' | 'video' | 'mask';
   required: boolean;
   batch_min: number;
   batch_max: number;
@@ -751,14 +751,24 @@ export class WorkflowParser {
       }
       
       // Detect VHS_LoadVideo and similar video loading nodes
-      if (class_type === 'VHS_LoadVideo' || class_type === 'LoadVideo' || class_type.includes('LoadVideo')) {
+      // Matches: VHS_LoadVideo, VHS_LoadVideoPath, LoadVideo, LoadVideoUpload, VideoLoader, etc.
+      const isVideoLoader = class_type === 'VHS_LoadVideo' 
+        || class_type === 'VHS_LoadVideoPath'
+        || class_type === 'LoadVideo' 
+        || class_type === 'LoadVideoUpload'
+        || class_type === 'VideoLoader'
+        || class_type.includes('LoadVideo');
+      
+      if (isVideoLoader) {
         inputCount++;
+        // VHS_LoadVideoPath uses 'video_path' as its input field, others use 'video'
+        const videoInputName = class_type === 'VHS_LoadVideoPath' ? 'video_path' : 'video';
         inputs.push({
           name: `video_input_${inputCount}`,
           display_name: `Video Input ${inputCount}`,
           node_id,
-          input_name: 'video',
-          type: 'image', // Use image type but will be displayed as video widget
+          input_name: videoInputName,
+          type: 'video',
           required: false,
           batch_min: 1,
           batch_max: 1,
@@ -775,9 +785,10 @@ export class WorkflowParser {
    */
   imageInputsToParameters(imageInputs: WorkflowImageInput[]): WorkflowParameter[] {
     return imageInputs.map((input) => {
-      // Determine parameter type based on input name/type
+      // Determine parameter type: prefer the explicit type from extraction,
+      // fall back to name-based detection for legacy data
       let paramType: WorkflowParameter['type'] = 'image';
-      if (input.name.includes('video')) {
+      if (input.type === 'video' || input.name.includes('video')) {
         paramType = 'video';
       } else if (input.type === 'mask') {
         paramType = 'image';
