@@ -8,6 +8,79 @@
 import { ANGLE_LORA_NAME } from '../data/cameraAngleData';
 
 // ============================================================================
+// Cross-platform path normalization for ComfyUI workflows
+// ============================================================================
+
+/** Input names in ComfyUI nodes that carry file/model/output paths */
+const PATH_INPUTS = new Set([
+  // Model/LoRA paths (relative within ComfyUI's models directory)
+  'ckpt_name', 'unet_name', 'lora_name', 'vae_name', 'clip_name',
+  'control_net_name', 'style_model_name', 'model_name',
+  // Output/save paths
+  'filename_prefix', 'output_path', 'save_prefix', 'file_path',
+  'directory', 'save_path', 'image',
+]);
+
+export type TargetOS = 'windows' | 'linux' | 'darwin' | 'unknown';
+
+/**
+ * Normalize path separators in a workflow JSON to match the target ComfyUI node's OS.
+ * 
+ * Workflows authored on Windows contain backslash paths (e.g., "Wan 2.2\I2V\model.safetensors"
+ * or "Memi\Videos\WanAnimate\Shot_01"). Linux/macOS ComfyUI nodes expect forward slashes.
+ * Conversely, workflows from Linux sent to a Windows node need backslashes for output paths.
+ * 
+ * For model paths (ckpt_name, lora_name, etc.), ComfyUI validates against its directory listing
+ * which uses the OS-native separator. For output paths, the OS needs the native separator to
+ * create directories and files.
+ * 
+ * @param workflow - The ComfyUI API-format workflow (mutated in place)
+ * @param targetOS - The OS of the ComfyUI node that will execute this workflow
+ */
+export function normalizeWorkflowPaths(
+  workflow: Record<string, any>,
+  targetOS: TargetOS,
+): void {
+  // If we don't know the target OS, default to forward slashes since that
+  // works on Linux, macOS, and Windows ComfyUI accepts them too
+  const useBackslash = targetOS === 'windows';
+
+  for (const node of Object.values(workflow)) {
+    const inputs = node?.inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+
+    for (const [key, value] of Object.entries(inputs)) {
+      if (!PATH_INPUTS.has(key) || typeof value !== 'string') continue;
+
+      if (useBackslash) {
+        // Target is Windows: convert / to \ (but not protocol slashes like http://)
+        // Only convert if the value looks like a relative path (no protocol)
+        if (!value.includes('://') && value.includes('/')) {
+          inputs[key] = value.replace(/\//g, '\\');
+        }
+      } else {
+        // Target is Linux/macOS/unknown: convert \ to /
+        if (value.includes('\\')) {
+          inputs[key] = value.replace(/\\/g, '/');
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Detect the OS of a ComfyUI node from its /system_stats response.
+ * Call this on the JSON response from `GET {nodeUrl}/system_stats`.
+ */
+export function detectNodeOS(systemStats: any): TargetOS {
+  const raw = (systemStats?.system?.os || '').toLowerCase();
+  if (raw.includes('win')) return 'windows';
+  if (raw.includes('darwin') || raw.includes('mac')) return 'darwin';
+  if (raw.includes('linux')) return 'linux';
+  return 'unknown';
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 

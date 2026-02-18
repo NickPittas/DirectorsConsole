@@ -63,11 +63,11 @@ export function BreadcrumbBar({ path, onNavigate, onRefresh, isLoading }: Breadc
         });
       }
     } else {
-      // Unix-style or relative path
+      // Unix-style path (always absolute on Linux/macOS)
       result.push({ name: 'Computer', path: '' });
 
       for (const segment of segments) {
-        currentPath += (currentPath ? '/' : '') + segment;
+        currentPath += '/' + segment;
         result.push({
           name: segment,
           path: currentPath,

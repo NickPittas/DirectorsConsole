@@ -14,12 +14,14 @@ import {
   SaveAll,
   RefreshCw,
   OctagonX,
-  Printer
+  Printer,
+  ArrowRightLeft
 } from 'lucide-react';
 import './MainMenu.css';
 
 interface MainMenuProps {
   onProjectSettings: () => void;
+  onPathMappings?: () => void;
   onSaveProject: () => void;
   onSaveProjectAs?: () => void;
   onLoadProject: () => void;
@@ -38,6 +40,7 @@ interface MainMenuProps {
 
 export function MainMenu({
   onProjectSettings,
+  onPathMappings,
   onSaveProject,
   onSaveProjectAs,
   onLoadProject,
@@ -163,6 +166,19 @@ export function MainMenu({
               <span>Project Settings</span>
               <span className="menu-shortcut">{mod}+,</span>
             </button>
+
+            {onPathMappings && (
+              <button
+                className="menu-item"
+                onClick={() => {
+                  onPathMappings();
+                  setIsOpen(false);
+                }}
+              >
+                <ArrowRightLeft size={16} />
+                <span>Path Mappings</span>
+              </button>
+            )}
 
             {onPrintStoryboard && (
               <button

@@ -164,6 +164,7 @@ python -m pytest tests/test_cinema_rules.py -v
 - `tests/test_cpe_api.py` - FastAPI endpoint tests (health, presets, generate, validate)
 - `tests/test_cinema_rules.py` - Rules engine validation tests
 - `tests/test_presets.py` - Preset definition tests
+- `tests/test_path_translator.py` - Cross-platform path translation tests (38 tests)
 - `tests/verify_cinema_rules.py` - Comprehensive rule verification
 
 ---
@@ -280,6 +281,13 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 - `POST /api/load-project` - Load project metadata
 - `GET /api/browse-folders` - Browse project folders
 - `GET /api/png-metadata` - Get PNG metadata
+
+**Path Translation (Cross-Platform):**
+- `GET /api/path-mappings` - List all configured path mappings + current OS
+- `POST /api/path-mappings` - Add a new path mapping
+- `PUT /api/path-mappings/{id}` - Update an existing mapping
+- `DELETE /api/path-mappings/{id}` - Remove a mapping
+- `POST /api/translate-path` - Test-translate a path using configured mappings
 
 ---
 
@@ -464,6 +472,52 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - `workflow-parser.ts` - Downstream cascade bypass, path normalization, QwenImageControlNetIntegratedLoader
 - `llm_service.py` - Ollama endpoint, model sanitization, embedding filter
 - `Settings.tsx` - Model ID parsing for colons
+
+---
+
+### Recent Fixes (Feb 10, 2026)
+
+**Cross-Platform Path Translation** (Completed)
+- **Path Translator Module**: `Orchestrator/orchestrator/path_translator.py` — Core engine for translating paths between Windows, Linux, and macOS mount points
+- **PathMapping Dataclass**: Stores per-mapping `windows`, `linux`, `macos` prefixes with enable/disable toggle
+- **Persistent Config**: Mappings saved to `Orchestrator/orchestrator/data/path_mappings.json` (auto-created)
+- **API Endpoints** (on Orchestrator port 9820):
+  - `GET /api/path-mappings` — List all configured mappings + current OS detection
+  - `POST /api/path-mappings` — Add a new path mapping
+  - `PUT /api/path-mappings/{id}` — Update an existing mapping
+  - `DELETE /api/path-mappings/{id}` — Remove a mapping
+  - `POST /api/translate-path` — Test-translate a path using configured mappings
+- **Auto-Translation**: All 13 path-consuming endpoints in `server.py` call `_translate_path()` BEFORE path safety checks and filesystem operations
+- **CPE Backend**: `api/main.py` reads the same config file for `/api/read-image` and `/api/open-explorer` endpoints
+- **Frontend UI**: `PathMappingsModal.tsx` — Full CRUD modal for managing path mappings, accessible from Main Menu → "Path Mappings"
+- **Test Coverage**: 38 tests in `tests/test_path_translator.py` covering normalization, translation in all directions, persistence, and real-world NAS scenarios
+
+**New Components:**
+- `PathMappingsModal.tsx` + `PathMappingsModal.css` — Frontend modal for path mapping management with test translation feature
+
+**New Files:**
+- `Orchestrator/orchestrator/path_translator.py` — Core path translation engine
+- `tests/test_path_translator.py` — Comprehensive test suite
+
+**Files Modified:**
+- `Orchestrator/orchestrator/api/server.py` — Import path_translator, add `_translate_path()` helper, add 5 API endpoints, integrate translation into 13 endpoints
+- `CinemaPromptEngineering/api/main.py` — Add `_translate_path()` function (reads shared config), integrate into `read-image` and `open-explorer`
+- `CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.tsx` — Import PathMappingsModal, add state, render modal
+- `CinemaPromptEngineering/frontend/src/storyboard/components/MainMenu.tsx` — Add "Path Mappings" menu item with ArrowRightLeft icon
+
+**Path Translation Flow:**
+```
+User configures: W:\ ↔ /mnt/Mandalore ↔ /Volumes/Mandalore
+     │
+     ▼
+Frontend sends path (from saved project or user input)
+     │ e.g., "W:\VFX\Eliot\renders" (Windows-saved project)
+     ▼
+Backend receives path → _translate_path("W:\VFX\Eliot\renders")
+     │ Looks up mapping, detects current OS = Linux
+     ▼
+Translated: "/mnt/Mandalore/VFX/Eliot/renders" → Path() works correctly
+```
 
 ---
 

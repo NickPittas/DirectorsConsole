@@ -55,7 +55,7 @@ export function FileBrowserDialog({
     collapseTreeNode,
     refresh,
     goToParent,
-  } = useFileBrowser(orchestratorUrl, initialPath, isOpen);
+  } = useFileBrowser(orchestratorUrl, initialPath, isOpen, mode);
 
   const [saveFileName, setSaveFileName] = useState(defaultProjectName);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
@@ -130,10 +130,12 @@ export function FileBrowserDialog({
     (item: FolderItem) => {
       selectItem(item);
 
-      // For save mode, update filename when selecting a project
-      if (mode === 'save' && item.type === 'project') {
-        // Extract project name from file (remove _project.json suffix)
-        const name = item.name.replace(/_project\.json$/i, '');
+      // For save mode, update filename when selecting a project/file
+      if (mode === 'save' && (item.type === 'project' || item.type === 'file')) {
+        // Extract project name from file (remove _project.json / .json suffix)
+        const name = item.name
+          .replace(/_project\.json$/i, '')
+          .replace(/\.json$/i, '');
         setSaveFileName(name);
       }
     },
@@ -144,7 +146,7 @@ export function FileBrowserDialog({
     (item: FolderItem) => {
       if (item.type === 'folder' || item.type === 'drive') {
         navigateTo(item.path);
-      } else if (item.type === 'project' && mode === 'open') {
+      } else if ((item.type === 'project' || item.type === 'file') && mode === 'open') {
         onOpenProject(item.path);
       }
     },
@@ -166,13 +168,13 @@ export function FileBrowserDialog({
       }
       onClose();
     } else if (mode === 'open') {
-      if (state.selectedItem?.type === 'project') {
+      if (state.selectedItem?.type === 'project' || state.selectedItem?.type === 'file') {
         onOpenProject(state.selectedItem.path);
       } else if (state.selectedItem?.type === 'folder') {
         // If folder selected in open mode, navigate into it
         navigateTo(state.selectedItem.path);
       } else {
-        setError('Please select a project file to open');
+        setError('Please select a project file (.json) to open');
       }
     } else if (mode === 'save') {
       if (!saveFileName.trim()) {
@@ -257,7 +259,11 @@ export function FileBrowserDialog({
       return 'Select Folder';
     }
     if (mode === 'open') {
-      return state.selectedItem?.type === 'project' ? 'Open Project' : 'Select Folder';
+      return (state.selectedItem?.type === 'project' || state.selectedItem?.type === 'file')
+        ? 'Open Project'
+        : state.selectedItem?.type === 'folder'
+          ? 'Open Folder'
+          : 'Open Project';
     }
     return 'Save';
   };
@@ -269,7 +275,7 @@ export function FileBrowserDialog({
       return !hasFolder;
     }
     if (mode === 'open') {
-      return state.selectedItem?.type !== 'project' && state.selectedItem?.type !== 'folder';
+      return !state.selectedItem || (state.selectedItem.type !== 'project' && state.selectedItem.type !== 'file' && state.selectedItem.type !== 'folder');
     }
     return !saveFileName.trim() || !state.currentPath;
   };

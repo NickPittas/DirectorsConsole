@@ -6,11 +6,14 @@
 
 import { getComfyUIWebSocket, ComfyUIWebSocket, KayToolMetrics } from './comfyui-websocket';
 
+export type NodeOS = 'windows' | 'linux' | 'darwin' | 'unknown';
+
 export interface RenderNode {
   id: string;
   name: string;
   url: string;
   status: 'online' | 'offline' | 'busy' | 'error';
+  os: NodeOS; // detected from ComfyUI /system_stats
   gpuName: string;
   vramTotal: number; // in MB
   vramUsed: number; // in MB
@@ -73,6 +76,7 @@ class OrchestratorManager {
           name: backend.name,
           url: `http://${backend.host}:${backend.port}`,
           status: backendStatus,
+          os: 'unknown',
           gpuName: backend.gpu_name || 'Unknown',
           vramTotal: backend.gpu_memory_total || 0,
           vramUsed: backend.gpu_memory_used || 0,
@@ -119,6 +123,7 @@ class OrchestratorManager {
       name,
       url,
       status: 'offline',
+      os: 'unknown',
       gpuName: 'Unknown',
       vramTotal: 0,
       vramUsed: 0,
@@ -222,6 +227,17 @@ class OrchestratorManager {
       
       if (response.ok) {
         const stats = await response.json();
+        
+        // Detect remote OS from ComfyUI system stats
+        const rawOS = (stats.system?.os || '').toLowerCase();
+        if (rawOS.includes('win')) {
+          node.os = 'windows';
+        } else if (rawOS.includes('darwin') || rawOS.includes('mac')) {
+          node.os = 'darwin';
+        } else if (rawOS.includes('linux')) {
+          node.os = 'linux';
+        }
+        // else keep existing value (may already be set from previous poll)
         
         // Extract GPU info from ComfyUI stats
         // Note: ComfyUI returns vram values in bytes, we convert to MB
@@ -377,6 +393,7 @@ class OrchestratorManager {
       name: n.name,
       url: n.url,
       priority: n.priority,
+      os: n.os,
     }));
     localStorage.setItem('orchestrator_nodes', JSON.stringify(data));
     
@@ -426,6 +443,7 @@ class OrchestratorManager {
             name: n.name,
             url: n.url,
             status: 'offline',
+            os: (n.os as NodeOS) || 'unknown',
             gpuName: 'Unknown',
             vramTotal: 0,
             vramUsed: 0,
