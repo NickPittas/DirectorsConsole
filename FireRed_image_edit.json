@@ -1,0 +1,214 @@
+{
+  "41": {
+    "inputs": {
+      "image": "clipspace/clipspace-painted-masked-1771504078176.png [input]"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "92": {
+    "inputs": {
+      "filename_prefix": "Qwen_Edit_2511",
+      "images": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "93": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "95": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "104": {
+    "inputs": {
+      "pixels": [
+        "111",
+        1
+      ],
+      "vae": [
+        "95",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "106": {
+    "inputs": {
+      "lora_name": "Qwen/Edit/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "122",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "110": {
+    "inputs": {
+      "stitcher": [
+        "111",
+        0
+      ],
+      "inpainted_image": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "InpaintStitchImproved",
+    "_meta": {
+      "title": "✂️ Inpaint Stitch"
+    }
+  },
+  "111": {
+    "inputs": {
+      "downscale_algorithm": "lanczos",
+      "upscale_algorithm": "lanczos",
+      "preresize": false,
+      "preresize_mode": "ensure minimum resolution",
+      "preresize_min_width": 1024,
+      "preresize_min_height": 1024,
+      "preresize_max_width": 16384,
+      "preresize_max_height": 16384,
+      "mask_fill_holes": true,
+      "mask_expand_pixels": 0,
+      "mask_invert": false,
+      "mask_blend_pixels": 32,
+      "mask_hipass_filter": 0.1,
+      "extend_for_outpainting": false,
+      "extend_up_factor": 1,
+      "extend_down_factor": 1,
+      "extend_left_factor": 1,
+      "extend_right_factor": 1,
+      "context_from_mask_extend_factor": 1,
+      "output_resize_to_target_size": false,
+      "output_target_width": 1024,
+      "output_target_height": 1024,
+      "output_padding": "0",
+      "device_mode": "gpu (much faster)",
+      "image": [
+        "41",
+        0
+      ],
+      "mask": [
+        "41",
+        1
+      ]
+    },
+    "class_type": "InpaintCropImproved",
+    "_meta": {
+      "title": "✂️ Inpaint Crop"
+    }
+  },
+  "113": {
+    "inputs": {
+      "images": [
+        "111",
+        1
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "116": {
+    "inputs": {
+      "positive_prompt": "Make the boy on the right with the purple undercut hair and maroon jacket, smaller, and make him kneel to the floor in pain by the arrow in his chest. He is looking towards the right of the screen.There is no bow in his hand or the floor.\n\nMake the girl on the left with the blue short hair and the blue tunic, turn her posture towards the boy on the floor and look at him in despair. Her bow is on the floor in front of her.\n\nCorrect any perspective issues and sizing.\n\nKeep all their facial features, clothes, shoes, eyes, as the original image. ",
+      "negative_prompt": "",
+      "generation_mode": "图生图 image-to-image",
+      "batch_size": 1,
+      "width": 0,
+      "height": 0,
+      "seed": 86245986251409,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "auraflow_shift": 3,
+      "cfg_norm_strength": 1,
+      "enable_clean_gpu_memory": false,
+      "enable_clean_cpu_memory_after_finish": false,
+      "enable_sound_notification": false,
+      "auto_save_output_folder": "",
+      "output_filename_prefix": "auto_save",
+      "instruction": "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.",
+      "model": [
+        "120",
+        0
+      ],
+      "clip": [
+        "93",
+        0
+      ],
+      "vae": [
+        "95",
+        0
+      ],
+      "image1": [
+        "111",
+        1
+      ],
+      "latent": [
+        "104",
+        0
+      ]
+    },
+    "class_type": "QwenImageIntegratedKSampler",
+    "_meta": {
+      "title": "🐋 Qwen Image Integrated KSampler - Github:﹫luguoli"
+    }
+  },
+  "120": {
+    "inputs": {
+      "sage_attention": "sageattn_qk_int8_pv_fp8_cuda++",
+      "allow_compile": true,
+      "model": [
+        "106",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "122": {
+    "inputs": {
+      "unet_name": "FireRed/FireRed-Image-Edit-1.0_fp8mixed_comfy.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  }
+}

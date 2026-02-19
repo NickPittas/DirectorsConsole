@@ -8,6 +8,196 @@
 import { useState, useRef, useCallback } from 'react';
 import './CropMaskEditor.css';
 
+/**
+ * Encode raw RGBA pixel data into a PNG data URL, bypassing the browser's
+ * premultiplied-alpha canvas pipeline.
+ *
+ * Browsers store canvas pixels in premultiplied form internally.  When alpha
+ * is 0 the RGB values are multiplied to 0 as well, so a round-trip through
+ * putImageData → toDataURL destroys colour information for fully-transparent
+ * pixels.  ComfyUI's LoadImage node extracts the alpha channel as a separate
+ * MASK output *and* uses the RGB as the IMAGE output, so we need both to
+ * survive intact.
+ *
+ * This encoder produces a valid PNG directly from an RGBA Uint8ClampedArray,
+ * using DEFLATE (via DecompressionStream trick or a small zlib fallback).
+ */
+async function encodeRGBAtoPNGDataURL(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+): Promise<string> {
+  // --- 1. Build raw scanlines (filter byte 0 = None, then RGBA bytes) ---
+  const rowLen = 1 + width * 4; // filter byte + pixel data
+  const raw = new Uint8Array(rowLen * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * rowLen] = 0; // filter type None
+    const srcOff = y * width * 4;
+    const dstOff = y * rowLen + 1;
+    raw.set(rgba.subarray(srcOff, srcOff + width * 4), dstOff);
+  }
+
+  // --- 2. Deflate the scanline data ---
+  let deflated: Uint8Array;
+  try {
+    // Use the Compression Streams API (available in all modern browsers)
+    const cs = new CompressionStream('deflate');
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+
+    // Feed data in then close
+    writer.write(raw);
+    writer.close();
+
+    // Collect compressed chunks
+    const chunks: Uint8Array[] = [];
+    let totalLen = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      totalLen += value.byteLength;
+    }
+    deflated = new Uint8Array(totalLen);
+    let off = 0;
+    for (const c of chunks) {
+      deflated.set(c, off);
+      off += c.byteLength;
+    }
+  } catch {
+    // Fallback: store uncompressed using DEFLATE stored blocks
+    // (method 0, btype 00 = no compression).  Very large but always works.
+    deflated = _deflateStored(raw);
+  }
+
+  // --- 3. Assemble the PNG file ---
+  const pngChunks: Uint8Array[] = [];
+
+  // Signature
+  pngChunks.push(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
+
+  // IHDR
+  const ihdr = new Uint8Array(13);
+  const ihdrView = new DataView(ihdr.buffer);
+  ihdrView.setUint32(0, width);
+  ihdrView.setUint32(4, height);
+  ihdr[8] = 8;  // bit depth
+  ihdr[9] = 6;  // color type RGBA
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = 0; // interlace
+  pngChunks.push(_pngChunk('IHDR', ihdr));
+
+  // IDAT
+  pngChunks.push(_pngChunk('IDAT', deflated));
+
+  // IEND
+  pngChunks.push(_pngChunk('IEND', new Uint8Array(0)));
+
+  // Concatenate everything
+  const totalLength = pngChunks.reduce((s, c) => s + c.byteLength, 0);
+  const png = new Uint8Array(totalLength);
+  let pos = 0;
+  for (const chunk of pngChunks) {
+    png.set(chunk, pos);
+    pos += chunk.byteLength;
+  }
+
+  // Convert to data URL
+  const blob = new Blob([png], { type: 'image/png' });
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Build a PNG chunk: 4-byte length + 4-byte type + data + 4-byte CRC */
+function _pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const chunk = new Uint8Array(4 + 4 + data.byteLength + 4);
+  const view = new DataView(chunk.buffer);
+
+  // Length (data only)
+  view.setUint32(0, data.byteLength);
+
+  // Type
+  for (let i = 0; i < 4; i++) chunk[4 + i] = type.charCodeAt(i);
+
+  // Data
+  chunk.set(data, 8);
+
+  // CRC over type + data
+  const crcData = chunk.subarray(4, 8 + data.byteLength);
+  view.setUint32(8 + data.byteLength, _crc32(crcData));
+
+  return chunk;
+}
+
+/** CRC-32 used by PNG */
+const _crcTable: number[] = [];
+(function () {
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    _crcTable[n] = c;
+  }
+})();
+
+function _crc32(buf: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.byteLength; i++) {
+    crc = _crcTable[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Fallback: produce DEFLATE "stored" blocks (no compression) */
+function _deflateStored(data: Uint8Array): Uint8Array {
+  // zlib header (CM=8, CINFO=7, FCHECK) + stored blocks + adler32
+  const maxBlock = 65535;
+  const numBlocks = Math.ceil(data.byteLength / maxBlock) || 1;
+  const out = new Uint8Array(2 + numBlocks * 5 + data.byteLength + 4);
+  let p = 0;
+
+  // zlib header: CMF=0x78 (deflate, window 32k), FLG=0x01 (FCHECK=1, no dict, level 0)
+  out[p++] = 0x78;
+  out[p++] = 0x01;
+
+  let remaining = data.byteLength;
+  let srcOff = 0;
+  for (let b = 0; b < numBlocks; b++) {
+    const blockLen = Math.min(remaining, maxBlock);
+    const isLast = b === numBlocks - 1;
+    out[p++] = isLast ? 1 : 0; // BFINAL
+    out[p++] = blockLen & 0xff;
+    out[p++] = (blockLen >> 8) & 0xff;
+    out[p++] = ~blockLen & 0xff;
+    out[p++] = (~blockLen >> 8) & 0xff;
+    out.set(data.subarray(srcOff, srcOff + blockLen), p);
+    p += blockLen;
+    srcOff += blockLen;
+    remaining -= blockLen;
+  }
+
+  // Adler-32
+  let a = 1, bv = 0;
+  for (let i = 0; i < data.byteLength; i++) {
+    a = (a + data[i]) % 65521;
+    bv = (bv + a) % 65521;
+  }
+  const adler = ((bv << 16) | a) >>> 0;
+  out[p++] = (adler >> 24) & 0xff;
+  out[p++] = (adler >> 16) & 0xff;
+  out[p++] = (adler >> 8) & 0xff;
+  out[p++] = adler & 0xff;
+
+  return out.subarray(0, p);
+}
+
 type EditorMode = 'crop' | 'mask' | 'paint';
 
 interface CropRect {
@@ -682,12 +872,13 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
   }, [cropRect, imageSize]);
 
   /**
-   * Unified save handler that processes operations in order: Paint → Mask → Crop
+   * Unified save handler that processes operations in order: Paint → Crop → Mask
    * - Paint applied to original image FIRST
-   * - Mask applied as alpha channel SECOND  
-   * - Crop applied LAST
+   * - Crop applied SECOND (while image is still fully opaque)
+   * - Mask baked into alpha channel LAST (using manual PNG encoder to bypass
+   *   the browser's premultiplied-alpha pipeline that destroys RGB at alpha=0)
    */
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     const img = imageRef.current;
     const maskCanvas = maskCanvasRef.current;
     const paintCanvas = paintCanvasRef.current;
@@ -752,37 +943,30 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
     // Get raw paint data for re-editing later
     const rawPaintData = hasPaint && paintCanvas ? paintCanvas.toDataURL('image/png') : null;
     
-    // Step 2: Apply mask as alpha channel (Mask SECOND)
-    if (hasMask && maskCanvas) {
-      console.log('[CropMaskEditor] Applying mask as alpha channel');
-      
-      const imgData = baseCtx.getImageData(0, 0, baseCanvas.width, baseCanvas.height);
-      const pixels = imgData.data;
-      
-      const maskCtx = maskCanvas.getContext('2d');
-      if (!maskCtx) {
-        console.error('[CropMaskEditor] Failed to get mask context');
-        onCancel();
-        return;
-      }
-      
-      const maskImgData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-      const maskPixels = maskImgData.data;
-      
-      // Apply mask to alpha channel (white = opaque, black = transparent)
-      for (let i = 0; i < pixels.length; i += 4) {
-        const maskValue = maskPixels[i]; // R channel (grayscale)
-        pixels[i + 3] = maskValue; // Set alpha from mask
-      }
-      
-      baseCtx.putImageData(imgData, 0, 0);
-    }
-    
     // Get raw mask data for re-editing later
     const rawMaskData = hasMask && maskCanvas ? maskCanvas.toDataURL('image/png') : null;
     
-    // Step 3: Apply crop (Crop LAST)
-    let resultData: string;
+    // Step 2: Apply crop (while image is still fully opaque — drawImage is safe)
+    // Step 3: Bake mask into alpha channel using manual PNG encoder
+    //
+    // CRITICAL: Browsers store canvas pixels in premultiplied-alpha form internally.
+    // When alpha is 0, the premultiplied RGB is 0 as well.  A round-trip through
+    // putImageData(alpha=0) → toDataURL produces RGB=0 for transparent pixels.
+    // ComfyUI's LoadImage extracts the alpha channel as MASK output *and* uses the
+    // RGB as IMAGE output, so both must survive intact.
+    //
+    // Solution: We extract the raw RGBA pixels (RGB from the image canvas, A from
+    // the mask canvas) and encode them directly to PNG, completely bypassing the
+    // canvas premultiplied-alpha pipeline.
+    //
+    // MASK POLARITY: Our mask canvas stores white=255 for the painted (to-inpaint)
+    // area. ComfyUI's LoadImage converts alpha to mask via: mask = 1.0 - alpha.
+    // Therefore we INVERT the mask when writing alpha:
+    //   painted area (white=255)  → alpha=0   → ComfyUI mask=1.0 (MASKED)
+    //   unpainted   (black=0)     → alpha=255 → ComfyUI mask=0.0 (keep original)
+    
+    let resultData: string = '';
+    
     if (hasCrop) {
       console.log('[CropMaskEditor] Applying crop');
       
@@ -797,6 +981,7 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
         return;
       }
       
+      // Crop the fully-opaque image (no alpha modification, so drawImage is safe)
       croppedCtx.drawImage(
         baseCanvas,
         Math.max(0, cropX),
@@ -807,9 +992,93 @@ export function CropMaskEditor({ imageData, mode: initialMode, initialMask, init
         croppedCanvas.width, croppedCanvas.height
       );
       
-      resultData = croppedCanvas.toDataURL('image/png');
+      if (hasMask && maskCanvas) {
+        console.log('[CropMaskEditor] Baking mask into alpha (post-crop, manual PNG encoder)');
+        
+        // Get the cropped RGB pixels
+        const croppedImgData = croppedCtx.getImageData(0, 0, croppedCanvas.width, croppedCanvas.height);
+        const rgbaPixels = croppedImgData.data;
+        
+        // Crop the mask to the same region
+        const croppedMaskCanvas = document.createElement('canvas');
+        croppedMaskCanvas.width = cropWidth;
+        croppedMaskCanvas.height = cropHeight;
+        const croppedMaskCtx = croppedMaskCanvas.getContext('2d');
+        
+        if (croppedMaskCtx) {
+          croppedMaskCtx.drawImage(
+            maskCanvas,
+            Math.max(0, cropX),
+            Math.max(0, cropY),
+            Math.min(cropWidth, maskCanvas.width - cropX),
+            Math.min(cropHeight, maskCanvas.height - cropY),
+            0, 0,
+            croppedMaskCanvas.width, croppedMaskCanvas.height
+          );
+          
+          const croppedMaskData = croppedMaskCtx.getImageData(0, 0, croppedMaskCanvas.width, croppedMaskCanvas.height);
+          const maskPixels = croppedMaskData.data;
+          
+          // Merge: keep RGB from image, set A from INVERTED mask
+          // Our mask canvas: white (255) = user-painted area to inpaint
+          // ComfyUI LoadImage: mask = 1.0 - (alpha/255)
+          // So we need: painted area → alpha=0 → ComfyUI mask=1.0 (masked)
+          //             unpainted   → alpha=255 → ComfyUI mask=0.0 (keep)
+          for (let i = 0; i < rgbaPixels.length; i += 4) {
+            rgbaPixels[i + 3] = 255 - maskPixels[i]; // Invert: white mask → transparent alpha
+          }
+          
+          // Encode to PNG bypassing canvas premultiplied alpha pipeline
+          resultData = await encodeRGBAtoPNGDataURL(
+            rgbaPixels,
+            croppedCanvas.width,
+            croppedCanvas.height
+          );
+        } else {
+          resultData = croppedCanvas.toDataURL('image/png');
+        }
+      } else {
+        // No mask — standard canvas export is fine (image is fully opaque)
+        resultData = croppedCanvas.toDataURL('image/png');
+      }
     } else {
-      resultData = baseCanvas.toDataURL('image/png');
+      // No crop
+      if (hasMask && maskCanvas) {
+        console.log('[CropMaskEditor] Baking mask into alpha (no crop, manual PNG encoder)');
+        
+        // Get the full-size RGB pixels
+        const imgData = baseCtx.getImageData(0, 0, baseCanvas.width, baseCanvas.height);
+        const rgbaPixels = imgData.data;
+        
+        const maskCtx = maskCanvas.getContext('2d');
+        if (!maskCtx) {
+          console.error('[CropMaskEditor] Failed to get mask context');
+          onCancel();
+          return;
+        }
+        
+        const maskImgData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+        const maskPixels = maskImgData.data;
+        
+        // Merge: keep RGB from image, set A from INVERTED mask
+        // Our mask canvas: white (255) = user-painted area to inpaint
+        // ComfyUI LoadImage: mask = 1.0 - (alpha/255)
+        // So we need: painted area → alpha=0 → ComfyUI mask=1.0 (masked)
+        //             unpainted   → alpha=255 → ComfyUI mask=0.0 (keep)
+        for (let i = 0; i < rgbaPixels.length; i += 4) {
+          rgbaPixels[i + 3] = 255 - maskPixels[i]; // Invert: white mask → transparent alpha
+        }
+        
+        // Encode to PNG bypassing canvas premultiplied alpha pipeline
+        resultData = await encodeRGBAtoPNGDataURL(
+          rgbaPixels,
+          baseCanvas.width,
+          baseCanvas.height
+        );
+      } else {
+        // No mask — standard canvas export is fine (image is fully opaque)
+        resultData = baseCanvas.toDataURL('image/png');
+      }
     }
     
     console.log('[CropMaskEditor] Result length:', resultData.length);

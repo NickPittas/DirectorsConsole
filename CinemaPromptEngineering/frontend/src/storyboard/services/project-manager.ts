@@ -856,6 +856,7 @@ class ProjectManager {
     
     try {
       // Phase 2: Strip all image data from panels - will be reconstructed on load
+      // Phase 3: Externalize base64 reference images to disk files
       const sanitizedPanels = panels.map((panel: unknown) => {
         const p = panel as Record<string, unknown>;
         
@@ -896,7 +897,104 @@ class ProjectManager {
         };
       });
       
-      console.log('[ProjectManager] Sanitized panels:', JSON.stringify(sanitizedPanels, null, 2));
+      // Externalize base64 data URLs from parameterValues to disk files
+      // This keeps project JSON files small (~KB instead of ~100MB)
+      const externalizePromises: Promise<void>[] = [];
+      
+      for (const panel of sanitizedPanels) {
+        const pv = panel.parameterValues as Record<string, unknown> | undefined;
+        if (!pv) continue;
+        
+        const panelName = (panel.name as string) || `Panel_${String(panel.id).padStart(2, '0')}`;
+        const refFolder = `${folderPath}/${this.sanitizeFilename(panelName)}/.ref_images`;
+        
+        for (const [key, value] of Object.entries(pv)) {
+          if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('data:video'))) {
+            // Determine file extension from data URL
+            const mimeMatch = value.match(/^data:(image|video)\/(\w+)/);
+            const ext = mimeMatch ? mimeMatch[2].replace('jpeg', 'jpg') : 'png';
+            const filename = `${key}.${ext}`;
+            
+            // Queue the save operation
+            const dataUrl = value;
+            externalizePromises.push(
+              fetch(`${orchestratorUrl}/api/save-base64-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  data_url: dataUrl,
+                  folder_path: refFolder,
+                  filename: filename,
+                }),
+              })
+              .then(async (resp) => {
+                if (resp.ok) {
+                  const result = await resp.json();
+                  if (result.success && result.saved_path) {
+                    // Replace base64 with file reference
+                    pv[key] = `__fileref::${result.saved_path}`;
+                    console.log(`[ProjectManager] Externalized ${key} for panel "${panelName}" -> ${result.saved_path}`);
+                  } else {
+                    console.warn(`[ProjectManager] Failed to save ${key} for panel "${panelName}": ${result.message}`);
+                  }
+                } else {
+                  console.warn(`[ProjectManager] HTTP ${resp.status} saving ${key} for panel "${panelName}"`);
+                }
+              })
+              .catch((err) => {
+                console.warn(`[ProjectManager] Error saving ${key} for panel "${panelName}":`, err);
+                // On failure, keep the base64 in the project file as fallback
+              })
+            );
+          }
+        }
+      }
+      
+      // Also externalize global parameter_values
+      const globalPv = parameterValues ? { ...parameterValues } : null;
+      if (globalPv) {
+        const globalRefFolder = `${folderPath}/.ref_images`;
+        for (const [key, value] of Object.entries(globalPv)) {
+          if (typeof value === 'string' && ((value as string).startsWith('data:image') || (value as string).startsWith('data:video'))) {
+            const mimeMatch = (value as string).match(/^data:(image|video)\/(\w+)/);
+            const ext = mimeMatch ? mimeMatch[2].replace('jpeg', 'jpg') : 'png';
+            const filename = `${key}.${ext}`;
+            
+            externalizePromises.push(
+              fetch(`${orchestratorUrl}/api/save-base64-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  data_url: value,
+                  folder_path: globalRefFolder,
+                  filename: filename,
+                }),
+              })
+              .then(async (resp) => {
+                if (resp.ok) {
+                  const result = await resp.json();
+                  if (result.success && result.saved_path) {
+                    globalPv[key] = `__fileref::${result.saved_path}`;
+                    console.log(`[ProjectManager] Externalized global ${key} -> ${result.saved_path}`);
+                  }
+                }
+              })
+              .catch((err) => {
+                console.warn(`[ProjectManager] Error saving global ${key}:`, err);
+              })
+            );
+          }
+        }
+      }
+      
+      // Wait for all image saves to complete before saving project JSON
+      if (externalizePromises.length > 0) {
+        console.log(`[ProjectManager] Saving ${externalizePromises.length} reference images to disk...`);
+        await Promise.all(externalizePromises);
+        console.log(`[ProjectManager] Reference images saved`);
+      }
+      
+      console.log('[ProjectManager] Sanitized panels (base64 stripped)');
       
       const response = await fetch(`${orchestratorUrl}/api/save-project`, {
         method: 'POST',
@@ -914,7 +1012,7 @@ class ProjectManager {
             },
             panels: sanitizedPanels,
             // workflows intentionally omitted — stored independently by workflow storage backend
-            parameter_values: parameterValues || null,
+            parameter_values: globalPv,
             selected_workflow_id: additionalState?.selectedWorkflowId || null,
             render_nodes: additionalState?.renderNodes || null,
             comfy_url: additionalState?.comfyUrl || null,
@@ -1277,4 +1375,74 @@ export function useProjectSettings(): [ProjectSettings, (settings: Partial<Proje
   }, []);
   
   return [settings, updateSettings];
+}
+
+// ============================================================================
+// File Reference Resolution (Load-Side)
+// ============================================================================
+
+const FILEREF_PREFIX = '__fileref::';
+
+/**
+ * Resolve all __fileref:: values in a parameterValues object back to base64 data URLs.
+ * 
+ * On save, base64 data URLs are externalized to disk and replaced with
+ * `__fileref::{absolute_path}`. On load, this function detects those markers
+ * and fetches the file contents back as base64 via the CPE `/api/read-image` endpoint.
+ * 
+ * Fetches are done in parallel for performance. If a file cannot be read
+ * (e.g., deleted or moved), the key is removed from the object and a warning is logged.
+ * 
+ * @param parameterValues - The parameter values object (mutated in place AND returned)
+ * @returns The same object with __fileref:: values replaced by base64 data URLs
+ */
+export async function resolveFileRefs(
+  parameterValues: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const fileRefEntries: Array<{ key: string; path: string }> = [];
+  
+  for (const [key, value] of Object.entries(parameterValues)) {
+    if (typeof value === 'string' && value.startsWith(FILEREF_PREFIX)) {
+      fileRefEntries.push({ key, path: value.slice(FILEREF_PREFIX.length) });
+    }
+  }
+  
+  if (fileRefEntries.length === 0) {
+    return parameterValues;
+  }
+  
+  console.log(`[resolveFileRefs] Resolving ${fileRefEntries.length} file references...`);
+  
+  const results = await Promise.allSettled(
+    fileRefEntries.map(async ({ key, path }) => {
+      const response = await fetch(`/api/read-image?path=${encodeURIComponent(path)}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${path}`);
+      }
+      const result = await response.json();
+      if (result.success && result.dataUrl) {
+        return { key, dataUrl: result.dataUrl as string };
+      }
+      throw new Error(result.message || `Failed to read ${path}`);
+    })
+  );
+  
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      parameterValues[result.value.key] = result.value.dataUrl;
+      console.log(`[resolveFileRefs] Resolved: ${result.value.key}`);
+    } else {
+      // Find which key failed
+      const failedEntry = fileRefEntries[results.indexOf(result)];
+      console.warn(`[resolveFileRefs] Failed to resolve ${failedEntry?.key}: ${result.reason}`);
+      // Remove the broken reference so the UI shows an empty input
+      // rather than the raw __fileref:: string
+      if (failedEntry) {
+        delete parameterValues[failedEntry.key];
+      }
+    }
+  }
+  
+  console.log(`[resolveFileRefs] Done resolving file references`);
+  return parameterValues;
 }

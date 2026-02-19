@@ -345,6 +345,17 @@ export class WorkflowParser {
       // Utility nodes
       'LayerUtility: SaveImagePlus': ['output_path', 'filename_prefix', 'timestamp', 'format', 'quality', 'save_metadata', 'custom_metadata', 'overwrite', 'preview'],
       'Image Comparer (rgthree)': [],
+      
+      // Inpaint crop/stitch nodes
+      'InpaintCropImproved': [
+        'downscale_algorithm', 'upscale_algorithm', 'preresize', 'preresize_mode',
+        'preresize_min_width', 'preresize_min_height', 'preresize_max_width', 'preresize_max_height',
+        'mask_fill_holes', 'mask_expand_pixels', 'mask_invert', 'mask_blend_pixels', 'mask_hipass_filter',
+        'extend_for_outpainting', 'extend_up_factor', 'extend_down_factor', 'extend_left_factor', 'extend_right_factor',
+        'context_from_mask_extend_factor', 'output_resize_to_target_size', 'output_target_width', 'output_target_height',
+        'output_padding', 'device_mode'
+      ],
+      'InpaintStitchImproved': [],
     };
     return widgetMap[class_type] || [];
   }
@@ -979,7 +990,7 @@ export class WorkflowParser {
       }
 
       // Check for inpainting-specific nodes
-      if (['VAEEncodeForInpaint', 'InpaintModelConditioning', 'Inpaint'].includes(class_type)) {
+      if (['VAEEncodeForInpaint', 'InpaintModelConditioning', 'Inpaint', 'InpaintCropImproved', 'InpaintStitchImproved'].includes(class_type)) {
         hasInpaintNodes = true;
       }
     }
@@ -1317,6 +1328,9 @@ export class WorkflowParser {
       console.log('[buildWorkflow] Bypassed node inputs map:', Object.fromEntries(bypassedNodeInputs));
       
       // Helper function to find the upstream source, following through bypassed nodes
+      // For pass-through nodes (e.g., LoRA), we can rewire to the upstream input that
+      // corresponds to the requested output. For non-pass-through nodes (e.g., InpaintCropImproved),
+      // there is no valid upstream to rewire to, so we return null.
       const findUpstreamSource = (nodeId: string, outputIndex: number): [string, number] | null => {
         console.log(`[findUpstreamSource] Checking node ${nodeId} (output ${outputIndex}), bypassed=${bypassedNodeIds.has(nodeId)}`);
         if (!bypassedNodeIds.has(nodeId)) {
@@ -1329,9 +1343,38 @@ export class WorkflowParser {
         console.log(`[findUpstreamSource] Node ${nodeId} is bypassed, inputs:`, inputs);
         if (!inputs) return null;
         
-        // For LoRA nodes, model is output 0, clip is output 1
-        // Match output index to input name
-        const inputName = outputIndex === 0 ? 'model' : 'clip';
+        // Define pass-through mappings: output index → input name
+        // These are nodes where an output directly corresponds to an input (pass-through behavior)
+        const passThroughMap: Record<string, Record<number, string>> = {
+          // LoRA nodes: output 0 = model (from model input), output 1 = clip (from clip input)
+          'LoraLoader': { 0: 'model', 1: 'clip' },
+          'LoraLoaderModelOnly': { 0: 'model' },
+          'LoraLoaderStack': { 0: 'model', 1: 'clip' },
+          // Attention patching: output 0 = model (from model input)
+          'PathchSageAttentionKJ': { 0: 'model' },
+          'TorchCompileModelAdvanced': { 0: 'model' },
+          // CLIP modification: output 0 = clip (from clip input)
+          'CLIPSetLastLayer': { 0: 'clip' },
+        };
+        
+        // Find the node's class_type
+        const nodeClassType = (workflow[nodeId] as ComfyUINode)?.class_type || '';
+        
+        // Look up pass-through mapping for this node type
+        let inputName: string | undefined;
+        for (const [typeName, mapping] of Object.entries(passThroughMap)) {
+          if (nodeClassType.includes(typeName)) {
+            inputName = mapping[outputIndex];
+            break;
+          }
+        }
+        
+        if (!inputName) {
+          // No pass-through mapping for this node type/output — cannot rewire
+          console.log(`[findUpstreamSource] No pass-through mapping for ${nodeClassType} output ${outputIndex}`);
+          return null;
+        }
+        
         const upstreamRef = inputs[inputName];
         console.log(`[findUpstreamSource] Looking for upstream via input "${inputName}":`, upstreamRef);
         
@@ -1361,7 +1404,8 @@ export class WorkflowParser {
           'LoadImage', 'ImageScale', 'ImageScaleToTotalPixels', 'ImageResize',
           'ImageResizeKJv2', 'ImageCrop', 'VAEEncode', 'DWPose', 'OpenposePreprocessor',
           'CannyEdgePreprocessor', 'LineartPreprocessor', 'DepthAnything',
-          'InstantIDFaceAnalysis', 'ReActorFaceSwap', 'IPAdapter', 'ControlNetLoader'
+          'InstantIDFaceAnalysis', 'ReActorFaceSwap', 'IPAdapter', 'ControlNetLoader',
+          'InpaintCropImproved',
         ];
         
         // For these node types, "image" input is required
@@ -1371,6 +1415,16 @@ export class WorkflowParser {
         
         // For VAEEncode, "pixels" input is required
         if (inputName === 'pixels' && classType?.includes('VAEEncode')) {
+          return true;
+        }
+        
+        // For InpaintCropImproved, "mask" input is also required
+        if (inputName === 'mask' && classType?.includes('InpaintCropImproved')) {
+          return true;
+        }
+        
+        // For InpaintStitchImproved, both "stitcher" and "inpainted_image" are required
+        if ((inputName === 'stitcher' || inputName === 'inpainted_image') && classType?.includes('InpaintStitchImproved')) {
           return true;
         }
         
@@ -1669,6 +1723,8 @@ export class WorkflowParser {
       'StyleModelLoader', 'CLIPVisionLoader', 'Sigmas',
       // Qwen-specific nodes
       'QwenImageControlNetIntegratedLoader', 'QwenImageEdit',
+      // Inpaint crop/stitch nodes
+      'InpaintCropImproved',
     ];
     
     // Nodes that require model input
@@ -1697,7 +1753,7 @@ export class WorkflowParser {
     // For mask input
     if (inputName === 'mask') {
       // Nodes that can use mask
-      const maskNodes = ['VAEEncode', 'ImageBatchWithMask', 'ImageCropByMask', 'InpaintModelConditioning'];
+      const maskNodes = ['VAEEncode', 'ImageBatchWithMask', 'ImageCropByMask', 'InpaintModelConditioning', 'InpaintCropImproved'];
       if (maskNodes.some(t => classType.includes(t))) {
         return true;
       }
@@ -1727,6 +1783,13 @@ export class WorkflowParser {
     // For lora_name input (LoraLoader)
     if (inputName === 'lora_name' || inputName.startsWith('lora_name_')) {
       if (classType.includes('LoraLoader')) {
+        return true;
+      }
+    }
+    
+    // For InpaintStitchImproved: both "stitcher" and "inpainted_image" are required
+    if (inputName === 'stitcher' || inputName === 'inpainted_image') {
+      if (classType.includes('InpaintStitchImproved')) {
         return true;
       }
     }

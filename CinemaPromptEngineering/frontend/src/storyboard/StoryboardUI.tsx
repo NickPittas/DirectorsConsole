@@ -32,7 +32,7 @@ import {
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
 import { extractMediaOutputs, isVideoUrl } from './comfyui-client';
-import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
+import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl, resolveFileRefs } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { FileBrowserDialog } from './components/FileBrowser';
@@ -3775,7 +3775,8 @@ export function StoryboardUI() {
         // Still restore panels from saved state even without scan
         const savedPanels = result.state.panels as Panel[];
         if (savedPanels.length > 0) {
-          setPanels(savedPanels.map((p, i) => ({
+          // Resolve __fileref:: values before setting panel state
+          const fallbackPanels = savedPanels.map((p) => ({
             ...p,
             selected: false,
             status: p.status || 'empty',
@@ -3785,7 +3786,32 @@ export function StoryboardUI() {
             image: p.image || null,
             images: p.images || [],
             currentImageIndex: p.currentImageIndex || 0,
-          })));
+          }));
+          const fallbackRefPromises: Promise<void>[] = [];
+          for (const panel of fallbackPanels) {
+            if (panel.parameterValues && typeof panel.parameterValues === 'object') {
+              fallbackRefPromises.push(
+                resolveFileRefs(panel.parameterValues as Record<string, unknown>)
+                  .catch(err => console.warn(`[Load] Failed to resolve file refs for fallback panel "${panel.name}":`, err))
+                  .then(() => {})
+              );
+            }
+          }
+          if (result.state.parameter_values) {
+            fallbackRefPromises.push(
+              resolveFileRefs(result.state.parameter_values)
+                .catch(err => console.warn('[Load] Failed to resolve global file refs:', err))
+                .then(() => {})
+            );
+          }
+          if (fallbackRefPromises.length > 0) {
+            await Promise.all(fallbackRefPromises);
+          }
+          setPanels(fallbackPanels);
+          if (result.state.parameter_values) {
+            setParameterValues(result.state.parameter_values);
+            parameterValuesRef.current = result.state.parameter_values;
+          }
         }
         setIsLoadingProject(false);
         return;
@@ -3951,6 +3977,31 @@ export function StoryboardUI() {
       // Sort panels by ID for consistent ordering
       restoredPanels.sort((a, b) => a.id - b.id);
 
+      // Resolve __fileref:: values in all panel parameterValues and global parameter_values
+      // These were externalized to disk files during save to keep the project JSON small
+      setLoadingProgress({ progress: 70, currentFile: 'Restoring reference images...' });
+      
+      const fileRefPromises: Promise<void>[] = [];
+      for (const panel of restoredPanels) {
+        if (panel.parameterValues && typeof panel.parameterValues === 'object') {
+          fileRefPromises.push(
+            resolveFileRefs(panel.parameterValues as Record<string, unknown>)
+              .catch(err => console.warn(`[Load] Failed to resolve file refs for panel "${panel.name}":`, err))
+              .then(() => {})
+          );
+        }
+      }
+      if (result.state.parameter_values) {
+        fileRefPromises.push(
+          resolveFileRefs(result.state.parameter_values)
+            .catch(err => console.warn('[Load] Failed to resolve global file refs:', err))
+            .then(() => {})
+        );
+      }
+      if (fileRefPromises.length > 0) {
+        await Promise.all(fileRefPromises);
+      }
+
       setPanels(restoredPanels);
       
       // Workflows are NOT restored from project files — they are managed
@@ -4023,9 +4074,24 @@ export function StoryboardUI() {
   
   // Handle loading a specific project file
   const handleLoadSelectedProject = async (projectPath: string) => {
+    // Remember the current orchestrator URL before loadProjectState overwrites it
+    const currentOrchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+    
     const result = await projectManager.loadProjectState(projectPath);
     
     if (result.success && result.state) {
+      // Derive the project directory from the selected file path
+      const lastSlash = Math.max(projectPath.lastIndexOf('/'), projectPath.lastIndexOf('\\'));
+      const projectDir = lastSlash > 0 ? projectPath.substring(0, lastSlash) : projectPath;
+      
+      // Override path (derived from actual file location) and orchestratorUrl
+      // (keep current session value) so scanProjectPanels works correctly
+      projectManager.setProject({
+        path: projectDir,
+        orchestratorUrl: currentOrchestratorUrl,
+      });
+      setProjectSettings(projectManager.getProject());
+      
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
       setDeletedImages(savedDeletedImages);
@@ -4052,10 +4118,17 @@ export function StoryboardUI() {
         const matchedSavedNames2 = new Set<string>();
         const matchedFolderNames2 = new Set<string>();
         
+        console.log('[Load-Selected] Saved panel names:', savedPanels2.map(p => p.name));
+        console.log('[Load-Selected] Scanned folder names:', scanResult.panels.map(pf => pf.panel_name));
+        
         for (const pf of scanResult.panels) {
           const sp = savedPanels2.find(p => p.name === pf.panel_name);
           if (sp && sp.name) { matchedSavedNames2.add(sp.name); matchedFolderNames2.add(pf.panel_name); }
         }
+        
+        console.log('[Load-Selected] Matched names:', [...matchedSavedNames2]);
+        console.log('[Load-Selected] Unmatched folders:', scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name)).map(pf => pf.panel_name));
+        console.log('[Load-Selected] Unmatched saved:', savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? '')).map(p => p.name));
         
         const unmatchedFolders2 = scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name));
         const unmatchedSaved2 = savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? ''));
@@ -6114,30 +6187,39 @@ export function StoryboardUI() {
                     }));
                     
                     // Use folder name as panel name if it looks meaningful
-                    const folderBasename = path.split(/[/\\]/).pop() || panelName;
+                    // Strip trailing slashes before extracting basename to avoid empty string
+                    const cleanPath = path.replace(/[/\\]+$/, '');
+                    const folderBasename = cleanPath.split(/[/\\]/).pop() || panelName;
                     const finalPanelName = folderBasename.match(/^[a-zA-Z0-9_-]+$/) ? folderBasename : panelName;
+                    console.log('[Import] Selected path:', path, '→ panel name:', finalPanelName);
                     
                     // Create panel with populated imageHistory
-                    setPanels(prev => [...prev, {
-                      id: newPanelId,
-                      name: finalPanelName,
-                      x: 50 + (prev.length * 20),
-                      y: 50 + (prev.length * 20),
-                      width: 300,
-                      height: 300,
-                      image: imageHistory[imageHistory.length - 1]?.url || '',
-                      images: [],
-                      status: imageHistory.length > 0 ? 'complete' : 'empty',
-                      progress: imageHistory.length > 0 ? 100 : 0,
-                      imageHistory,
-                      historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
-                      currentImageIndex: 0,
-                      workflowId: undefined,
-                      parameterValues: {},
-                      notes: '',
-                      locked: imageHistory.length > 0, // Lock panel if it has imported images
-                      selected: false,
-                    }]);
+                    // Position to the right of all existing panels to avoid overlap
+                    setPanels(prev => {
+                      const maxX = prev.reduce((max, p) => Math.max(max, p.x + (p.width || 300)), 0);
+                      const newX = prev.length > 0 ? maxX + PANEL_GAP : 0;
+                      const newY = 0;
+                      return [...prev, {
+                        id: newPanelId,
+                        name: finalPanelName,
+                        x: newX,
+                        y: newY,
+                        width: 300,
+                        height: 300,
+                        image: imageHistory[imageHistory.length - 1]?.url || '',
+                        images: [],
+                        status: imageHistory.length > 0 ? 'complete' : 'empty',
+                        progress: imageHistory.length > 0 ? 100 : 0,
+                        imageHistory,
+                        historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
+                        currentImageIndex: 0,
+                        workflowId: undefined,
+                        parameterValues: {},
+                        notes: '',
+                        locked: imageHistory.length > 0, // Lock panel if it has imported images
+                        selected: false,
+                      }];
+                    });
                     
                     addLog('info', `Imported ${imageHistory.length} images into panel ${finalPanelName}`);
                     showInfo(`Imported ${imageHistory.length} images`);

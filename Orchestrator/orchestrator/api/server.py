@@ -71,32 +71,35 @@ def _add_allowed_host(host: str) -> None:
 
 def _is_url_safe(url: str) -> tuple[bool, str]:
     """Validate URL for basic safety.
-    
+
     This is a local desktop application — users connect to their own
     ComfyUI render nodes on LAN, VPN (Tailscale), or other networks.
     We only enforce scheme validation and block cloud metadata endpoints.
-    
+
     Args:
         url: The URL to validate
-        
+
     Returns:
         Tuple of (is_safe, error_message)
     """
     try:
         parsed = urlparse(url)
-        
+
         # Only allow http/https schemes
-        if parsed.scheme not in ('http', 'https'):
-            return False, f"Invalid URL scheme: {parsed.scheme}. Only http/https allowed."
-        
+        if parsed.scheme not in ("http", "https"):
+            return (
+                False,
+                f"Invalid URL scheme: {parsed.scheme}. Only http/https allowed.",
+            )
+
         hostname = parsed.hostname
         if not hostname:
             return False, "URL has no hostname"
-        
+
         # Check if hostname is in allowlist (fast path)
         if hostname in _ALLOWED_URL_HOSTS:
             return True, ""
-        
+
         # Check if it's an IP address
         try:
             ip = ipaddress.ip_address(hostname)
@@ -110,51 +113,56 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
         except ValueError:
             # Not an IP, it's a hostname — allow it for desktop use
             pass
-        
+
         return True, ""
-        
+
     except Exception as e:
         return False, f"Invalid URL: {e}"
 
 
-def _is_path_safe(file_path: str | Path, allowed_base_path: str | Path | None = None) -> tuple[bool, str]:
+def _is_path_safe(
+    file_path: str | Path, allowed_base_path: str | Path | None = None
+) -> tuple[bool, str]:
     """Check if a file path is safe from directory traversal attacks.
-    
+
     Args:
         file_path: The path to validate
         allowed_base_path: Optional base directory that the path must be within
-        
+
     Returns:
         Tuple of (is_safe, error_message)
     """
     try:
         # Resolve to absolute path
         path = Path(file_path).resolve()
-        
+
         # Check for path traversal attempts (.. components)
         # Even if resolved, we should check the original for suspicious patterns
         original_str = str(file_path)
-        if '..' in original_str.split('/') or '..' in original_str.split('\\'):
+        if ".." in original_str.split("/") or ".." in original_str.split("\\"):
             # Additional check: after resolving, the path should be under base
             pass  # Will be checked below
-        
+
         # If a base path is specified, ensure file is within it
         if allowed_base_path:
             base = Path(allowed_base_path).resolve()
             try:
                 path.relative_to(base)
             except ValueError:
-                return False, f"Path {file_path} is outside allowed directory {allowed_base_path}"
-        
+                return (
+                    False,
+                    f"Path {file_path} is outside allowed directory {allowed_base_path}",
+                )
+
         return True, ""
-        
+
     except Exception as e:
         return False, f"Invalid path: {e}"
 
 
 def _translate_path(path: str) -> str:
     """Translate a path from any OS format to the local OS format.
-    
+
     Uses configured path mappings to convert paths between Windows, Linux, and macOS.
     If no mapping matches, returns the path unchanged.
     """
@@ -198,7 +206,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if not config_path.exists():
                 config_path = Path(__file__).parent.parent / "config.yaml"
             if not config_path.exists():
-                config_path = Path(__file__).parent.parent.parent / "Orchestrator" / "config.yaml"
+                config_path = (
+                    Path(__file__).parent.parent.parent / "Orchestrator" / "config.yaml"
+                )
             if not config_path.exists():
                 config_path = Path(__file__).parent.parent / "config.example.yaml"
 
@@ -221,7 +231,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     backend_manager.register(core_backend)
                     # SECURITY: Add backend host to SSRF allowlist
                     _add_allowed_host(backend.host)
-                    logger.info(f"Registered backend: {backend.name} (host {backend.host} added to SSRF allowlist)")
+                    logger.info(
+                        f"Registered backend: {backend.name} (host {backend.host} added to SSRF allowlist)"
+                    )
             else:
                 logger.warning("No config.yaml found, starting without backends")
 
@@ -281,7 +293,7 @@ _current_project: dict[str, Any] | None = None  # Stored project settings
 
 def set_current_project(project_settings: dict[str, Any]) -> None:
     """Store the current project settings in memory.
-    
+
     This allows backend to access project name, path, template, etc.
     without needing to extract them from paths.
     """
@@ -320,6 +332,7 @@ def set_backend_manager(backend_manager: Any) -> None:
 # ============================================================================
 # Request/Response Models
 # ============================================================================
+
 
 class JobSubmissionRequest(BaseModel):
     """Request model for job submission with full ComfyUI workflow.
@@ -548,7 +561,7 @@ async def health_check() -> HealthCheckResponse:
     """
     # Check if we have a job manager (either legacy _job_manager or new _parallel_job_manager)
     has_job_manager = _job_manager is not None or _parallel_job_manager is not None
-    
+
     return HealthCheckResponse(
         status="healthy" if (has_job_manager and _backend_manager) else "degraded",
         service="orchestrator-api",
@@ -604,6 +617,7 @@ async def submit_job(submission: JobSubmissionRequest) -> JobSubmissionResponse:
         # Apply parameter patches directly using patch_parameters
         # This handles "node_id:field_name" format in parameters
         from orchestrator.core.engine.parameter_patcher import patch_parameters
+
         patched_workflow = patch_parameters(
             submission.workflow_json, [], submission.parameters
         )
@@ -746,7 +760,7 @@ async def list_backends() -> BackendsListResponse:
 
 @app.get("/api/backends/{backend_id}/status", response_model=BackendInfoResponse)
 async def get_backend_status(
-    backend_id: str = FastAPIPath(..., description="Backend identifier")
+    backend_id: str = FastAPIPath(..., description="Backend identifier"),
 ) -> BackendInfoResponse:
     """Get detailed status for a single backend.
 
@@ -909,7 +923,9 @@ async def restart_backend(
                     backend_id=backend_id,
                 )
             else:
-                logger.warning(f"Backend {backend_id} health check failed after restart")
+                logger.warning(
+                    f"Backend {backend_id} health check failed after restart"
+                )
                 return RestartBackendResponse(
                     success=False,
                     message="Backend restart partially completed but health check failed. Backend may be offline.",
@@ -931,7 +947,7 @@ async def restart_backend(
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(
-    job_id: str = FastAPIPath(..., description="Job identifier")
+    job_id: str = FastAPIPath(..., description="Job identifier"),
 ) -> JobStatusResponse:
     """Get status and progress for a specific job.
 
@@ -961,7 +977,9 @@ async def get_job_status(
                 detail=f"Job '{job_id}' not found",
             )
 
-        logger.info(f"Job status request: {job_id} -> {job.status.value} ({job.progress_percent:.1f}%)")
+        logger.info(
+            f"Job status request: {job_id} -> {job.status.value} ({job.progress_percent:.1f}%)"
+        )
 
         return JobStatusResponse(
             job_id=job.id,
@@ -1042,19 +1060,21 @@ async def save_image(request: SaveImageRequest) -> SaveImageResponse:
         # SECURITY: Check for path traversal attacks
         is_safe, error_msg = _is_path_safe(request.folder_path)
         if not is_safe:
-            logger.warning(f"[save_image] Path traversal attempt blocked: {request.folder_path}")
+            logger.warning(
+                f"[save_image] Path traversal attempt blocked: {request.folder_path}"
+            )
             return SaveImageResponse(
-                success=False,
-                message=f"Security error: {error_msg}"
+                success=False, message=f"Security error: {error_msg}"
             )
 
         # SECURITY: Check for SSRF attacks - only allow fetching from known ComfyUI hosts
         is_url_safe, url_error = _is_url_safe(request.image_url)
         if not is_url_safe:
-            logger.warning(f"[save_image] SSRF attempt blocked: {request.image_url} - {url_error}")
+            logger.warning(
+                f"[save_image] SSRF attempt blocked: {request.image_url} - {url_error}"
+            )
             return SaveImageResponse(
-                success=False,
-                message=f"Security error: {url_error}"
+                success=False, message=f"Security error: {url_error}"
             )
 
         # Create folder if it doesn't exist (async)
@@ -1074,10 +1094,10 @@ async def save_image(request: SaveImageRequest) -> SaveImageResponse:
 
         # Save image (async)
         image_path = folder / request.filename
-        
+
         # Ensure parent directory exists (handles subdirs in filename)
         await asyncio.to_thread(image_path.parent.mkdir, parents=True, exist_ok=True)
-        
+
         await asyncio.to_thread(image_path.write_bytes, image_data)
         logger.info(f"Saved image: {image_path} ({len(image_data)} bytes)")
 
@@ -1112,6 +1132,84 @@ async def save_image(request: SaveImageRequest) -> SaveImageResponse:
         )
 
 
+class SaveBase64ImageRequest(BaseModel):
+    """Request to save a base64-encoded image to disk."""
+
+    data_url: str = Field(
+        ..., description="Base64 data URL (data:image/png;base64,...)"
+    )
+    folder_path: str = Field(..., description="Target folder path")
+    filename: str = Field(..., description="Target filename")
+
+
+class SaveBase64ImageResponse(BaseModel):
+    """Response for base64 image save."""
+
+    success: bool
+    saved_path: str | None = None
+    message: str
+
+
+@app.post(
+    "/api/save-base64-image",
+    response_model=SaveBase64ImageResponse,
+    summary="Save base64 image to disk",
+    description="Decode a base64 data URL and save it as a file",
+)
+async def save_base64_image(request: SaveBase64ImageRequest) -> SaveBase64ImageResponse:
+    """Save a base64-encoded image to disk.
+
+    Used by project save to externalize reference images from project JSON files.
+    """
+    import base64
+
+    # Cross-platform path translation
+    request.folder_path = _translate_path(request.folder_path)
+
+    # SECURITY: Check for path traversal attacks
+    is_safe, error_msg = _is_path_safe(request.folder_path)
+    if not is_safe:
+        logger.warning(
+            f"[save_base64_image] Path traversal attempt blocked: {request.folder_path}"
+        )
+        return SaveBase64ImageResponse(
+            success=False, message=f"Security error: {error_msg}"
+        )
+
+    def _save_sync() -> tuple[bool, str, str]:
+        try:
+            # Parse data URL: data:image/png;base64,iVBOR...
+            if not request.data_url.startswith("data:"):
+                return False, "", "Invalid data URL: must start with 'data:'"
+
+            # Extract base64 portion after the comma
+            comma_idx = request.data_url.find(",")
+            if comma_idx == -1:
+                return False, "", "Invalid data URL: no comma separator found"
+
+            b64_data = request.data_url[comma_idx + 1 :]
+            image_bytes = base64.b64decode(b64_data)
+
+            folder = Path(request.folder_path)
+            folder.mkdir(parents=True, exist_ok=True)
+
+            file_path = folder / request.filename
+            file_path.write_bytes(image_bytes)
+
+            logger.info(f"Saved base64 image: {file_path} ({len(image_bytes):,} bytes)")
+            return True, str(file_path), "Image saved successfully"
+        except Exception as e:
+            logger.exception(f"Failed to save base64 image: {e}")
+            return False, "", f"Error saving image: {e}"
+
+    success, saved_path, message = await asyncio.to_thread(_save_sync)
+    return SaveBase64ImageResponse(
+        success=success,
+        saved_path=saved_path if success else None,
+        message=message,
+    )
+
+
 # ============================================================================
 # Project Management Endpoints
 # ============================================================================
@@ -1119,15 +1217,18 @@ async def save_image(request: SaveImageRequest) -> SaveImageResponse:
 
 class ProjectSettings(BaseModel):
     """Project settings stored in backend memory.
-    
+
     Mirrors the frontend project settings.
     """
+
     name: str = Field(..., description="Project name (e.g., 'Demo')")
     path: str = Field(..., description="Output folder path (e.g., 'W:\\Demo')")
     naming_template: str = Field(..., description="Filename template with tokens")
-    orchestrator_url: str = Field(default="http://localhost:9820", description="Orchestrator URL")
+    orchestrator_url: str = Field(
+        default="http://localhost:9820", description="Orchestrator URL"
+    )
     auto_save: bool = Field(default=True, description="Auto-save on generation")
-    
+
     # Optional fields
     description: str | None = Field(default=None, description="Project description")
     created_at: str | None = Field(default=None, description="Creation timestamp")
@@ -1136,31 +1237,35 @@ class ProjectSettings(BaseModel):
 
 class SetProjectRequest(BaseModel):
     """Request to set the current project."""
+
     project: ProjectSettings
 
 
 class SetProjectResponse(BaseModel):
     """Response for setting project."""
+
     success: bool
     message: str
 
 
 class CreateFolderRequest(BaseModel):
     """Request to create a folder on the filesystem."""
+
     parent_path: str
     folder_name: str
 
 
 class CreateFolderResponse(BaseModel):
     """Response from folder creation."""
+
     success: bool
     created_path: str
     message: str
 
 
-
 class GetProjectResponse(BaseModel):
     """Response for getting current project."""
+
     success: bool
     project: ProjectSettings | None = None
     message: str
@@ -1168,21 +1273,28 @@ class GetProjectResponse(BaseModel):
 
 class ScanVersionsRequest(BaseModel):
     """Request to scan for existing versions in a folder."""
+
     folder_path: str = Field(..., description="Folder path to scan")
-    pattern: str = Field(..., description="Filename pattern with {panel} and {version} tokens")
+    pattern: str = Field(
+        ..., description="Filename pattern with {panel} and {version} tokens"
+    )
 
 
 class ScanVersionsResponse(BaseModel):
     """Response with version info per panel."""
+
     success: bool
-    panel_versions: dict[str, str]  # panel_id -> last version number (e.g., "001", "002")
+    panel_versions: dict[
+        str, str
+    ]  # panel_id -> last version number (e.g., "001", "002")
     message: str
 
 
 class ProjectState(BaseModel):
     """Full project state for save/load."""
+
     model_config = {"extra": "allow"}  # Allow extra fields to be passed through
-    
+
     project_settings: dict[str, Any]
     panels: list[dict[str, Any]]
     workflows: list[dict[str, Any]] | None = None
@@ -1196,6 +1308,7 @@ class ProjectState(BaseModel):
 
 class SaveProjectRequest(BaseModel):
     """Request to save project state."""
+
     folder_path: str
     filename: str = "project.json"
     state: ProjectState
@@ -1203,6 +1316,7 @@ class SaveProjectRequest(BaseModel):
 
 class SaveProjectResponse(BaseModel):
     """Response for project save."""
+
     success: bool
     saved_path: str | None = None
     message: str
@@ -1210,11 +1324,13 @@ class SaveProjectResponse(BaseModel):
 
 class LoadProjectRequest(BaseModel):
     """Request to load project state."""
+
     file_path: str
 
 
 class LoadProjectResponse(BaseModel):
     """Response for project load."""
+
     success: bool
     state: ProjectState | None = None
     message: str
@@ -1228,56 +1344,60 @@ class LoadProjectResponse(BaseModel):
 )
 async def scan_versions(request: ScanVersionsRequest) -> ScanVersionsResponse:
     """Scan a folder to find existing version numbers.
-    
+
     Searches for files matching the pattern with v* wildcard for version.
     Returns the highest version found per panel as a 3-digit string (e.g., "001", "002").
-    
+
     Uses stored project name from /api/project endpoint.
-    
+
     Args:
         request: Contains folder_path and pattern with {panel} and {version} placeholders
-        
+
     Returns:
         ScanVersionsResponse with panel_versions dict mapping panel IDs to highest version
     """
     import glob as glob_module
     import re
-    
+
     # Cross-platform path translation
     request.folder_path = _translate_path(request.folder_path)
-    
+
     logger.info(f"[SCAN] Scanning versions in: {request.folder_path}")
     logger.info(f"[SCAN] Pattern: {request.pattern}")
-    
+
     def _scan_sync() -> tuple[bool, dict[str, str], str]:
         """Synchronous scan function to run in thread pool."""
         try:
             folder = Path(request.folder_path)
             if not folder.exists():
                 return True, {}, "Folder does not exist yet, starting from v001"
-            
+
             # Get project name from stored settings
             current_project = get_current_project()
             if current_project:
-                project_name = current_project.get('name', '*')
+                project_name = current_project.get("name", "*")
                 logger.info(f"[SCAN] Using stored project name: {project_name}")
             else:
                 # Fallback: extract from folder path
                 project_name = folder.name
-                logger.warning(f"[SCAN] No stored project, using folder name: {project_name}")
-            
+                logger.warning(
+                    f"[SCAN] No stored project, using folder name: {project_name}"
+                )
+
             panel_versions: dict[str, str] = {}
-            
+
             # CRITICAL FIX: Scan actual panel folders instead of assuming panel numbers 1-99
             # This supports custom panel names like "Hero_Shot", "Opening_Scene", etc.
-            
+
             # Find all subdirectories (panel folders)
             panel_folders = [d for d in folder.iterdir() if d.is_dir()]
-            logger.info(f"[SCAN] Found {len(panel_folders)} panel folders: {[d.name for d in panel_folders]}")
-            
+            logger.info(
+                f"[SCAN] Found {len(panel_folders)} panel folders: {[d.name for d in panel_folders]}"
+            )
+
             for panel_folder in panel_folders:
                 panel_name = panel_folder.name  # e.g., "Panel_01", "Hero_Shot", etc.
-                
+
                 # Build search pattern - replace tokens
                 # For per-panel folders, we search WITHIN the panel folder
                 filename = request.pattern
@@ -1289,39 +1409,49 @@ async def scan_versions(request: ScanVersionsRequest) -> ScanVersionsResponse:
                 filename = filename.replace("{time}", "*")
                 filename = filename.replace("{seed}", "*")
                 filename = filename.replace("{workflow}", "*")
-                
+
                 # Search within the panel folder
                 search_pattern = str(panel_folder / filename) + ".png"
-                
+
                 logger.info(f"[SCAN] Panel '{panel_name}' search: {search_pattern}")
-                
+
                 matches = glob_module.glob(search_pattern)
                 if matches:
-                    logger.info(f"[SCAN] Panel '{panel_name}' matches: {len(matches)} files")
+                    logger.info(
+                        f"[SCAN] Panel '{panel_name}' matches: {len(matches)} files"
+                    )
                     highest = 0
                     for match in matches:
                         # Extract version number from filename (e.g., v001, v002)
-                        m = re.search(r'v(\d{3})\.png$', match, re.IGNORECASE)
+                        m = re.search(r"v(\d{3})\.png$", match, re.IGNORECASE)
                         if m:
                             ver = int(m.group(1))
                             highest = max(highest, ver)
                             logger.debug(f"[SCAN] Found: {match} -> v{m.group(1)}")
-                    
+
                     if highest > 0:
                         # Use panel folder name as the key (not panel number)
-                        panel_versions[panel_name] = str(highest).zfill(3)  # "001", "002", "003"
-                        logger.info(f"[SCAN] Panel '{panel_name}' highest version: v{highest:03d}")
-            
+                        panel_versions[panel_name] = str(highest).zfill(
+                            3
+                        )  # "001", "002", "003"
+                        logger.info(
+                            f"[SCAN] Panel '{panel_name}' highest version: v{highest:03d}"
+                        )
+
             logger.info(f"[SCAN] Found versions: {panel_versions}")
-            return True, panel_versions, f"Found {len(panel_versions)} panels with existing versions"
-            
+            return (
+                True,
+                panel_versions,
+                f"Found {len(panel_versions)} panels with existing versions",
+            )
+
         except Exception as e:
             logger.exception(f"[SCAN] Failed to scan versions: {e}")
             return False, {}, f"Error scanning versions: {e}"
-    
+
     # Run synchronous scan in thread pool to avoid blocking event loop
     success, panel_versions, message = await asyncio.to_thread(_scan_sync)
-    
+
     return ScanVersionsResponse(
         success=success,
         panel_versions=panel_versions,
@@ -1337,7 +1467,7 @@ async def scan_versions(request: ScanVersionsRequest) -> ScanVersionsResponse:
 )
 async def set_project(request: SetProjectRequest) -> SetProjectResponse:
     """Store project settings in backend memory.
-    
+
     This allows the backend to access project name, path, template, etc.
     without needing to extract them from folder paths.
     """
@@ -1386,30 +1516,61 @@ async def get_project() -> GetProjectResponse:
 async def save_project(request: SaveProjectRequest) -> SaveProjectResponse:
     """Save project state to a JSON file."""
     import json
-    
+
     # Cross-platform path translation
     request.folder_path = _translate_path(request.folder_path)
-    
+
     logger.info(f"Saving project to: {request.folder_path}/{request.filename}")
-    
+
     def _save_sync() -> tuple[bool, str, str]:
         """Synchronous save function to run in thread pool."""
         try:
             folder = Path(request.folder_path)
             folder.mkdir(parents=True, exist_ok=True)
-            
+
             file_path = folder / request.filename
-            
-            # Convert state to dict and save
+
+            # Convert state to dict and serialize
             state_dict = request.state.model_dump()
-            file_path.write_text(json.dumps(state_dict, indent=2, default=str))
-            
-            logger.info(f"Project saved: {file_path}")
-            return True, str(file_path), "Project saved successfully"
+            json_content = json.dumps(state_dict, indent=2, default=str)
+
+            # Atomic write: write to temp file first, then rename
+            # This prevents corruption if the server crashes mid-write
+            temp_path = file_path.with_suffix(".json.tmp")
+            backup_path = file_path.with_suffix(".json.bak")
+
+            try:
+                temp_path.write_text(json_content)
+
+                # Verify the temp file is valid JSON before committing
+                verify_size = temp_path.stat().st_size
+                if verify_size != len(json_content.encode("utf-8")):
+                    raise IOError(
+                        f"Written file size mismatch: expected {len(json_content.encode('utf-8'))}, got {verify_size}"
+                    )
+
+                # Rotate backup: if the original exists, rename it to .bak
+                if file_path.exists():
+                    if backup_path.exists():
+                        backup_path.unlink()
+                    file_path.rename(backup_path)
+
+                # Commit: rename temp to final (atomic on same filesystem)
+                temp_path.rename(file_path)
+
+                logger.info(f"Project saved: {file_path} ({verify_size:,} bytes)")
+                return True, str(file_path), "Project saved successfully"
+            finally:
+                # Clean up temp file if it still exists (failed save)
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except OSError:
+                        pass
         except Exception as e:
             logger.exception(f"Failed to save project: {e}")
             return False, "", f"Error saving project: {e}"
-    
+
     success, saved_path, message = await asyncio.to_thread(_save_sync)
     return SaveProjectResponse(
         success=success,
@@ -1427,42 +1588,88 @@ async def save_project(request: SaveProjectRequest) -> SaveProjectResponse:
 async def load_project(request: LoadProjectRequest) -> LoadProjectResponse:
     """Load project state from a JSON file."""
     import json
-    
+
     # Cross-platform path translation
     request.file_path = _translate_path(request.file_path)
-    
+
     logger.info(f"Loading project from: {request.file_path}")
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.file_path)
     if not is_safe:
-        logger.warning(f"[load_project] Path traversal attempt blocked: {request.file_path}")
+        logger.warning(
+            f"[load_project] Path traversal attempt blocked: {request.file_path}"
+        )
         return LoadProjectResponse(
             success=False,
             message=f"Security error: {error_msg}",
         )
-    
+
     def _load_sync() -> tuple[bool, dict | None, str]:
         """Synchronous load function to run in thread pool."""
-        try:
-            file_path = Path(request.file_path)
-            
-            if not file_path.exists():
-                return False, None, f"Project file not found: {request.file_path}"
-            
-            state_dict = json.loads(file_path.read_text())
-            
-            panel_count = len(state_dict.get('panels', []))
-            logger.info(f"Project loaded: {panel_count} panels")
-            return True, state_dict, "Project loaded successfully"
-        except Exception as e:
-            logger.exception(f"Failed to load project: {e}")
-            return False, None, f"Error loading project: {e}"
-    
+        file_path = Path(request.file_path)
+        backup_path = file_path.with_suffix(".json.bak")
+
+        # Try primary file first, then fall back to backup
+        for attempt_path, label in [(file_path, "primary"), (backup_path, "backup")]:
+            if not attempt_path.exists():
+                if label == "primary":
+                    # Check if backup exists before giving up
+                    if backup_path.exists():
+                        logger.warning(
+                            f"Primary project file not found, trying backup: {backup_path}"
+                        )
+                        continue
+                    return False, None, f"Project file not found: {request.file_path}"
+                continue
+
+            try:
+                state_dict = json.loads(attempt_path.read_text())
+                panel_count = len(state_dict.get("panels", []))
+
+                if label == "backup":
+                    logger.warning(
+                        f"Project loaded from BACKUP: {attempt_path} ({panel_count} panels)"
+                    )
+                    return (
+                        True,
+                        state_dict,
+                        f"Project loaded from backup (primary file was corrupted). {panel_count} panels recovered.",
+                    )
+
+                logger.info(f"Project loaded: {panel_count} panels")
+                return True, state_dict, "Project loaded successfully"
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"Failed to parse {label} project file {attempt_path}: {e}"
+                )
+                if label == "primary" and backup_path.exists():
+                    logger.info(f"Primary file corrupted, trying backup: {backup_path}")
+                    continue
+                return (
+                    False,
+                    None,
+                    f"Error loading project: corrupted JSON in {label} file: {e}",
+                )
+            except Exception as e:
+                logger.exception(f"Failed to load {label} project file: {e}")
+                if label == "primary" and backup_path.exists():
+                    continue
+                return False, None, f"Error loading project: {e}"
+
+        return False, None, f"Project file not found: {request.file_path}"
+
     success, state_dict, message = await asyncio.to_thread(_load_sync)
-    
+
     if success and state_dict:
-        state = ProjectState(**state_dict)
+        try:
+            state = ProjectState(**state_dict)
+        except Exception as e:
+            logger.exception(f"Failed to validate project state: {e}")
+            return LoadProjectResponse(
+                success=False,
+                message=f"Error validating project data: {e}",
+            )
         return LoadProjectResponse(
             success=True,
             state=state,
@@ -1482,32 +1689,36 @@ async def load_project(request: LoadProjectRequest) -> LoadProjectResponse:
 async def list_projects(folder_path: str) -> dict[str, Any]:
     """List all project files in a folder."""
     import json
-    
+
     # Cross-platform path translation
     folder_path = _translate_path(folder_path)
-    
+
     try:
         folder = Path(folder_path)
         if not folder.exists():
             return {"success": True, "projects": [], "message": "Folder does not exist"}
-        
+
         projects = []
         for file in folder.glob("*.json"):
             if file.name.startswith("project") or file.stem.endswith("_project"):
                 try:
                     data = json.loads(file.read_text())
-                    projects.append({
-                        "path": str(file),
-                        "name": data.get("project_settings", {}).get("name", file.stem),
-                        "saved_at": data.get("saved_at", "Unknown"),
-                        "panel_count": len(data.get("panels", [])),
-                    })
+                    projects.append(
+                        {
+                            "path": str(file),
+                            "name": data.get("project_settings", {}).get(
+                                "name", file.stem
+                            ),
+                            "saved_at": data.get("saved_at", "Unknown"),
+                            "panel_count": len(data.get("panels", [])),
+                        }
+                    )
                 except (json.JSONDecodeError, ValueError, KeyError, IOError):
                     # Skip invalid/unreadable project files
                     pass
-        
+
         return {"success": True, "projects": projects}
-        
+
     except Exception as e:
         return {"success": False, "projects": [], "message": str(e)}
 
@@ -1524,10 +1735,10 @@ async def list_projects(folder_path: str) -> dict[str, Any]:
 )
 async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]:
     """Browse folders for the folder picker dialog.
-    
+
     If path is empty, returns available drives (on Windows) or project mounts (in Docker).
     Otherwise, returns folders in the specified path.
-    
+
     Args:
         path: Directory path to browse. Empty returns root drives/mounts.
         show_files: Comma-separated file extensions to include (e.g. '.json,.txt').
@@ -1536,19 +1747,19 @@ async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]
     # Parse file extensions to show
     file_extensions: set[str] = set()
     if show_files:
-        for ext in show_files.split(','):
+        for ext in show_files.split(","):
             ext = ext.strip().lower()
-            if ext and not ext.startswith('.'):
-                ext = '.' + ext
+            if ext and not ext.startswith("."):
+                ext = "." + ext
             if ext:
                 file_extensions.add(ext)
     import platform
     import os
-    
+
     # Cross-platform path translation (only when path is provided)
     if path:
         path = _translate_path(path)
-    
+
     def _browse_sync() -> dict[str, Any]:
         """Synchronous browse function to run in thread pool."""
         try:
@@ -1559,70 +1770,94 @@ async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]
                     # Docker mode - show mounted project folders
                     items = []
                     for item in sorted(projects_dir.iterdir()):
-                        if item.is_dir() and not item.name.startswith('.'):
-                            items.append({
-                                "name": item.name,
-                                "path": str(item),
-                                "type": "drive"  # Treat as drive for UI purposes
-                            })
+                        if item.is_dir() and not item.name.startswith("."):
+                            items.append(
+                                {
+                                    "name": item.name,
+                                    "path": str(item),
+                                    "type": "drive",  # Treat as drive for UI purposes
+                                }
+                            )
                     # If no mounts found, show the projects directory itself
                     if not items:
-                        items.append({
-                            "name": "projects",
-                            "path": "/projects",
-                            "type": "drive"
-                        })
-                    return {"success": True, "current": "", "items": items, "parent": None}
-                
+                        items.append(
+                            {"name": "projects", "path": "/projects", "type": "drive"}
+                        )
+                    return {
+                        "success": True,
+                        "current": "",
+                        "items": items,
+                        "parent": None,
+                    }
+
                 # Return drives on Windows, mounted volumes on macOS, root on Linux
                 if platform.system() == "Windows":
                     import string
+
                     drives = []
                     for letter in string.ascii_uppercase:
                         drive_path = f"{letter}:\\"
                         if Path(drive_path).exists():
-                            drives.append({
-                                "name": f"{letter}:",
-                                "path": drive_path,
-                                "type": "drive"
-                            })
-                    return {"success": True, "current": "", "items": drives, "parent": None}
+                            drives.append(
+                                {
+                                    "name": f"{letter}:",
+                                    "path": drive_path,
+                                    "type": "drive",
+                                }
+                            )
+                    return {
+                        "success": True,
+                        "current": "",
+                        "items": drives,
+                        "parent": None,
+                    }
                 elif platform.system() == "Darwin":
                     # macOS: Show mounted volumes + home directory as top-level entries
                     items = []
                     volumes_dir = Path("/Volumes")
                     if volumes_dir.exists():
                         for vol in sorted(volumes_dir.iterdir()):
-                            if vol.is_dir() and not vol.name.startswith('.'):
-                                items.append({
-                                    "name": vol.name,
-                                    "path": str(vol),
-                                    "type": "drive"
-                                })
+                            if vol.is_dir() and not vol.name.startswith("."):
+                                items.append(
+                                    {
+                                        "name": vol.name,
+                                        "path": str(vol),
+                                        "type": "drive",
+                                    }
+                                )
                     # Also add user home directory for convenience
                     home = Path.home()
                     if home.exists():
-                        items.append({
-                            "name": f"Home ({home.name})",
-                            "path": str(home),
-                            "type": "drive"
-                        })
+                        items.append(
+                            {
+                                "name": f"Home ({home.name})",
+                                "path": str(home),
+                                "type": "drive",
+                            }
+                        )
                     if not items:
                         # Fallback to root
                         path_to_browse = "/"
                     else:
-                        return {"success": True, "current": "", "items": items, "parent": None}
+                        return {
+                            "success": True,
+                            "current": "",
+                            "items": items,
+                            "parent": None,
+                        }
                 else:
                     # Linux: Show useful starting points instead of listing
                     # root '/' which can hang on stale NAS mounts
                     items = []
                     home = Path.home()
                     if home.exists():
-                        items.append({
-                            "name": f"Home ({home.name})",
-                            "path": str(home),
-                            "type": "drive"
-                        })
+                        items.append(
+                            {
+                                "name": f"Home ({home.name})",
+                                "path": str(home),
+                                "type": "drive",
+                            }
+                        )
 
                     for mount_root in ("/mnt", "/media"):
                         mount_dir = Path(mount_root)
@@ -1635,31 +1870,41 @@ async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]
                                     mount_entries = list(it)
                                 mount_entries.sort(key=lambda e: e.name.lower())
                                 for entry in mount_entries:
-                                    if entry.name.startswith('.'):
+                                    if entry.name.startswith("."):
                                         continue
                                     try:
                                         if entry.is_dir(follow_symlinks=False):
-                                            items.append({
-                                                "name": entry.name,
-                                                "path": entry.path,
-                                                "type": "drive"
-                                            })
+                                            items.append(
+                                                {
+                                                    "name": entry.name,
+                                                    "path": entry.path,
+                                                    "type": "drive",
+                                                }
+                                            )
                                     except OSError:
                                         pass
                             except (PermissionError, OSError):
                                 pass
 
                     if items:
-                        return {"success": True, "current": "", "items": items, "parent": None}
+                        return {
+                            "success": True,
+                            "current": "",
+                            "items": items,
+                            "parent": None,
+                        }
                     else:
                         path_to_browse = "/"
             else:
                 path_to_browse = path
-            
+
             folder = Path(path_to_browse)
             if not folder.exists():
-                return {"success": False, "error": f"Path does not exist: {path_to_browse}"}
-            
+                return {
+                    "success": False,
+                    "error": f"Path does not exist: {path_to_browse}",
+                }
+
             # Use os.scandir instead of Path.iterdir() to avoid stat() calls
             # that can hang on stale NAS/NFS mounts
             items = []
@@ -1668,54 +1913,67 @@ async def browse_folders(path: str = "", show_files: str = "") -> dict[str, Any]
                     dir_entries = list(it)
                 dir_entries.sort(key=lambda e: e.name.lower())
                 for entry in dir_entries:
-                    if entry.name.startswith('.'):
+                    if entry.name.startswith("."):
                         continue
                     try:
                         if entry.is_dir(follow_symlinks=True):
-                            items.append({
-                                "name": entry.name,
-                                "path": entry.path,
-                                "type": "folder"
-                            })
+                            items.append(
+                                {
+                                    "name": entry.name,
+                                    "path": entry.path,
+                                    "type": "folder",
+                                }
+                            )
                         elif file_extensions and entry.is_file(follow_symlinks=True):
                             # Include files matching requested extensions
                             _, ext = os.path.splitext(entry.name)
                             if ext.lower() in file_extensions:
-                                items.append({
-                                    "name": entry.name,
-                                    "path": entry.path,
-                                    "type": "file"
-                                })
+                                items.append(
+                                    {
+                                        "name": entry.name,
+                                        "path": entry.path,
+                                        "type": "file",
+                                    }
+                                )
                     except OSError:
                         pass  # Skip stale mounts or inaccessible entries
             except (PermissionError, OSError) as e:
                 return {"success": False, "error": f"Cannot list directory: {e}"}
-            
+
             # Compute parent path
             parent = str(folder.parent) if folder.parent != folder else None
             # On Linux/macOS, prevent navigating to directories whose
             # listing can hang on stale NAS mounts.  These are the
             # same directories whose *children* appear as "drive"
             # entries in the root browser, so "Up" returns there.
-            if platform.system() != "Windows" and parent in ("/", "/mnt", "/media", "/home"):
+            if platform.system() != "Windows" and parent in (
+                "/",
+                "/mnt",
+                "/media",
+                "/home",
+            ):
                 parent = None
             # Don't go above /projects in Docker
             projects_dir = Path("/projects")
-            if folder == projects_dir or (projects_dir.exists() and folder.parent == projects_dir.parent and folder != projects_dir):
+            if folder == projects_dir or (
+                projects_dir.exists()
+                and folder.parent == projects_dir.parent
+                and folder != projects_dir
+            ):
                 parent = None
-            
+
             return {
                 "success": True,
                 "current": str(folder),
                 "items": items,
-                "parent": parent
+                "parent": parent,
             }
-            
+
         except PermissionError:
             return {"success": False, "error": "Permission denied"}
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
     try:
         return await asyncio.wait_for(asyncio.to_thread(_browse_sync), timeout=10.0)
     except asyncio.TimeoutError:
@@ -1737,7 +1995,7 @@ async def create_folder(request: CreateFolderRequest):
     """
     # Cross-platform path translation
     request.parent_path = _translate_path(request.parent_path)
-    
+
     def _create_sync() -> CreateFolderResponse:
         """Synchronous create function to run in thread pool."""
         try:
@@ -1746,7 +2004,7 @@ async def create_folder(request: CreateFolderRequest):
                 return CreateFolderResponse(
                     success=False,
                     created_path="",
-                    message=f"Parent path does not exist: {request.parent_path}"
+                    message=f"Parent path does not exist: {request.parent_path}",
                 )
 
             new_folder = parent / request.folder_name
@@ -1755,21 +2013,21 @@ async def create_folder(request: CreateFolderRequest):
             return CreateFolderResponse(
                 success=True,
                 created_path=str(new_folder),
-                message=f"Created folder: {new_folder}"
+                message=f"Created folder: {new_folder}",
             )
         except PermissionError:
             return CreateFolderResponse(
                 success=False,
                 created_path="",
-                message=f"Permission denied creating folder in: {request.parent_path}"
+                message=f"Permission denied creating folder in: {request.parent_path}",
             )
         except Exception as e:
             return CreateFolderResponse(
                 success=False,
                 created_path="",
-                message=f"Failed to create folder: {str(e)}"
+                message=f"Failed to create folder: {str(e)}",
             )
-    
+
     return await asyncio.to_thread(_create_sync)
 
 
@@ -1777,9 +2035,10 @@ async def create_folder(request: CreateFolderRequest):
 # Phase 1: Backend Endpoints for Project Save/Load Refactor
 # ============================================================================
 
+
 @app.get("/api/serve-image")
 async def serve_image(
-    path: str = Query(..., description="Full path to image file to serve")
+    path: str = Query(..., description="Full path to image file to serve"),
 ) -> FileResponse:
     """Serve a local image file to the browser.
 
@@ -1794,50 +2053,52 @@ async def serve_image(
     """
     # Cross-platform path translation
     path = _translate_path(path)
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(path)
     if not is_safe:
         logger.warning(f"[serve_image] Path traversal attempt blocked: {path}")
         raise HTTPException(status_code=400, detail=f"Security error: {error_msg}")
-    
+
     def _validate_sync() -> tuple[bool, str, str]:
         """Validate file exists and get content type in thread pool."""
         image_path = Path(path)
-        
+
         if not image_path.exists():
             return False, "", f"Image not found: {path}"
-        
+
         if not image_path.is_file():
             return False, "", f"Path is not a file: {path}"
-        
+
         # Determine content type from extension
         mime_map = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.webp': 'image/webp',
-            '.gif': 'image/gif',
-            '.mp4': 'video/mp4',
-            '.mov': 'video/quicktime',
-            '.avi': 'video/x-msvideo',
-            '.webm': 'video/webm',
-            '.mkv': 'video/x-matroska',
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".avi": "video/x-msvideo",
+            ".webm": "video/webm",
+            ".mkv": "video/x-matroska",
         }
-        content_type = mime_map.get(image_path.suffix.lower(), 'application/octet-stream')
-        
+        content_type = mime_map.get(
+            image_path.suffix.lower(), "application/octet-stream"
+        )
+
         return True, content_type, ""
-    
+
     try:
         valid, content_type, error = await asyncio.to_thread(_validate_sync)
-        
+
         if not valid:
             if "not found" in error.lower():
                 raise HTTPException(status_code=404, detail=error)
             raise HTTPException(status_code=400, detail=error)
-        
+
         image_path = Path(path)
-        
+
         # Use FileResponse with explicit CORS headers
         # Note: FileResponse streaming itself is async-compatible
         return FileResponse(
@@ -1849,13 +2110,15 @@ async def serve_image(
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Access-Control-Allow-Headers": "*",
-            }
+            },
         )
 
     except HTTPException:
         raise
     except PermissionError:
-        raise HTTPException(status_code=403, detail=f"Permission denied accessing: {path}")
+        raise HTTPException(
+            status_code=403, detail=f"Permission denied accessing: {path}"
+        )
     except Exception as e:
         logger.error(f"Failed to serve image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to serve image: {str(e)}")
@@ -1863,104 +2126,111 @@ async def serve_image(
 
 class PngMetadataResponse(BaseModel):
     """Response containing PNG metadata extracted from ComfyUI images."""
-    
+
     success: bool
-    prompt: dict | None = Field(default=None, description="ComfyUI prompt/workflow data")
-    workflow: dict | None = Field(default=None, description="ComfyUI workflow API format")
-    parameters: str | None = Field(default=None, description="Generation parameters string")
+    prompt: dict | None = Field(
+        default=None, description="ComfyUI prompt/workflow data"
+    )
+    workflow: dict | None = Field(
+        default=None, description="ComfyUI workflow API format"
+    )
+    parameters: str | None = Field(
+        default=None, description="Generation parameters string"
+    )
     error: str | None = None
 
 
 @app.get("/api/png-metadata", response_model=PngMetadataResponse)
 async def get_png_metadata(
-    path: str = Query(..., description="Full path to PNG file")
+    path: str = Query(..., description="Full path to PNG file"),
 ) -> PngMetadataResponse:
     """Extract ComfyUI metadata from PNG file.
-    
+
     ComfyUI embeds workflow data in PNG tEXt chunks:
     - 'prompt': The executed prompt/workflow
     - 'workflow': The full workflow in API format
     - 'parameters': Generation parameters string
-    
+
     Args:
         path: Full filesystem path to the PNG file
-        
+
     Returns:
         PngMetadataResponse with extracted metadata
     """
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
-    
+
     # Cross-platform path translation
     path = _translate_path(path)
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(path)
     if not is_safe:
         logger.warning(f"[get_png_metadata] Path traversal attempt blocked: {path}")
         return PngMetadataResponse(success=False, error=f"Security error: {error_msg}")
-    
+
     def _extract_metadata_sync() -> dict[str, Any]:
         """Synchronous metadata extraction to run in thread pool."""
         try:
             image_path = Path(path)
-            
+
             if not image_path.exists():
                 return {"success": False, "error": f"File not found: {path}"}
-            
+
             if not image_path.is_file():
                 return {"success": False, "error": f"Not a file: {path}"}
-            
-            if image_path.suffix.lower() != '.png':
+
+            if image_path.suffix.lower() != ".png":
                 return {"success": False, "error": "Not a PNG file"}
-            
+
             # Open PNG and extract text chunks (blocking I/O)
             with Image.open(image_path) as img:
                 metadata = img.info or {}
-            
+
             prompt_data = None
             workflow_data = None
             parameters_str = None
-            
+
             # Parse 'prompt' chunk (JSON)
-            if 'prompt' in metadata:
+            if "prompt" in metadata:
                 try:
-                    prompt_data = json.loads(metadata['prompt'])
+                    prompt_data = json.loads(metadata["prompt"])
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse prompt JSON from {path}")
-            
+
             # Parse 'workflow' chunk (JSON)
-            if 'workflow' in metadata:
+            if "workflow" in metadata:
                 try:
-                    workflow_data = json.loads(metadata['workflow'])
+                    workflow_data = json.loads(metadata["workflow"])
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse workflow JSON from {path}")
-            
+
             # Get parameters string (plain text)
-            if 'parameters' in metadata:
-                parameters_str = metadata['parameters']
-            
+            if "parameters" in metadata:
+                parameters_str = metadata["parameters"]
+
             return {
                 "success": True,
                 "prompt": prompt_data,
                 "workflow": workflow_data,
-                "parameters": parameters_str
+                "parameters": parameters_str,
             }
         except Exception as e:
             logger.error(f"Failed to extract PNG metadata: {e}")
             return {"success": False, "error": f"Failed to extract metadata: {str(e)}"}
-    
+
     result = await asyncio.to_thread(_extract_metadata_sync)
-    
+
     # Create response with CORS headers
     from fastapi.responses import JSONResponse
+
     return JSONResponse(
         content=result,
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
             "Access-Control-Allow-Headers": "*",
-        }
+        },
     )
 
 
@@ -1981,7 +2251,9 @@ class ProjectImageInfo(BaseModel):
     version: int = Field(..., description="Version number extracted from filename")
     image_path: str = Field(..., description="Full path to image file")
     filename: str = Field(..., description="Image filename")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata from sidecar JSON")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Metadata from sidecar JSON"
+    )
 
 
 class ScanProjectImagesResponse(BaseModel):
@@ -2000,7 +2272,9 @@ class ScanProjectImagesResponse(BaseModel):
     summary="Scan project folder for images",
     description="Scan folder for images matching naming pattern with JSON sidecars",
 )
-async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectImagesResponse:
+async def scan_project_images(
+    request: ScanProjectImagesRequest,
+) -> ScanProjectImagesResponse:
     """Scan project folder for images with JSON sidecars.
 
     This endpoint discovers all images in a project folder that match the
@@ -2008,7 +2282,7 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
     """
     # Cross-platform path translation
     request.folder_path = _translate_path(request.folder_path)
-    
+
     def _scan_images_sync() -> ScanProjectImagesResponse:
         """Synchronous scan function to run in thread pool."""
         try:
@@ -2019,7 +2293,7 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                     success=False,
                     images=[],
                     total=0,
-                    message=f"Folder does not exist: {request.folder_path}"
+                    message=f"Folder does not exist: {request.folder_path}",
                 )
 
             if not folder.is_dir():
@@ -2027,39 +2301,45 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                     success=False,
                     images=[],
                     total=0,
-                    message=f"Path is not a directory: {request.folder_path}"
+                    message=f"Path is not a directory: {request.folder_path}",
                 )
 
             # Build regex from naming pattern
             # Convert {project}_Panel{panel}_{version} to regex
             # The pattern may include subdirectories like "Panel_{panel}/{project}_..."
             pattern = request.naming_pattern
-            
+
             # Check if pattern includes subdirectories
-            has_subdirs = '/' in pattern
+            has_subdirs = "/" in pattern
             logger.info(f"[SCAN DEBUG] pattern={pattern}, has_subdirs={has_subdirs}")
-            
+
             # Split pattern into directory part and filename part
             if has_subdirs:
-                pattern_parts = pattern.rsplit('/', 1)
+                pattern_parts = pattern.rsplit("/", 1)
                 dir_pattern = pattern_parts[0]
                 file_pattern = pattern_parts[1]
             else:
                 dir_pattern = None
                 file_pattern = pattern
-            
-            logger.info(f"[SCAN DEBUG] dir_pattern={dir_pattern}, file_pattern={file_pattern}")
-            
+
+            logger.info(
+                f"[SCAN DEBUG] dir_pattern={dir_pattern}, file_pattern={file_pattern}"
+            )
+
             # Build regex for filename
             # Make {project} flexible - match any word characters (allows Memi, Memi2, etc.)
             file_regex_str = file_pattern
-            file_regex_str = file_regex_str.replace("{project}", r"[\w]+")  # Match any project name prefix
+            file_regex_str = file_regex_str.replace(
+                "{project}", r"[\w]+"
+            )  # Match any project name prefix
             file_regex_str = file_regex_str.replace("{panel}", r"(\d+)")
             file_regex_str = file_regex_str.replace("{version}", r"v(\d+)")
             # Support images and video files
             media_ext_pattern = r"\.(png|jpg|jpeg|webp|gif|mp4|mov|avi|webm|mkv)"
-            file_regex = re.compile(f"^{file_regex_str}{media_ext_pattern}$", re.IGNORECASE)
-            
+            file_regex = re.compile(
+                f"^{file_regex_str}{media_ext_pattern}$", re.IGNORECASE
+            )
+
             # Build regex for directory if present
             # Make {project} flexible - match any word characters (consistent with filename pattern)
             if dir_pattern:
@@ -2074,15 +2354,28 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
             skipped_files: list[str] = []
 
             # Find all media files - use recursive glob if pattern has subdirs
-            media_globs = ['*.png', '*.jpg', '*.jpeg', '*.webp', '*.gif', '*.mp4', '*.mov', '*.avi', '*.webm', '*.mkv']
+            media_globs = [
+                "*.png",
+                "*.jpg",
+                "*.jpeg",
+                "*.webp",
+                "*.gif",
+                "*.mp4",
+                "*.mov",
+                "*.avi",
+                "*.webm",
+                "*.mkv",
+            ]
             media_files: list[Path] = []
             for glob_pattern in media_globs:
                 if has_subdirs:
                     media_files.extend(folder.glob(f"**/{glob_pattern}"))
                 else:
                     media_files.extend(folder.glob(glob_pattern))
-            
-            logger.debug(f"Found {len(media_files)} media files in {folder} (recursive={has_subdirs})")
+
+            logger.debug(
+                f"Found {len(media_files)} media files in {folder} (recursive={has_subdirs})"
+            )
 
             for png_file in media_files:
                 # If pattern has subdirectories, validate the parent directory name
@@ -2091,7 +2384,7 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                     dir_match = dir_regex.match(parent_dir)
                     if not dir_match:
                         continue
-                
+
                 # Match the filename
                 match = file_regex.match(png_file.name)
                 if not match:
@@ -2105,7 +2398,7 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                     # Extract panel and version numbers from filename
                     panel_num = int(match.group(1))
                     version_num = int(match.group(2))
-                    
+
                     # Metadata is optional - PNG files contain embedded ComfyUI workflow
                     metadata = {}
                     if has_sidecar:
@@ -2119,11 +2412,21 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                                     except json.JSONDecodeError:
                                         # Partial read - extract key fields manually
                                         import re as re_module
-                                        saved_path_match = re_module.search(r'"savedPath"\s*:\s*"([^"]*)"', partial_content)
+
+                                        saved_path_match = re_module.search(
+                                            r'"savedPath"\s*:\s*"([^"]*)"',
+                                            partial_content,
+                                        )
                                         if saved_path_match:
-                                            metadata["savedPath"] = saved_path_match.group(1).replace("\\\\", "\\")
+                                            metadata["savedPath"] = (
+                                                saved_path_match.group(1).replace(
+                                                    "\\\\", "\\"
+                                                )
+                                            )
                         except Exception as read_err:
-                            logger.debug(f"Could not read metadata from {json_file.name}: {read_err}")
+                            logger.debug(
+                                f"Could not read metadata from {json_file.name}: {read_err}"
+                            )
 
                     images.append(
                         ProjectImageInfo(
@@ -2131,7 +2434,7 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                             version=version_num,
                             image_path=str(png_file),
                             filename=png_file.name,
-                            metadata=metadata
+                            metadata=metadata,
                         )
                     )
 
@@ -2149,15 +2452,17 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                 "media_count": len(media_files),
                 "dir_pattern": dir_regex.pattern if dir_regex else None,
                 "file_pattern": file_regex.pattern,
-                "sample_files": [str(f) for f in media_files[:3]] if media_files else [],
+                "sample_files": [str(f) for f in media_files[:3]]
+                if media_files
+                else [],
             }
-            
+
             return ScanProjectImagesResponse(
                 success=True,
                 images=images,
                 total=len(images),
                 skipped_files=skipped_files,
-                message=f"Found {len(images)} images (v4: {debug_info})"
+                message=f"Found {len(images)} images (v4: {debug_info})",
             )
 
         except Exception as e:
@@ -2166,9 +2471,9 @@ async def scan_project_images(request: ScanProjectImagesRequest) -> ScanProjectI
                 success=False,
                 images=[],
                 total=0,
-                message=f"Failed to scan folder: {str(e)}"
+                message=f"Failed to scan folder: {str(e)}",
             )
-    
+
     # Run synchronous scan in thread pool to avoid blocking event loop
     return await asyncio.to_thread(_scan_images_sync)
 
@@ -2207,7 +2512,9 @@ class ScanFolderImagesResponse(BaseModel):
     summary="Scan folder for all images",
     description="Scan folder for all PNG/JPG images without requiring a naming pattern",
 )
-async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImagesResponse:
+async def scan_folder_images(
+    request: ScanFolderImagesRequest,
+) -> ScanFolderImagesResponse:
     """Scan a folder for all image files.
 
     This endpoint discovers all PNG and JPG images in a folder,
@@ -2215,16 +2522,15 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
     """
     # Cross-platform path translation
     request.folder_path = _translate_path(request.folder_path)
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.folder_path)
     if not is_safe:
-        logger.warning(f"[scan_folder_images] Path traversal attempt blocked: {request.folder_path}")
+        logger.warning(
+            f"[scan_folder_images] Path traversal attempt blocked: {request.folder_path}"
+        )
         return ScanFolderImagesResponse(
-            success=False,
-            images=[],
-            total=0,
-            message=f"Security error: {error_msg}"
+            success=False, images=[], total=0, message=f"Security error: {error_msg}"
         )
 
     def _scan_folder_sync() -> ScanFolderImagesResponse:
@@ -2237,7 +2543,7 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
                     success=False,
                     images=[],
                     total=0,
-                    message=f"Folder does not exist: {request.folder_path}"
+                    message=f"Folder does not exist: {request.folder_path}",
                 )
 
             if not folder.is_dir():
@@ -2245,13 +2551,24 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
                     success=False,
                     images=[],
                     total=0,
-                    message=f"Path is not a directory: {request.folder_path}"
+                    message=f"Path is not a directory: {request.folder_path}",
                 )
 
             images: list[FolderImageInfo] = []
 
             # Find all media files (images + video)
-            media_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.avi', '.webm', '.mkv'}
+            media_extensions = {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+                ".gif",
+                ".mp4",
+                ".mov",
+                ".avi",
+                ".webm",
+                ".mkv",
+            }
             for item in folder.iterdir():
                 if item.is_file() and item.suffix.lower() in media_extensions:
                     try:
@@ -2260,7 +2577,7 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
                             FolderImageInfo(
                                 filename=item.name,
                                 image_path=str(item),
-                                modified_time=stat_info.st_mtime
+                                modified_time=stat_info.st_mtime,
                             )
                         )
                     except OSError as e:
@@ -2273,7 +2590,7 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
                 success=True,
                 images=images,
                 total=len(images),
-                message=f"Found {len(images)} images"
+                message=f"Found {len(images)} images",
             )
 
         except Exception as e:
@@ -2282,7 +2599,7 @@ async def scan_folder_images(request: ScanFolderImagesRequest) -> ScanFolderImag
                 success=False,
                 images=[],
                 total=0,
-                message=f"Failed to scan folder: {str(e)}"
+                message=f"Failed to scan folder: {str(e)}",
             )
 
     # Run synchronous scan in thread pool to avoid blocking event loop
@@ -2299,7 +2616,9 @@ class PanelFolderInfo(BaseModel):
 
     panel_name: str = Field(..., description="Panel name (folder name)")
     folder_path: str = Field(..., description="Full path to panel folder")
-    images: list[FolderImageInfo] = Field(default_factory=list, description="Images in this panel folder")
+    images: list[FolderImageInfo] = Field(
+        default_factory=list, description="Images in this panel folder"
+    )
 
 
 class ScanProjectPanelsRequest(BaseModel):
@@ -2324,7 +2643,9 @@ class ScanProjectPanelsResponse(BaseModel):
     summary="Scan project for all panel folders",
     description="Scan project root folder for all subfolders (panels) and their images",
 )
-async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectPanelsResponse:
+async def scan_project_panels(
+    request: ScanProjectPanelsRequest,
+) -> ScanProjectPanelsResponse:
     """Scan project folder for all panel subfolders and their images.
 
     This endpoint treats each subfolder as a panel and discovers all
@@ -2332,17 +2653,19 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
     """
     # Cross-platform path translation
     request.project_path = _translate_path(request.project_path)
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.project_path)
     if not is_safe:
-        logger.warning(f"[scan_project_panels] Path traversal attempt blocked: {request.project_path}")
+        logger.warning(
+            f"[scan_project_panels] Path traversal attempt blocked: {request.project_path}"
+        )
         return ScanProjectPanelsResponse(
             success=False,
             panels=[],
             total_panels=0,
             total_images=0,
-            message=f"Security error: {error_msg}"
+            message=f"Security error: {error_msg}",
         )
 
     def _scan_panels_sync() -> ScanProjectPanelsResponse:
@@ -2356,7 +2679,7 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
                     panels=[],
                     total_panels=0,
                     total_images=0,
-                    message=f"Project folder does not exist: {request.project_path}"
+                    message=f"Project folder does not exist: {request.project_path}",
                 )
 
             if not project_folder.is_dir():
@@ -2365,44 +2688,58 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
                     panels=[],
                     total_panels=0,
                     total_images=0,
-                    message=f"Path is not a directory: {request.project_path}"
+                    message=f"Path is not a directory: {request.project_path}",
                 )
 
             panels: list[PanelFolderInfo] = []
             total_images = 0
             # Support images AND video files for full media pipeline
-            media_extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.avi', '.webm', '.mkv'}
+            media_extensions = {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+                ".gif",
+                ".mp4",
+                ".mov",
+                ".avi",
+                ".webm",
+                ".mkv",
+            }
 
             # Scan all subdirectories as panels
             for item in sorted(project_folder.iterdir()):
-                if item.is_dir() and not item.name.startswith('.'):
+                if item.is_dir() and not item.name.startswith("."):
                     panel_images: list[FolderImageInfo] = []
-                    
+
                     # Find all images in this panel folder
                     for img_file in item.iterdir():
-                        if img_file.is_file() and img_file.suffix.lower() in media_extensions:
+                        if (
+                            img_file.is_file()
+                            and img_file.suffix.lower() in media_extensions
+                        ):
                             try:
                                 stat_info = img_file.stat()
                                 panel_images.append(
                                     FolderImageInfo(
                                         filename=img_file.name,
                                         image_path=str(img_file),
-                                        modified_time=stat_info.st_mtime
+                                        modified_time=stat_info.st_mtime,
                                     )
                                 )
                             except OSError as e:
                                 logger.debug(f"Could not stat file {img_file}: {e}")
-                    
+
                     # Sort images by name (which should put versions in order: v001, v002, etc.)
                     panel_images.sort(key=lambda x: x.filename)
-                    
+
                     # Only include folders that have images
                     if panel_images:
                         panels.append(
                             PanelFolderInfo(
                                 panel_name=item.name,
                                 folder_path=str(item),
-                                images=panel_images
+                                images=panel_images,
                             )
                         )
                         total_images += len(panel_images)
@@ -2412,7 +2749,7 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
                 panels=panels,
                 total_panels=len(panels),
                 total_images=total_images,
-                message=f"Found {len(panels)} panels with {total_images} total images"
+                message=f"Found {len(panels)} panels with {total_images} total images",
             )
 
         except Exception as e:
@@ -2422,7 +2759,7 @@ async def scan_project_panels(request: ScanProjectPanelsRequest) -> ScanProjectP
                 panels=[],
                 total_panels=0,
                 total_images=0,
-                message=f"Failed to scan project: {str(e)}"
+                message=f"Failed to scan project: {str(e)}",
             )
 
     # Run synchronous scan in thread pool to avoid blocking event loop
@@ -2457,16 +2794,17 @@ async def delete_image(request: DeleteImageRequest) -> DeleteImageResponse:
     """
     # Cross-platform path translation
     request.image_path = _translate_path(request.image_path)
-    
+
     # SECURITY: Check for path traversal attacks
     is_safe, error_msg = _is_path_safe(request.image_path)
     if not is_safe:
-        logger.warning(f"[delete_image] Path traversal attempt blocked: {request.image_path}")
-        return DeleteImageResponse(
-            success=False,
-            message=f"Security error: {error_msg}"
+        logger.warning(
+            f"[delete_image] Path traversal attempt blocked: {request.image_path}"
         )
-    
+        return DeleteImageResponse(
+            success=False, message=f"Security error: {error_msg}"
+        )
+
     def _delete_sync() -> tuple[bool, list[str], str]:
         """Synchronous delete function to run in thread pool."""
         deleted_files: list[str] = []
@@ -2489,17 +2827,20 @@ async def delete_image(request: DeleteImageRequest) -> DeleteImageResponse:
             return True, deleted_files, f"Deleted {len(deleted_files)} file(s)"
 
         except PermissionError:
-            return False, deleted_files, f"Permission denied deleting: {request.image_path}"
+            return (
+                False,
+                deleted_files,
+                f"Permission denied deleting: {request.image_path}",
+            )
         except Exception as e:
             logger.error(f"Failed to delete image: {e}")
             return False, deleted_files, f"Failed to delete: {str(e)}"
-    
+
     success, deleted_files, message = await asyncio.to_thread(_delete_sync)
     return DeleteImageResponse(
-        success=success,
-        deleted_files=deleted_files,
-        message=message
+        success=success, deleted_files=deleted_files, message=message
     )
+
 
 # ============================================================================
 # Path Translation API Endpoints
@@ -2508,15 +2849,21 @@ async def delete_image(request: DeleteImageRequest) -> DeleteImageResponse:
 
 class PathMappingRequest(BaseModel):
     """Request model for creating/updating a path mapping."""
+
     name: str = Field(..., description="Human-readable label for this mapping")
     windows: str = Field(default="", description="Windows path prefix (e.g., 'W:\\\\')")
-    linux: str = Field(default="", description="Linux path prefix (e.g., '/mnt/Mandalore')")
-    macos: str = Field(default="", description="macOS path prefix (e.g., '/Volumes/Mandalore')")
+    linux: str = Field(
+        default="", description="Linux path prefix (e.g., '/mnt/Mandalore')"
+    )
+    macos: str = Field(
+        default="", description="macOS path prefix (e.g., '/Volumes/Mandalore')"
+    )
     enabled: bool = Field(default=True, description="Whether this mapping is active")
 
 
 class PathMappingResponse(BaseModel):
     """Response model for a single path mapping."""
+
     id: str
     name: str
     windows: str
@@ -2527,12 +2874,17 @@ class PathMappingResponse(BaseModel):
 
 class PathTranslateRequest(BaseModel):
     """Request model for translating a path."""
+
     path: str = Field(..., description="The path to translate")
-    target_os: str | None = Field(default=None, description="Target OS (windows/linux/macos). If None, uses server OS.")
+    target_os: str | None = Field(
+        default=None,
+        description="Target OS (windows/linux/macos). If None, uses server OS.",
+    )
 
 
 class PathTranslateResponse(BaseModel):
     """Response model for path translation."""
+
     original: str
     translated: str
     current_os: str
@@ -2592,8 +2944,10 @@ async def update_path_mapping(
         enabled=request.enabled,
     )
     if mapping is None:
-        raise HTTPException(status_code=404, detail=f"Path mapping not found: {mapping_id}")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Path mapping not found: {mapping_id}"
+        )
+
     return {
         "success": True,
         "mapping": mapping.to_dict(),
@@ -2610,8 +2964,10 @@ async def delete_path_mapping(mapping_id: str) -> dict[str, Any]:
     """Remove a path mapping."""
     removed = path_translator.remove_mapping(mapping_id)
     if not removed:
-        raise HTTPException(status_code=404, detail=f"Path mapping not found: {mapping_id}")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Path mapping not found: {mapping_id}"
+        )
+
     return {
         "success": True,
         "message": "Path mapping removed",
@@ -2629,7 +2985,7 @@ async def translate_path(request: PathTranslateRequest) -> PathTranslateResponse
         translated = path_translator.from_local(request.path, request.target_os)
     else:
         translated = path_translator.to_local(request.path)
-    
+
     return PathTranslateResponse(
         original=request.path,
         translated=translated,
@@ -2643,10 +2999,14 @@ async def log_routes():
     """Log all registered routes for debugging."""
     routes = [route.path for route in app.routes]
     logger.info(f"Registered routes: {routes}")
-    new_endpoints = ["/api/serve-image", "/api/scan-project-images", "/api/delete-image", "/api/path-mappings"]
+    new_endpoints = [
+        "/api/serve-image",
+        "/api/scan-project-images",
+        "/api/delete-image",
+        "/api/path-mappings",
+    ]
     for endpoint in new_endpoints:
         if endpoint in routes:
             logger.info(f"✓ Endpoint registered: {endpoint}")
         else:
             logger.warning(f"✗ Endpoint NOT registered: {endpoint}")
-
