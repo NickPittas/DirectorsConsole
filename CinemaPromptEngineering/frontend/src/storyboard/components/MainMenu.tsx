@@ -2,7 +2,7 @@
  * MainMenu - Top-left dropdown menu for project operations
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Menu,
   Save,
@@ -10,14 +10,79 @@ import {
   Settings,
   Server,
   ChevronDown,
+  ChevronRight,
   FilePlus,
   SaveAll,
   RefreshCw,
   OctagonX,
   Printer,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Clock,
+  X
 } from 'lucide-react';
 import './MainMenu.css';
+
+// ---------------------------------------------------------------------------
+// Recent Projects utility — stored in localStorage
+// ---------------------------------------------------------------------------
+
+const RECENT_PROJECTS_KEY = 'storyboard_recent_projects';
+const MAX_RECENTS = 10;
+
+export interface RecentProject {
+  name: string;
+  path: string;         // The _project.json file path
+  projectDir: string;   // The directory containing the project
+  lastOpened: string;    // ISO date
+}
+
+export function getRecentProjects(): RecentProject[] {
+  try {
+    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addRecentProject(name: string, projectFilePath: string): void {
+  const recents = getRecentProjects();
+  // Derive the project directory
+  const lastSlash = Math.max(projectFilePath.lastIndexOf('/'), projectFilePath.lastIndexOf('\\'));
+  const projectDir = lastSlash > 0 ? projectFilePath.substring(0, lastSlash) : projectFilePath;
+
+  // Remove any existing entry for the same path (case-insensitive)
+  const filtered = recents.filter(
+    r => r.path.toLowerCase() !== projectFilePath.toLowerCase()
+  );
+
+  // Prepend new entry
+  filtered.unshift({
+    name: name || projectDir.split('/').pop() || 'Untitled',
+    path: projectFilePath,
+    projectDir,
+    lastOpened: new Date().toISOString(),
+  });
+
+  // Trim to max
+  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filtered.slice(0, MAX_RECENTS)));
+}
+
+export function removeRecentProject(projectFilePath: string): void {
+  const recents = getRecentProjects();
+  const filtered = recents.filter(
+    r => r.path.toLowerCase() !== projectFilePath.toLowerCase()
+  );
+  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filtered));
+}
+
+export function clearRecentProjects(): void {
+  localStorage.removeItem(RECENT_PROJECTS_KEY);
+}
+
+// ---------------------------------------------------------------------------
 
 interface MainMenuProps {
   onProjectSettings: () => void;
@@ -25,6 +90,7 @@ interface MainMenuProps {
   onSaveProject: () => void;
   onSaveProjectAs?: () => void;
   onLoadProject: () => void;
+  onLoadRecentProject?: (projectFilePath: string) => void;
   onManageNodes: () => void;
   onNewProject: () => void;
   onRestartNodes?: () => void;
@@ -44,6 +110,7 @@ export function MainMenu({
   onSaveProject,
   onSaveProjectAs,
   onLoadProject,
+  onLoadRecentProject,
   onManageNodes,
   onNewProject,
   onRestartNodes,
@@ -57,7 +124,19 @@ export function MainMenu({
   isGenerating,
 }: MainMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [showRecents, setShowRecents] = useState(false);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const recentsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load recent projects whenever the menu opens
+  useEffect(() => {
+    if (isOpen) {
+      setRecentProjects(getRecentProjects());
+    } else {
+      setShowRecents(false);
+    }
+  }, [isOpen]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -85,6 +164,39 @@ export function MainMenu({
 
   const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
   const mod = isMac ? '⌘' : 'Ctrl';
+
+  const handleRecentsMouseEnter = useCallback(() => {
+    if (recentsTimeoutRef.current) clearTimeout(recentsTimeoutRef.current);
+    setShowRecents(true);
+  }, []);
+
+  const handleRecentsMouseLeave = useCallback(() => {
+    recentsTimeoutRef.current = setTimeout(() => setShowRecents(false), 200);
+  }, []);
+
+  const handleRemoveRecent = useCallback((e: React.MouseEvent, path: string) => {
+    e.stopPropagation();
+    removeRecentProject(path);
+    setRecentProjects(getRecentProjects());
+  }, []);
+
+  const formatRecentsDate = useCallback((iso: string) => {
+    try {
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = now.getTime() - d.getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      if (days < 7) return `${days}d ago`;
+      return d.toLocaleDateString();
+    } catch {
+      return '';
+    }
+  }, []);
 
   return (
     <div className="main-menu" ref={menuRef}>
@@ -126,6 +238,63 @@ export function MainMenu({
               <span>{isLoading ? 'Loading...' : 'Load Project'}</span>
               <span className="menu-shortcut">{mod}+O</span>
             </button>
+
+            {/* Recent Projects submenu */}
+            {onLoadRecentProject && (
+              <div
+                className="menu-item-with-submenu"
+                onMouseEnter={handleRecentsMouseEnter}
+                onMouseLeave={handleRecentsMouseLeave}
+              >
+                <button
+                  className={`menu-item ${showRecents ? 'menu-item--active' : ''}`}
+                  disabled={isLoading || recentProjects.length === 0}
+                >
+                  <Clock size={16} />
+                  <span>Recent Projects</span>
+                  <ChevronRight size={14} className="menu-submenu-arrow" />
+                </button>
+
+                {showRecents && recentProjects.length > 0 && (
+                  <div className="menu-submenu">
+                    {recentProjects.map((rp) => (
+                      <button
+                        key={rp.path}
+                        className="menu-submenu-item"
+                        title={rp.projectDir}
+                        onClick={() => {
+                          onLoadRecentProject(rp.path);
+                          setIsOpen(false);
+                        }}
+                      >
+                        <div className="menu-recent-info">
+                          <span className="menu-recent-name">{rp.name}</span>
+                          <span className="menu-recent-path">{rp.projectDir}</span>
+                        </div>
+                        <span className="menu-recent-date">{formatRecentsDate(rp.lastOpened)}</span>
+                        <button
+                          className="menu-recent-remove"
+                          title="Remove from recents"
+                          onClick={(e) => handleRemoveRecent(e, rp.path)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </button>
+                    ))}
+                    <div className="menu-submenu-divider" />
+                    <button
+                      className="menu-submenu-item menu-submenu-item--clear"
+                      onClick={() => {
+                        clearRecentProjects();
+                        setRecentProjects([]);
+                      }}
+                    >
+                      Clear Recent Projects
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               className="menu-item"

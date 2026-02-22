@@ -181,3 +181,129 @@
 .spinning {
   animation: spin 1s linear infinite;
 }
+
+/* ---------------------------------------------------------------------------
+   Recent Projects submenu
+   --------------------------------------------------------------------------- */
+
+.menu-item-with-submenu {
+  position: relative;
+}
+
+.menu-item--active {
+  background: var(--sb-bg-light);
+}
+
+.menu-submenu-arrow {
+  margin-left: auto;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.menu-submenu {
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  min-width: 300px;
+  max-width: 400px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: var(--sb-bg-dark);
+  border: 1px solid var(--sb-border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  z-index: 110;
+  animation: menuFadeIn 0.12s ease;
+}
+
+.menu-submenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--sb-text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  transition: background 0.1s;
+}
+
+.menu-submenu-item:hover {
+  background: var(--sb-bg-light);
+}
+
+.menu-recent-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menu-recent-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-recent-path {
+  font-size: 9px;
+  color: var(--sb-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-recent-date {
+  font-size: 9px;
+  color: var(--sb-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.menu-recent-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--sb-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+
+.menu-submenu-item:hover .menu-recent-remove {
+  opacity: 1;
+}
+
+.menu-recent-remove:hover {
+  color: var(--sb-status-error);
+  background: rgba(196, 84, 84, 0.15);
+}
+
+.menu-submenu-divider {
+  height: 1px;
+  background: var(--sb-border-medium);
+  margin: 4px 8px;
+}
+
+.menu-submenu-item--clear {
+  color: var(--sb-text-muted);
+  font-size: 10px;
+  justify-content: center;
+}
+
+.menu-submenu-item--clear:hover {
+  color: var(--sb-text-secondary);
+}

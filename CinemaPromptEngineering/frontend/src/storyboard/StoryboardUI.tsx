@@ -18,7 +18,7 @@ import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPa
 import { CameraAngle } from './data/cameraAngleData';
 import { useErrorNotifications, ErrorNotificationContainer } from './components/ErrorNotification';
 import { NodeManager } from './components/NodeManager';
-import { MainMenu } from './components/MainMenu';
+import { MainMenu, addRecentProject } from './components/MainMenu';
 import { MultiSelectDropdown } from './components/MultiSelectDropdown';
 import { MultiNodeSelector } from '../components/MultiNodeSelector';
 import { WorkflowCategoriesModal } from './components/WorkflowCategoriesModal';
@@ -32,7 +32,7 @@ import {
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
 import { extractMediaOutputs, isVideoUrl } from './comfyui-client';
-import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl, resolveFileRefs } from './services/project-manager';
+import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { FileBrowserDialog } from './components/FileBrowser';
@@ -450,6 +450,9 @@ export function StoryboardUI() {
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
   panelsRef.current = panels;
+
+  // Ref for handleParameterChange — allows early effects to call it before it's declared
+  const handleParameterChangeRef = useRef<(name: string, value: any) => void>(() => {});
 
   // Phase 2: Resize handlers
   const handleResizeStart = useCallback((panelId: number, e: React.MouseEvent) => {
@@ -1227,6 +1230,344 @@ export function StoryboardUI() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflowId]); // Only re-run when workflow selection changes, not workflows array
+
+  // ---------------------------------------------------------------------------
+  // Effects - Listen for Gallery cross-tab events
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    // Handler: Gallery sent an image to use as reference
+    function handleGallerySendReference(e: Event) {
+      const detail = (e as CustomEvent).detail as { filePath: string; targetParam?: string };
+      if (!detail?.filePath) return;
+
+      // Find image-type parameters in the current workflow
+      const workflow = workflows.find(w => w.id === selectedWorkflowId);
+      if (!workflow) {
+        showWarning('No workflow selected. Select a workflow first, then send the image.');
+        return;
+      }
+
+      const imageParams = workflow.config.filter(
+        p => p.exposed && (p.type === 'image' || p.type === 'image_list' || p.type === 'media')
+      );
+
+      if (imageParams.length === 0) {
+        showWarning('Current workflow has no image inputs.');
+        return;
+      }
+
+      // If caller specified a target parameter, use it. Otherwise fall back to first empty.
+      let targetParam: typeof imageParams[0] | undefined;
+      if (detail.targetParam) {
+        // Also check video params when targetParam specified
+        const allMediaParams = workflow.config.filter(
+          p => p.exposed && (p.type === 'image' || p.type === 'image_list' || p.type === 'media' || p.type === 'video' || p.type === 'video_list')
+        );
+        targetParam = allMediaParams.find(p => p.name === detail.targetParam);
+      }
+      if (!targetParam) {
+        const emptyParam = imageParams.find(p => !parameterValuesRef.current[p.name]);
+        targetParam = emptyParam || imageParams[0];
+      }
+
+      // ImageDropZone needs a base64 data URL to display the image.
+      // Fetch via the CPE backend's /api/read-image endpoint (same origin, port 9800).
+      // Fallback: store as __fileref:: which won't display but will resolve on generate.
+      const fileRef = `__fileref::${detail.filePath}`;
+
+      fetch(`/api/read-image?path=${encodeURIComponent(detail.filePath)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.dataUrl) {
+            handleParameterChangeRef.current(targetParam!.name, data.dataUrl);
+            showInfo(`Set "${targetParam!.display_name || targetParam!.name}" from Gallery image`);
+          } else {
+            // Fallback: store as file ref
+            handleParameterChangeRef.current(targetParam!.name, fileRef);
+            showWarning(`Set "${targetParam!.display_name || targetParam!.name}" but could not load preview`);
+          }
+        })
+        .catch((err) => {
+          console.error('[handleGallerySendReference] Failed to fetch image:', err);
+          // Fallback: store as file ref
+          handleParameterChangeRef.current(targetParam!.name, fileRef);
+          showWarning(`Set "${targetParam!.display_name || targetParam!.name}" but could not load preview`);
+        });
+    }
+
+    // Handler: Gallery requested workflow restore from PNG metadata
+    function handleGalleryRestoreWorkflow(e: Event) {
+      const detail = (e as CustomEvent).detail as { filePath: string };
+      if (!detail?.filePath) return;
+
+      const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+
+      (async () => {
+        try {
+          const response = await fetch(
+            `${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(detail.filePath)}`
+          );
+          const pngMeta = await response.json();
+
+          if (!pngMeta.success || !pngMeta.prompt) {
+            showError('Could not read workflow metadata from this image.');
+            return;
+          }
+
+          const promptData = pngMeta.prompt as Record<string, { inputs?: Record<string, unknown>; class_type?: string }>;
+
+          // Step 1: Match workflow by structural comparison (same logic as restore button)
+          let matchedWorkflow: typeof workflows[number] | undefined;
+          const promptNodeIds = Object.keys(promptData).filter(k => k !== 'meta' && k !== 'version');
+          let bestScore = 0;
+
+          for (const wf of workflows) {
+            const templateNodeIds = Object.keys(wf.workflow).filter(k => k !== 'meta' && k !== 'version');
+            let matches = 0;
+            for (const nodeId of promptNodeIds) {
+              if (wf.workflow[nodeId]) {
+                const promptClassType = promptData[nodeId]?.class_type;
+                const templateClassType = (wf.workflow[nodeId] as { class_type?: string })?.class_type;
+                if (promptClassType && promptClassType === templateClassType) {
+                  matches++;
+                }
+              }
+            }
+            const score = promptNodeIds.length > 0
+              ? matches / Math.max(promptNodeIds.length, templateNodeIds.length)
+              : 0;
+            if (score > bestScore && score > 0.5) {
+              bestScore = score;
+              matchedWorkflow = wf;
+            }
+          }
+
+          // Fallback: filename_prefix matching
+          if (!matchedWorkflow) {
+            let workflowName: string | null = null;
+            for (const node of Object.values(promptData)) {
+              if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
+                workflowName = node.inputs.filename_prefix as string;
+                break;
+              }
+            }
+            if (workflowName) {
+              matchedWorkflow = workflows.find(w => w.id === workflowName);
+              if (!matchedWorkflow) {
+                const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
+                const normalizedTarget = normalize(workflowName);
+                matchedWorkflow = workflows.find(w =>
+                  normalize(w.id).includes(normalizedTarget) ||
+                  normalizedTarget.includes(normalize(w.id)) ||
+                  normalize(w.name || '').includes(normalizedTarget) ||
+                  normalizedTarget.includes(normalize(w.name || ''))
+                );
+              }
+            }
+          }
+
+          if (!matchedWorkflow) {
+            showWarning('Could not find a matching workflow for this image.');
+            return;
+          }
+
+          // Step 2: Extract parameters
+          const extractedParams: Record<string, unknown> = {};
+          const extractedImages: Record<string, string> = {};
+
+          for (const param of matchedWorkflow.parsed.parameters) {
+            const node = promptData[param.node_id];
+            if (node?.inputs && param.input_name in node.inputs) {
+              const value = node.inputs[param.input_name];
+              if (!Array.isArray(value)) {
+                extractedParams[param.name] = value;
+              }
+            }
+          }
+
+          for (const imgInput of matchedWorkflow.parsed.image_inputs) {
+            const node = promptData[imgInput.node_id];
+            if (node?.inputs && imgInput.input_name in node.inputs) {
+              const imageName = node.inputs[imgInput.input_name] as string;
+              if (imageName && typeof imageName === 'string') {
+                extractedImages[imgInput.name] = imageName;
+              }
+            }
+          }
+
+          // Fallback: extract common params if no structured extraction worked
+          if (Object.keys(extractedParams).length === 0) {
+            for (const node of Object.values(promptData)) {
+              if (!node.inputs) continue;
+              const classType = node.class_type || '';
+              if (classType.includes('KSampler') || classType.includes('Sampler')) {
+                if (node.inputs.seed !== undefined) extractedParams.seed = node.inputs.seed;
+                if (node.inputs.steps !== undefined) extractedParams.steps = node.inputs.steps;
+                if (node.inputs.cfg !== undefined) extractedParams.cfg = node.inputs.cfg;
+                if (node.inputs.sampler_name) extractedParams.sampler_name = node.inputs.sampler_name;
+                if (node.inputs.scheduler) extractedParams.scheduler = node.inputs.scheduler;
+                if (node.inputs.denoise !== undefined) extractedParams.denoise = node.inputs.denoise;
+              }
+              if (classType === 'CLIPTextEncode' && node.inputs.text) {
+                const text = node.inputs.text as string;
+                if (typeof text === 'string' && text.length > 20 && !extractedParams.positive_prompt) {
+                  extractedParams.positive_prompt = text;
+                }
+              }
+            }
+          }
+
+          // Step 3: Apply
+          if (matchedWorkflow.id !== selectedWorkflowId) {
+            skipParameterReset.current = true;
+            setSelectedWorkflowId(matchedWorkflow.id);
+          }
+
+          if (Object.keys(extractedParams).length > 0) {
+            setParameterValues(prev => {
+              const newValues = { ...prev, ...extractedParams };
+              parameterValuesRef.current = newValues;
+              return newValues;
+            });
+          }
+
+          // Fetch reference images from ComfyUI
+          const imageCount = Object.keys(extractedImages).length;
+          if (imageCount > 0) {
+            const comfyNodes = renderNodes.filter(n => n.status === 'online');
+            if (comfyNodes.length > 0) {
+              const comfyUrl = comfyNodes[0].url.replace(/\/$/, '');
+              for (const [inputName, imageName] of Object.entries(extractedImages)) {
+                try {
+                  const imageUrl = `${comfyUrl}/view?filename=${encodeURIComponent(imageName)}&type=input`;
+                  const imgResponse = await fetch(imageUrl);
+                  if (imgResponse.ok) {
+                    const blob = await imgResponse.blob();
+                    const dataUrl = await new Promise<string>((resolve) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolve(reader.result as string);
+                      reader.readAsDataURL(blob);
+                    });
+                    extractedParams[inputName] = dataUrl;
+                  }
+                } catch (err) {
+                  console.warn(`Could not fetch image ${imageName}:`, err);
+                }
+              }
+              // Update parameters with fetched images
+              if (Object.keys(extractedImages).some(k => extractedParams[k])) {
+                setParameterValues(prev => {
+                  const newValues = { ...prev, ...extractedParams };
+                  parameterValuesRef.current = newValues;
+                  return newValues;
+                });
+              }
+            }
+          }
+
+          const paramMsg = `${Object.keys(extractedParams).length} parameters`;
+          const imageMsg = imageCount > 0 ? `, ${imageCount} images` : '';
+          showInfo(`Restored workflow "${matchedWorkflow.name || matchedWorkflow.id}", ${paramMsg}${imageMsg}`);
+
+        } catch (err) {
+          console.error('Failed to restore workflow from Gallery:', err);
+          showError('Failed to restore workflow from image metadata.');
+        }
+      })();
+    }
+
+    // Handler: Gallery requesting list of image/video parameters for current workflow
+    function handleGalleryRequestImageParams() {
+      const workflow = workflows.find(w => w.id === selectedWorkflowId);
+
+      if (!workflow) {
+        window.dispatchEvent(new CustomEvent('gallery:image-params-response', {
+          detail: { params: [], error: 'No workflow selected' }
+        }));
+        return;
+      }
+
+      // Gather all exposed image/video/media parameters
+      const imageParams = workflow.config.filter(
+        p => p.exposed && (p.type === 'image' || p.type === 'image_list' || p.type === 'media' || p.type === 'video' || p.type === 'video_list')
+      );
+
+      const currentValues = parameterValuesRef.current;
+
+      const params = imageParams.map(p => ({
+        name: p.name,
+        display_name: p.display_name || p.name,
+        type: p.type,
+        filled: !!(currentValues[p.name] && currentValues[p.name] !== ''),
+      }));
+
+      window.dispatchEvent(new CustomEvent('gallery:image-params-response', {
+        detail: { params }
+      }));
+    }
+
+    // Handler: Gallery renamed files — update panel image references
+    function handleGalleryFilesRenamed(e: Event) {
+      const detail = (e as CustomEvent).detail as { renameMap: Record<string, string> };
+      if (!detail?.renameMap || Object.keys(detail.renameMap).length === 0) return;
+
+      const renameMap = detail.renameMap;
+      const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+
+      setPanels(prev => {
+        let changed = false;
+        const updated = prev.map(panel => {
+          if (!panel.imageHistory || panel.imageHistory.length === 0) return panel;
+
+          let panelChanged = false;
+          const newHistory = panel.imageHistory.map(entry => {
+            const savedPath = entry.metadata?.savedPath;
+            if (!savedPath || !renameMap[savedPath]) return entry;
+
+            panelChanged = true;
+            const newPath = renameMap[savedPath];
+            const newUrl = `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(newPath)}`;
+            return {
+              ...entry,
+              url: newUrl,
+              metadata: {
+                ...entry.metadata,
+                savedPath: newPath,
+              },
+            };
+          });
+
+          if (!panelChanged) return panel;
+          changed = true;
+
+          // CRITICAL: Also update panel.image to the current history entry's new URL.
+          // Without this, <img src={panel.image}> still points at the old (deleted) filename.
+          let newImage = panel.image;
+          if (panel.historyIndex >= 0 && panel.historyIndex < newHistory.length) {
+            newImage = newHistory[panel.historyIndex].url;
+          } else if (newHistory.length > 0) {
+            newImage = newHistory[newHistory.length - 1].url;
+          }
+
+          return { ...panel, imageHistory: newHistory, image: newImage };
+        });
+
+        return changed ? updated : prev;
+      });
+    }
+
+    window.addEventListener('gallery:send-reference-image', handleGallerySendReference);
+    window.addEventListener('gallery:restore-workflow-from-metadata', handleGalleryRestoreWorkflow);
+    window.addEventListener('gallery:files-renamed', handleGalleryFilesRenamed);
+    window.addEventListener('gallery:request-image-params', handleGalleryRequestImageParams);
+
+    return () => {
+      window.removeEventListener('gallery:send-reference-image', handleGallerySendReference);
+      window.removeEventListener('gallery:restore-workflow-from-metadata', handleGalleryRestoreWorkflow);
+      window.removeEventListener('gallery:files-renamed', handleGalleryFilesRenamed);
+      window.removeEventListener('gallery:request-image-params', handleGalleryRequestImageParams);
+    };
+  }, [workflows, selectedWorkflowId, showInfo, showWarning, showError, renderNodes]);
 
   // ---------------------------------------------------------------------------
   // Effects - Fetch PNG metadata when viewer image changes
@@ -3578,6 +3919,7 @@ export function StoryboardUI() {
       ));
     }
   }, [selectedPanelId]);
+  handleParameterChangeRef.current = handleParameterChange;
   
   // Handle camera angle changes for multi-angle LoRA
   const handleCameraAngleChange = useCallback((paramName: string, angle: CameraAngle | null) => {
@@ -3674,6 +4016,10 @@ export function StoryboardUI() {
     );
     if (result.success) {
       showInfo(`Project saved to ${result.savedPath}`);
+      // Track in recent projects for quick access
+      if (result.savedPath) {
+        addRecentProject(projectSettings.name || 'Untitled', result.savedPath);
+      }
     } else {
       showError(`Failed to save project: ${result.error}`);
     }
@@ -3687,6 +4033,11 @@ export function StoryboardUI() {
   // Load project handler - opens file browser dialog to select project
   const handleLoadProject = () => {
     setFileBrowserMode('open');
+  };
+
+  // Load a recent project directly by its saved path
+  const handleLoadRecentProject = (projectFilePath: string) => {
+    handleLoadFromDialog(projectFilePath);
   };
 
   // Handle save from file browser dialog
@@ -3760,6 +4111,9 @@ export function StoryboardUI() {
       // even if scanning fails below
       setProjectSettings(projectManager.getProject());
 
+      // Track in recent projects for quick access
+      addRecentProject(result.state.project_settings?.name || projectDir.split('/').pop() || 'Untitled', projectPath);
+
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
       setDeletedImages(savedDeletedImages);
@@ -3787,26 +4141,7 @@ export function StoryboardUI() {
             images: p.images || [],
             currentImageIndex: p.currentImageIndex || 0,
           }));
-          const fallbackRefPromises: Promise<void>[] = [];
-          for (const panel of fallbackPanels) {
-            if (panel.parameterValues && typeof panel.parameterValues === 'object') {
-              fallbackRefPromises.push(
-                resolveFileRefs(panel.parameterValues as Record<string, unknown>)
-                  .catch(err => console.warn(`[Load] Failed to resolve file refs for fallback panel "${panel.name}":`, err))
-                  .then(() => {})
-              );
-            }
-          }
-          if (result.state.parameter_values) {
-            fallbackRefPromises.push(
-              resolveFileRefs(result.state.parameter_values)
-                .catch(err => console.warn('[Load] Failed to resolve global file refs:', err))
-                .then(() => {})
-            );
-          }
-          if (fallbackRefPromises.length > 0) {
-            await Promise.all(fallbackRefPromises);
-          }
+          // NOTE: __fileref:: markers are NOT resolved on load — see main path comment
           setPanels(fallbackPanels);
           if (result.state.parameter_values) {
             setParameterValues(result.state.parameter_values);
@@ -3977,30 +4312,10 @@ export function StoryboardUI() {
       // Sort panels by ID for consistent ordering
       restoredPanels.sort((a, b) => a.id - b.id);
 
-      // Resolve __fileref:: values in all panel parameterValues and global parameter_values
-      // These were externalized to disk files during save to keep the project JSON small
-      setLoadingProgress({ progress: 70, currentFile: 'Restoring reference images...' });
-      
-      const fileRefPromises: Promise<void>[] = [];
-      for (const panel of restoredPanels) {
-        if (panel.parameterValues && typeof panel.parameterValues === 'object') {
-          fileRefPromises.push(
-            resolveFileRefs(panel.parameterValues as Record<string, unknown>)
-              .catch(err => console.warn(`[Load] Failed to resolve file refs for panel "${panel.name}":`, err))
-              .then(() => {})
-          );
-        }
-      }
-      if (result.state.parameter_values) {
-        fileRefPromises.push(
-          resolveFileRefs(result.state.parameter_values)
-            .catch(err => console.warn('[Load] Failed to resolve global file refs:', err))
-            .then(() => {})
-        );
-      }
-      if (fileRefPromises.length > 0) {
-        await Promise.all(fileRefPromises);
-      }
+      // NOTE: __fileref:: markers in parameterValues are intentionally NOT resolved
+      // on project load. Reference images will be loaded on-demand when the user
+      // selects a panel and explicitly restores its workflow parameters.
+      setLoadingProgress({ progress: 70, currentFile: 'Finalizing panels...' });
 
       setPanels(restoredPanels);
       
@@ -4347,10 +4662,10 @@ export function StoryboardUI() {
       
       if (result.success) {
         setDeletedImages(prev => new Set([...prev, imagePath]));
-        showInfo(`Deleted: ${extractFilename(imagePath)}`);
+        showInfo(`Moved to trash: ${extractFilename(imagePath)}`);
       } else {
         console.error('[Delete] Failed:', result.error);
-        showError(`Delete failed: ${result.error || 'Unknown error'}`);
+        showError(`Move to trash failed: ${result.error || 'Unknown error'}`);
         // CRITICAL FIX: Don't remove from UI if backend delete failed
         shouldRemoveFromUI = false;
       }
@@ -4621,6 +4936,7 @@ export function StoryboardUI() {
           onSaveProject={handleSaveProject}
           onSaveProjectAs={handleSaveProjectAs}
           onLoadProject={handleLoadProject}
+          onLoadRecentProject={handleLoadRecentProject}
           onNewProject={handleNewProject}
           onManageNodes={() => setShowNodeManager(true)}
           onRestartNodes={handleRestartNodes}

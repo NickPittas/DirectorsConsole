@@ -30,11 +30,11 @@ export function DeleteConfirmDialog({
   return (
     <div className="modal-overlay delete-confirm-overlay">
       <div className="delete-confirm-dialog">
-        <h3>Delete Image?</h3>
-        <p>Are you sure you want to permanently delete:</p>
+        <h3>Move to Trash?</h3>
+        <p>Are you sure you want to move to trash:</p>
         <p className="delete-filename">{filename}</p>
         <p className="delete-warning">
-          This will remove the file from disk and cannot be undone.
+          The file will be moved to the project trash folder. You can restore it from the Gallery.
         </p>
 
         <label className="dont-ask-checkbox">
@@ -51,7 +51,7 @@ export function DeleteConfirmDialog({
             Cancel
           </button>
           <button className="delete-btn" onClick={handleConfirm}>
-            Delete
+            Move to Trash
           </button>
         </div>
       </div>

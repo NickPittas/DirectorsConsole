@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CinemaPromptEngineering } from './CinemaPromptEngineering';
 import { StoryboardUI } from './StoryboardUI';
+import { GalleryUI } from './gallery';
 import OAuthCallback from '@/components/OAuthCallback';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './App.css';
@@ -10,7 +11,7 @@ const isOAuthCallback = window.location.pathname.includes('/oauth/callback') ||
                          window.location.search.includes('code=') ||
                          window.location.search.includes('error=');
 
-type TabId = 'cinema' | 'storyboard';
+type TabId = 'cinema' | 'storyboard' | 'gallery';
 
 interface Tab {
   id: TabId;
@@ -21,10 +22,54 @@ interface Tab {
 const TABS: Tab[] = [
   { id: 'cinema', label: 'Cinema Prompt Engineering', icon: '🎬' },
   { id: 'storyboard', label: 'Storyboard', icon: '📋' },
+  { id: 'gallery', label: 'Gallery', icon: '🖼️' },
 ];
 
 function DirectorsConsole() {
   const [activeTab, setActiveTab] = useState<TabId>('cinema');
+
+  // Read project settings from Storyboard's saved state for Gallery.
+  // Load eagerly (on mount) so the values are ready when the user clicks
+  // the Gallery tab — avoids a wasted render cycle with empty props.
+  const [galleryProjectPath, setGalleryProjectPath] = useState(() => {
+    try {
+      const saved = localStorage.getItem('storyboard_project_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.path || '';
+      }
+    } catch { /* ignore */ }
+    return '';
+  });
+  const [galleryOrchestratorUrl, setGalleryOrchestratorUrl] = useState(() => {
+    try {
+      const saved = localStorage.getItem('storyboard_project_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.orchestratorUrl || '';
+      }
+    } catch { /* ignore */ }
+    return '';
+  });
+
+  useEffect(() => {
+    // Only poll for project setting changes while Gallery tab is active
+    if (activeTab !== 'gallery') return;
+
+    const loadProjectSettings = () => {
+      try {
+        const saved = localStorage.getItem('storyboard_project_settings');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.path) setGalleryProjectPath(parsed.path);
+          if (parsed.orchestratorUrl) setGalleryOrchestratorUrl(parsed.orchestratorUrl);
+        }
+      } catch { /* ignore */ }
+    };
+    // No need to call immediately — initial values already read above
+    const interval = setInterval(loadProjectSettings, 2000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
   return (
     <div className="directors-console">
@@ -49,7 +94,7 @@ function DirectorsConsole() {
         </div>
       </nav>
 
-      {/* Tab Content - Both components stay mounted to preserve state */}
+      {/* Tab Content - All components stay mounted to preserve state */}
       <main className="directors-console__content">
         <div style={{ display: activeTab === 'cinema' ? 'contents' : 'none' }}>
           <ErrorBoundary>
@@ -59,6 +104,11 @@ function DirectorsConsole() {
         <div style={{ display: activeTab === 'storyboard' ? 'contents' : 'none' }}>
           <ErrorBoundary>
             <StoryboardUI />
+          </ErrorBoundary>
+        </div>
+        <div style={{ display: activeTab === 'gallery' ? 'contents' : 'none' }}>
+          <ErrorBoundary>
+            <GalleryUI orchestratorUrl={galleryOrchestratorUrl} projectPath={galleryProjectPath} isActive={activeTab === 'gallery'} />
           </ErrorBoundary>
         </div>
       </main>

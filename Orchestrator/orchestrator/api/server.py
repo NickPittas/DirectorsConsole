@@ -39,6 +39,7 @@ from orchestrator.core.models.job import Job, JobStatus
 
 # Import job group modules
 from orchestrator.api import job_groups, ws_job_groups
+from orchestrator.api import gallery_routes
 from orchestrator.core.parallel_job_manager import ParallelJobManager
 
 # Cross-platform path translation
@@ -284,6 +285,9 @@ app.add_middleware(
 # Include job group routers
 app.include_router(job_groups.router)
 app.include_router(ws_job_groups.router)
+
+# Include gallery router
+app.include_router(gallery_routes.router)
 
 # Global reference to JobManager (set via set_job_manager)
 _job_manager: Any = None
@@ -2708,29 +2712,46 @@ async def scan_project_panels(
             }
 
             # Scan all subdirectories as panels
-            for item in sorted(project_folder.iterdir()):
-                if item.is_dir() and not item.name.startswith("."):
+            # Use os.scandir() to minimize stat() syscalls over CIFS/SMB
+            with os.scandir(project_folder) as top_entries:
+                for item in sorted(top_entries, key=lambda e: e.name):
+                    if not item.is_dir(follow_symlinks=False):
+                        continue
+                    if item.name.startswith("."):
+                        continue
+
                     panel_images: list[FolderImageInfo] = []
 
-                    # Find all images in this panel folder
-                    for img_file in item.iterdir():
-                        if (
-                            img_file.is_file()
-                            and img_file.suffix.lower() in media_extensions
-                        ):
-                            try:
-                                stat_info = img_file.stat()
-                                panel_images.append(
-                                    FolderImageInfo(
-                                        filename=img_file.name,
-                                        image_path=str(img_file),
-                                        modified_time=stat_info.st_mtime,
+                    try:
+                        with os.scandir(item.path) as file_entries:
+                            for fentry in file_entries:
+                                if fentry.name.startswith("."):
+                                    continue
+                                # Check extension first (pure string op, no I/O)
+                                ext = os.path.splitext(fentry.name)[1].lower()
+                                if ext not in media_extensions:
+                                    continue
+                                # is_file() on DirEntry uses cached d_type (no extra syscall on Linux)
+                                if not fentry.is_file(follow_symlinks=False):
+                                    continue
+                                try:
+                                    stat_info = fentry.stat(follow_symlinks=False)
+                                    panel_images.append(
+                                        FolderImageInfo(
+                                            filename=fentry.name,
+                                            image_path=fentry.path,
+                                            modified_time=stat_info.st_mtime,
+                                        )
                                     )
-                                )
-                            except OSError as e:
-                                logger.debug(f"Could not stat file {img_file}: {e}")
+                                except OSError as e:
+                                    logger.debug(
+                                        f"Could not stat file {fentry.path}: {e}"
+                                    )
+                    except OSError as e:
+                        logger.debug(f"Could not scan panel folder {item.path}: {e}")
+                        continue
 
-                    # Sort images by name (which should put versions in order: v001, v002, etc.)
+                    # Sort images by name
                     panel_images.sort(key=lambda x: x.filename)
 
                     # Only include folders that have images
@@ -2738,7 +2759,7 @@ async def scan_project_panels(
                         panels.append(
                             PanelFolderInfo(
                                 panel_name=item.name,
-                                folder_path=str(item),
+                                folder_path=item.path,
                                 images=panel_images,
                             )
                         )

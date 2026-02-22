@@ -158,6 +158,9 @@ class ProjectManager {
   
   constructor() {
     this.loadFromStorage();
+    // Overwrite localStorage with clean startup state so that other consumers
+    // (e.g. Gallery tab reading from localStorage) see empty project on launch.
+    this.saveToStorage();
   }
   
   // ---------------------------------------------------------------------------
@@ -706,10 +709,14 @@ class ProjectManager {
         const parsed = JSON.parse(data);
         this.currentProject = {
           ...DEFAULT_PROJECT,
-          ...parsed,
+          // Only restore user preferences, NOT project identity (name/path).
+          // The app should always start with a blank project, requiring the
+          // user to explicitly open or create one.
           orchestratorUrl: normalizeOrchestratorUrl(parsed.orchestratorUrl || ''),
-          created: new Date(parsed.created),
-          lastModified: new Date(parsed.lastModified),
+          namingTemplate: parsed.namingTemplate || DEFAULT_PROJECT.namingTemplate,
+          autoSave: parsed.autoSave ?? DEFAULT_PROJECT.autoSave,
+          // name and path intentionally left as DEFAULT_PROJECT values
+          // ('' path and 'Untitled Project' name)
         };
       }
     } catch (error) {
@@ -1324,36 +1331,57 @@ class ProjectManager {
   // ============================================================================
 
   /**
-   * Delete an image file and its JSON sidecar from the filesystem.
+   * Move an image file (and its JSON sidecar) to the project trash.
+   * Falls back to permanent delete if trash fails.
    */
   async deleteImage(imagePath: string): Promise<{
     success: boolean;
     deletedFiles: string[];
     error?: string;
   }> {
-    // Use orchestratorUrl from project settings, fallback to default
     const orchestratorUrl = this.currentProject.orchestratorUrl || getDefaultOrchestratorUrl();
+    const projectPath = this.currentProject.path || '';
     
-    console.log('[ProjectManager] deleteImage called with path:', imagePath);
-    console.log('[ProjectManager] Using orchestratorUrl:', orchestratorUrl);
+    console.log('[ProjectManager] deleteImage (trash) called with path:', imagePath);
 
     try {
-      const response = await fetch(`${orchestratorUrl}/api/delete-image`, {
+      // Try gallery trash endpoint first
+      const response = await fetch(`${orchestratorUrl}/api/gallery/trash`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_paths: [imagePath],
+          project_path: projectPath,
+          use_os_trash: false,
+        }),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log('[ProjectManager] Trashed successfully:', result);
+        return {
+          success: true,
+          deletedFiles: [imagePath],
+        };
+      }
+      
+      // If trash fails, fall back to permanent delete
+      console.warn('[ProjectManager] Trash failed, falling back to permanent delete:', result.message);
+      const fallbackResponse = await fetch(`${orchestratorUrl}/api/delete-image`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_path: imagePath }),
       });
-
-      const result = await response.json();
-      console.log('[ProjectManager] Delete API response:', result);
       
+      const fallbackResult = await fallbackResponse.json();
       return {
-        success: result.success,
-        deletedFiles: result.deleted_files || [],
-        error: result.message,
+        success: fallbackResult.success,
+        deletedFiles: fallbackResult.deleted_files || [],
+        error: fallbackResult.message,
       };
     } catch (error) {
-      console.error('[ProjectManager] Failed to delete image:', error);
+      console.error('[ProjectManager] Failed to trash image:', error);
       return { success: false, deletedFiles: [], error: String(error) };
     }
   }
