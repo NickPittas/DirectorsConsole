@@ -349,8 +349,8 @@ When user selects a preset (e.g., Blade Runner):
 
 ## VERSION CONTROL
 
-**Current Version:** 1.1  
-**Last Updated:** January 21, 2026  
+**Current Version:** 1.2  
+**Last Updated:** February 22, 2026  
 **Source Files:** All markdown files in this folder  
 **Single Source of Truth:** COMPREHENSIVE_RULES_DOCUMENT.md  
 
@@ -377,3 +377,35 @@ For issues not covered by the rules document:
 ---
 
 **Good luck with your implementation!**
+
+---
+
+## GALLERY CROSS-TAB COMMUNICATION
+
+The **Gallery** tab is a sibling top-level tab alongside Cinema and Storyboard in the Director's Console frontend. Gallery and Storyboard run in the same browser window and communicate via `window` CustomEvents.
+
+### Event Protocol
+
+| Event Name | Direction | Payload | Purpose |
+|------------|-----------|---------|---------|
+| `gallery:request-image-params` | Gallery → Storyboard | `{ filePath: string }` | Ask Storyboard for the generation parameters used to create a file |
+| `gallery:image-params-response` | Storyboard → Gallery | `{ filePath, workflowId, parameterValues }` | Respond with workflow + parameters for the requested file |
+| `gallery:send-reference-image` | Gallery → Storyboard | `{ dataUrl: string, filename: string }` | Send an image to Storyboard to use as a reference input on the selected panel |
+| `gallery:restore-workflow-from-metadata` | Gallery → Storyboard | `{ metadata: object }` | Send full PNG metadata to Storyboard to restore workflow + all parameters |
+| `gallery:files-renamed` | Gallery → Storyboard | `{ renames: Array<{oldPath, newPath}> }` | Notify Storyboard after batch rename so it can update `panel.image` and `imageHistory` URLs |
+
+### StoryboardUI Event Handlers
+
+These handlers are registered in `StoryboardUI.tsx` via `useEffect` on mount:
+
+- **`handleGalleryRequestParams`** — Looks up the panel whose `imageHistory` contains the requested `filePath`, returns its `workflowId` and `parameterValues`.
+- **`handleGallerySendReference`** — Receives a base64 data URL from Gallery, sets it as the reference image input on the currently selected panel.
+- **`handleGalleryRestoreWorkflow`** — Parses PNG metadata fields, selects the matching workflow, and populates all parameter values on the current panel.
+- **`handleGalleryFilesRenamed`** — Iterates rename pairs and updates both `imageHistory[].url` and `panel.image` to prevent 404s after file renames.
+
+### Important Notes
+
+- The Gallery backend runs on the **Orchestrator** (port 9820), with 23 REST endpoints prefixed `/api/gallery/`.
+- The Gallery frontend fetches images via relative URLs to the **CPE backend** (port 9800, same origin) — NOT the Orchestrator.
+- Gallery metadata (ratings, tags, views, trash) is stored as a JSON flat-file at `{projectPath}/.gallery/gallery.json` (SQLite is incompatible with CIFS/SMB NAS mounts).
+- When sending a reference image to Storyboard, Gallery calls `/api/read-image` on the CPE backend (same origin) to get the file as a base64 data URL.

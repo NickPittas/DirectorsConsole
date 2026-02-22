@@ -3,7 +3,7 @@
 > **IMPORTANT FOR ALL AGENTS**: You MUST update this file after creating or significantly modifying any code files. This is the living documentation of the codebase.
 
 ## Last Updated
-2026-01-25 - Initial structure; updated model tests with pass markers
+2026-02-22 - Added implemented API server, gallery, and path translation modules
 
 ## Quick Reference
 
@@ -20,13 +20,18 @@
 ## Project Status
 
 ```
-Phase 1: Foundation          [ ] Not Started
-Phase 2: Workflow Management [ ] Not Started
-Phase 3: Visual Canvas       [ ] Not Started
-Phase 4: Graph Execution     [ ] Not Started
-Phase 5: Advanced Features   [ ] Not Started
-Phase 6: Polish              [ ] Not Started
+Phase 1: Foundation          [x] Complete (FastAPI server, backends, job management)
+Phase 2: Workflow Management [x] Complete (job submission, cancellation, status tracking)
+Phase 3: Visual Canvas       [—] N/A (frontend is React-based, in CinemaPromptEngineering/)
+Phase 4: Graph Execution     [x] Complete (job groups, parallel execution)
+Phase 5: Advanced Features   [x] Complete (gallery, path translation, project management)
+Phase 6: Polish              [ ] Ongoing
 ```
+
+> **Note:** The original plan assumed a PyQt6 desktop UI. The actual implementation uses a
+> React/TypeScript frontend (in `CinemaPromptEngineering/frontend/`) and the Orchestrator
+> is a pure FastAPI backend. Many planned files below were never created; the actual
+> implemented files are listed in the "Implemented Modules" section.
 
 ## Directory Structure
 
@@ -40,6 +45,72 @@ Phase 6: Polish              [ ] Not Started
 | `orchestrator/__init__.py` | Package version and exports | 🔄 In Progress |
 | `orchestrator/main.py` | Application entry point | `main()` | ✅ Complete |
 | `orchestrator/app.py` | Application bootstrap | `create_app()`, `run()` | ✅ Complete |
+
+### Implemented Modules (Actual Production Code)
+
+These are the files that are actually implemented and running in production, as opposed to the planned files listed in later sections.
+
+#### `/orchestrator/api` - FastAPI Server
+
+| File | Purpose | Key Classes/Functions | Status |
+|------|---------|----------------------|--------|
+| `__init__.py` | Package init, exposes `app` from `server.py` | `app` | ✅ Complete |
+| `server.py` | Main FastAPI application (~2500 lines) | `app`, job/backend/project endpoints, path translation endpoints, WebSocket for job groups | ✅ Complete |
+| `gallery_routes.py` | Gallery API router (~2050 lines) | `gallery_router`, 23 endpoints prefixed `/api/gallery/` | ✅ Complete |
+
+#### `/orchestrator` - Core Modules
+
+| File | Purpose | Key Classes/Functions | Status |
+|------|---------|----------------------|--------|
+| `gallery_db.py` | JSON flat-file gallery storage (~681 lines) | `GalleryDB` — ratings, tags, views, trash metadata | ✅ Complete |
+| `path_translator.py` | Cross-platform path translation | `PathTranslator`, `PathMapping` — Windows/Linux/macOS path conversion | ✅ Complete |
+
+#### Gallery API Endpoints (23 total, all in `gallery_routes.py`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/gallery/scan-tree` | POST | Get folder tree structure |
+| `/api/gallery/scan-folder` | POST | Get files in one folder |
+| `/api/gallery/scan-recursive` | POST | Recursive full scan |
+| `/api/gallery/file-info` | POST | Detailed file info with metadata |
+| `/api/gallery/move-files` | POST | Move files between folders |
+| `/api/gallery/rename-file` | POST | Rename single file |
+| `/api/gallery/batch-rename` | POST | Batch rename with templates/regex |
+| `/api/gallery/auto-rename` | POST | Sequential auto-rename |
+| `/api/gallery/trash` | POST | Soft-delete to `.gallery/.trash/` |
+| `/api/gallery/trash` | GET | List trash contents |
+| `/api/gallery/restore` | POST | Restore from trash |
+| `/api/gallery/empty-trash` | POST | Permanently delete trash |
+| `/api/gallery/ratings` | GET | Get file ratings |
+| `/api/gallery/ratings` | POST | Set file ratings |
+| `/api/gallery/tags` | GET | Get all tags |
+| `/api/gallery/tags` | POST | Create/update tag |
+| `/api/gallery/tags` | DELETE | Delete tag |
+| `/api/gallery/file-tags` | POST | Add/remove tags on files |
+| `/api/gallery/views` | GET | Get saved view states |
+| `/api/gallery/views` | POST | Save view state |
+| `/api/gallery/search` | POST | Search PNG metadata |
+| `/api/gallery/find-duplicates` | POST | Find duplicate files by hash |
+| `/api/gallery/folder-stats` | POST | Folder statistics |
+
+#### Gallery Storage Architecture
+
+```
+{projectPath}/
+├── .gallery/
+│   ├── gallery.json          ← JSON flat-file (ratings, tags, views, trash metadata)
+│   └── .trash/               ← Soft-deleted files stored here
+│       └── {uuid}_{filename} ← Trash entries with UUID prefix
+├── Panel_01/
+│   ├── image_001.png
+│   └── image_002.png
+└── Panel_02/
+    └── render_001.mp4
+```
+
+> **Why JSON, not SQLite?** Project paths live on TrueNAS (CIFS/SMB mount with `nounix,soft`
+> options). SQLite requires POSIX file locks which CIFS does not support. JSON flat-file with
+> atomic write (write temp → rename) works reliably on CIFS.
 
 ### `/docs` - Documentation
 

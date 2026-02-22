@@ -10,7 +10,7 @@
 
 ---
 
-Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, a **Storyboard Canvas** for visual production planning, and an **Orchestrator** for distributed rendering across multiple ComfyUI nodes. Every prompt it generates is grounded in real-world cinematography — real cameras, real lenses, real film stocks, real lighting equipment — ensuring that only what is **physically and historically possible** can be configured.
+Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, a **Storyboard Canvas** for visual production planning, a **Gallery** for browsing, organizing, and managing all project media, and an **Orchestrator** for distributed rendering across multiple ComfyUI nodes. Every prompt it generates is grounded in real-world cinematography — real cameras, real lenses, real film stocks, real lighting equipment — ensuring that only what is **physically and historically possible** can be configured.
 
 ## Table of Contents
 
@@ -24,6 +24,11 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
   - [Image Viewer & Compare](#image-viewer--compare)
   - [Project Management](#project-management)
   - [Printing](#printing)
+- [Gallery](#gallery)
+  - [File Browser & Media Viewer](#file-browser--media-viewer)
+  - [Batch Operations](#batch-operations)
+  - [Ratings, Tags & Search](#ratings-tags--search)
+  - [Storyboard Integration](#storyboard-integration)
 - [ComfyUI Integration](#comfyui-integration)
   - [Node Manager](#node-manager)
   - [Workflows](#workflows)
@@ -60,6 +65,10 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 - **43 Animation Presets** — Studio Ghibli, Akira, Spider-Verse, Pixar, Arcane, and more. Each with accurate style domain, rendering pipeline, motion characteristics, and visual grammar.
 
 - **Storyboard Canvas** — Free-floating infinite canvas with draggable, resizable panels. Per-panel workflows, image history with navigation, star ratings, markdown notes, and multi-select alignment tools.
+
+- **Gallery Tab** — Full-featured media browser for all project files. Folder tree navigation, grid/masonry/list/timeline views, batch rename with regex and templates, drag-and-drop file moves, trash with restore, ratings, color tags, PNG metadata search, duplicate detection, and direct integration with Storyboard (send reference images, restore workflow parameters from metadata).
+
+- **Recent Projects** — Quick access to your last 10 projects from the main menu. Hover to see project path and last-opened time. Individual entries can be removed.
 
 - **Video Generation Support** — Full pipeline support for AI video workflows (Wan 2.2, CogVideoX, HunyuanVideo, etc.). Videos are detected from ComfyUI outputs (`images`, `gifs`, `videos` keys), saved with correct extensions, displayed inline with `<video>` playback, and persisted across project save/reload.
 
@@ -268,6 +277,54 @@ Print your storyboard with fully configurable layouts:
 - **Panel selection**: All panels or only selected
 - **Notes**: Optional panel notes display
 - Live PDF preview before printing
+
+---
+
+## Gallery
+
+The Gallery is a top-level tab alongside Cinema and Storyboard, providing a full file browser and media management interface for your project's generated images and videos.
+
+### File Browser & Media Viewer
+
+- **Folder Tree** — Hierarchical tree view of your project directory with expand/collapse, file counts, and drag-drop support
+- **Multiple View Modes** — Grid (uniform thumbnails), Masonry (Pinterest-style borderless layout with natural aspect ratios), List (detailed table with metadata columns), and Timeline (chronological grouped by date)
+- **Lightbox** — Full-resolution image/video viewer with keyboard navigation, zoom, and metadata overlay
+- **Compare View** — Side-by-side comparison of selected images
+- **Hover Preview** — Large preview tooltip on thumbnail hover
+- **Video Scrubber** — Frame-by-frame video scrubbing in the detail panel
+- **Breadcrumb Navigation** — Click-through path breadcrumbs for quick folder traversal
+- **Thumbnail Sizes** — Adjustable thumbnail size slider in the toolbar
+
+### Batch Operations
+
+- **Batch Rename** — Rename multiple files with templates (`{name}`, `{counter}`, `{date}`, `{parent}`) and optional regex find/replace. Live preview before applying.
+- **Auto-Rename** — One-click sequential renaming within a folder (e.g., `Shot_001.png`, `Shot_002.png`, ...)
+- **Drag-and-Drop Move** — Drag files between folders in the tree view, with move confirmation dialog
+- **Move to New Folder** — Create a new folder and move selected files in one step
+- **Trash System** — Soft-delete files to a `.gallery/.trash/` folder with full restore capability. Empty trash permanently deletes.
+
+### Ratings, Tags & Search
+
+- **Star Ratings** — 1-5 star ratings per file, filterable from the filter bar
+- **Color Tags** — Create custom named tags with colors, assign to files, filter by tag
+- **PNG Metadata Search** — Full-text search across ComfyUI PNG metadata (prompts, models, samplers, seeds, etc.)
+- **Duplicate Detection** — Find visually duplicate files by content hash across the project
+- **Folder Statistics** — View file counts, total size, media type breakdown per folder
+- **Filter Bar** — Filter by rating, tags, file type (image/video), and date range
+- **Saved Views** — Save and restore view configurations (sort, filters, layout, folder state)
+
+### Storyboard Integration
+
+The Gallery and Storyboard tabs communicate via cross-tab events:
+
+- **Send as Reference Image** — Right-click any gallery image to send it to the currently selected Storyboard panel as a reference image input
+- **Restore Workflow & Parameters** — Right-click an image to extract its ComfyUI generation metadata and restore the workflow, prompt, and all parameters back to the Storyboard
+- **Batch Rename Sync** — When files are renamed in the Gallery, the Storyboard automatically updates any panel image references that point to the renamed files
+- **Shared Project Context** — Both tabs operate on the same project path, so changes in one are immediately visible in the other
+
+### Storage Architecture
+
+Gallery metadata (ratings, tags, view states) is stored in a JSON flat-file at `{projectPath}/.gallery/gallery.json`. This design was chosen because projects live on NAS storage (CIFS/SMB mounts) where SQLite's file locking is incompatible. The JSON store uses atomic writes (write-to-temp + rename) and thread-safe locking.
 
 ---
 
@@ -763,29 +820,36 @@ Just start the local LLM server and Director's Console will detect it automatica
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Director's Console                     │
-├─────────────────────┬─────────────────┬─────────────────┤
-│  Storyboard Canvas  │    CPE Engine   │   Orchestrator   │
-│   React + TypeScript │  Python/FastAPI  │ Python/FastAPI   │
-│   Port 5173          │  Port 9800       │ Port 9820        │
-├─────────────────────┴─────────────────┴─────────────────┤
-│                                                           │
-│  Frontend ←──REST──→ CPE Backend ←──Manifests──→ Orchestrator
-│     │                     │                         │     │
-│     │                     │                         │     │
-│     └────WebSocket────────┴────Direct REST──→ ComfyUI Nodes
-│                                                           │
-├───────────────────────────────────────────────────────────┤
-│  Storage: Project files on local/NAS filesystem            │
-│  Credentials: %APPDATA%/CinemaPromptEngineering/ (encrypted)│
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Director's Console                         │
+├──────────────┬──────────────┬──────────────┬────────────────┤
+│   Storyboard │    Gallery   │  CPE Engine  │  Orchestrator   │
+│    Canvas    │  File Browser │ Python/FastAPI│ Python/FastAPI  │
+│              │              │  Port 9800    │  Port 9820      │
+│   React + TypeScript         │              │                 │
+│   Port 5173                  │              │                 │
+├──────────────┴──────────────┴──────────────┴────────────────┤
+│                                                               │
+│  Frontend ←──REST──→ CPE Backend ←──Manifests──→ Orchestrator │
+│     │                     │                         │         │
+│     │                     │                         │         │
+│     └────WebSocket────────┴────Direct REST──→ ComfyUI Nodes   │
+│                                                               │
+│  Gallery ←──CustomEvents──→ Storyboard (cross-tab comm)       │
+│  Gallery ←──REST──→ Orchestrator /api/gallery/* (23 endpoints)│
+│                                                               │
+├───────────────────────────────────────────────────────────────┤
+│  Storage: Project files on local/NAS filesystem                │
+│  Gallery metadata: {project}/.gallery/gallery.json (JSON)      │
+│  Credentials: %APPDATA%/CinemaPromptEngineering/ (encrypted)  │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 **Key Communication Patterns:**
 - **Frontend → ComfyUI**: Direct REST API calls and WebSocket for generation and progress
 - **Frontend → CPE Backend**: REST API for prompt generation, validation, presets, settings, credentials
-- **Frontend → Orchestrator**: REST API for job groups, backend management, project scanning
+- **Frontend → Orchestrator**: REST API for job groups, backend management, project scanning, gallery operations
+- **Gallery ↔ Storyboard**: Cross-tab CustomEvents on `window` for reference images, workflow restore, file rename sync
 - **CPE → Orchestrator → ComfyUI**: JSON manifests for distributed rendering
 
 ---
@@ -838,12 +902,23 @@ cd CinemaPromptEngineering
 | Frontend | React 18, TypeScript, Vite 5, Zustand, TanStack Query v5 |
 | Backend | Python 3.10+, FastAPI, Pydantic v2, httpx, aiohttp |
 | Rendering | ComfyUI (direct WebSocket) |
-| Storage | Local filesystem, SQLite (encrypted credentials) |
+| Storage | Local/NAS filesystem, JSON flat-file (Gallery metadata), SQLite (encrypted credentials) |
 | Logging | Loguru |
 
 ---
 
 ## Changelog
+
+### February 22, 2026
+
+**Features:**
+- **Gallery Tab**: Full-featured media browser added as a top-level tab alongside Cinema and Storyboard. Includes folder tree navigation, grid/masonry/list/timeline views, batch rename with regex and templates, drag-and-drop file moves, trash with restore, star ratings, color tags, PNG metadata search, duplicate detection, and direct Storyboard integration (send reference images, restore workflow parameters). 23 new API endpoints on the Orchestrator (`/api/gallery/*`). Gallery metadata stored as JSON flat-file (`{project}/.gallery/gallery.json`) for NAS/CIFS compatibility.
+- **Recent Projects Menu**: Quick access to last 10 projects from the main menu. Hover to see project path and last-opened time. Individual entries can be removed. Stored in localStorage.
+- **Pinterest-Style Masonry View**: Gallery masonry layout redesigned with borderless thumbnails, 4px gaps, no card chrome. Selection uses outline, hover uses opacity fade.
+
+**Bug Fixes:**
+- **Send to Storyboard Reference Image**: Fixed endpoint URL (was incorrectly targeting Orchestrator port 9820 instead of CPE backend port 9800) and response field (`data.dataUrl` instead of `data.data`).
+- **Batch Rename Storyboard Sync**: Fixed `panel.image` not updating when gallery files are renamed, causing 404 on the canvas.
 
 ### February 14, 2026
 

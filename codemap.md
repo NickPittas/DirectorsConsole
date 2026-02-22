@@ -1,7 +1,7 @@
 # Director's Console - Complete Code Map
 
 > **Project**: Director's Console (Project Eliot)  
-> **Last Updated**: February 6, 2026  
+> **Last Updated**: February 22, 2026  
 > **Purpose**: Comprehensive execution flow and module reference
 
 ---
@@ -15,6 +15,7 @@
 5. [Unified Director's Console](#5-unified-directors-console)
 6. [Data Flow Summary](#6-data-flow-summary)
 7. [API Endpoints Reference](#7-api-endpoints-reference)
+8. [Gallery Module](#8-gallery-module)
 
 ---
 
@@ -934,6 +935,34 @@ PHASE 4: OUTPUT & STORAGE
 | GET | `/api/browse-folders` | Browse project folders |
 | GET | `/api/png-metadata` | Get PNG metadata |
 
+### 7.4 Gallery API (Port 9820, prefix `/api/gallery`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/scan-tree` | Get folder tree structure |
+| POST | `/scan-folder` | Get files in one folder |
+| POST | `/scan-recursive` | Recursive full scan |
+| POST | `/file-info` | Detailed file info with metadata |
+| POST | `/move-files` | Move files between folders |
+| POST | `/rename-file` | Rename single file |
+| POST | `/batch-rename` | Batch rename with templates/regex |
+| POST | `/auto-rename` | Sequential auto-rename |
+| POST | `/trash` | Soft-delete to .gallery/.trash/ |
+| GET | `/trash` | List trash contents |
+| POST | `/restore` | Restore from trash |
+| POST | `/empty-trash` | Permanently delete trash |
+| GET | `/ratings` | Get file ratings |
+| POST | `/ratings` | Set file ratings |
+| GET | `/tags` | Get all tags |
+| POST | `/tags` | Create/update tag |
+| DELETE | `/tags` | Delete tag |
+| POST | `/file-tags` | Add/remove tags on files |
+| GET | `/views` | Get saved view states |
+| POST | `/views` | Save view state |
+| POST | `/search` | Search PNG metadata |
+| POST | `/find-duplicates` | Find duplicate files by hash |
+| POST | `/folder-stats` | Folder statistics |
+
 ### 7.2 CPE Backend API (Port 9800)
 
 | Method | Endpoint | Description |
@@ -973,10 +1002,12 @@ PHASE 4: OUTPUT & STORAGE
 Orchestrator/
 ├── orchestrator/
 │   ├── api/
-│   │   └── server.py             # FastAPI server (headless)
-│   ├── api.py                    # Legacy/unused (see api/server.py)
-│   ├── app.py                    # Desktop app entry
-│   ├── main.py                   # CLI entry
+│   │   ├── __init__.py            # Exposes app from server.py
+│   │   ├── server.py              # FastAPI server (headless)
+│   │   └── gallery_routes.py      # Gallery API router (23 endpoints, ~2050 lines)
+│   ├── gallery_db.py              # JSON flat-file gallery storage (~681 lines)
+│   ├── app.py                     # Desktop app entry
+│   ├── main.py                    # CLI entry
 │   ├── api/
 │   │   └── server.py             # Alternative server impl
 │   ├── core/
@@ -1047,6 +1078,43 @@ CinemaPromptEngineering/
 │       └── template.py
 └── frontend/                     # React/Vite frontend
     └── src/
+        ├── gallery/              # Gallery tab module (37 files)
+        │   ├── GalleryUI.tsx     # Main gallery component (~1142 lines)
+        │   ├── GalleryUI.css     # Gallery styles
+        │   ├── index.ts          # Module exports
+        │   ├── store/
+        │   │   └── gallery-store.ts  # Zustand state store
+        │   ├── services/
+        │   │   └── gallery-service.ts # API client service
+        │   └── components/       # 28 component files
+        │       ├── BatchBar.tsx
+        │       ├── BatchRenameDialog.tsx
+        │       ├── Breadcrumb.tsx
+        │       ├── CompareView.tsx
+        │       ├── ContextMenu.tsx
+        │       ├── DetailPanel.tsx
+        │       ├── DropMoveDialog.tsx
+        │       ├── DuplicateFinder.tsx
+        │       ├── FilterBar.tsx
+        │       ├── FolderStats.tsx
+        │       ├── FolderTree.tsx
+        │       ├── GalleryGrid.tsx
+        │       ├── GalleryLightbox.tsx
+        │       ├── GalleryList.tsx
+        │       ├── GalleryMasonry.tsx
+        │       ├── GalleryThumbnail.tsx
+        │       ├── GalleryToolbar.tsx
+        │       ├── HoverPreview.tsx
+        │       ├── MoveDialog.tsx
+        │       ├── MoveToNewFolderDialog.tsx
+        │       ├── RenameDialog.tsx
+        │       ├── SearchPanel.tsx
+        │       ├── TagBadge.tsx
+        │       ├── TagManager.tsx
+        │       ├── TimelineView.tsx
+        │       ├── TrashBin.tsx
+        │       ├── VideoScrubber.tsx
+        │       └── components.css
         └── storyboard/
             ├── components/       # NEW: Canvas overhaul components
             │   ├── PanelHeader.tsx       # Panel name, rating, drag handle
@@ -1101,13 +1169,256 @@ directors_console/
 
 ---
 
-## 8. Canvas Architecture Overhaul (February 6, 2026)
+## 8. Gallery Module (February 22, 2026)
 
 ### 8.1 Overview
 
+Full-featured media browser and file management system implemented as a top-level tab alongside Cinema and Storyboard. Provides folder browsing, batch operations, ratings, tags, metadata search, and cross-tab communication with Storyboard.
+
+### 8.2 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Gallery Tab (Browser)                     │
+│  GalleryUI.tsx + Zustand Store + 28 Components                  │
+└──────────────┬──────────────────────────────┬───────────────────┘
+               │                              │
+               │ REST API (/api/gallery/*)    │ CustomEvents (window)
+               │                              │
+               ▼                              ▼
+┌──────────────────────────┐    ┌─────────────────────────────┐
+│   Orchestrator (9820)    │    │   Storyboard Tab (Browser)  │
+│   gallery_routes.py      │    │                             │
+│   23 endpoints           │    │   Listens for:              │
+└──────────┬───────────────┘    │   • gallery:send-reference  │
+           │                    │   • gallery:restore-workflow │
+           ▼                    │   • gallery:files-renamed    │
+┌──────────────────────────┐    └─────────────────────────────┘
+│   gallery_db.py          │
+│   JSON flat-file at      │
+│   {project}/.gallery/    │
+│   gallery.json           │
+└──────────────────────────┘
+```
+
+**Storage**: JSON flat-file at `{projectPath}/.gallery/gallery.json` — SQLite is incompatible with CIFS/SMB NAS mounts (no POSIX file locks).
+
+### 8.3 Backend — Gallery Routes
+
+**File**: `Orchestrator/orchestrator/api/gallery_routes.py` (~2050 lines)
+
+**Router**: FastAPI APIRouter mounted at `/api/gallery` prefix in `server.py`
+
+**Endpoints** (23 total):
+
+| Group | Method | Endpoint | Description |
+|-------|--------|----------|-------------|
+| **Browsing** | POST | `/scan-tree` | Folder tree structure (instant, dirs only) |
+| | POST | `/scan-folder` | Files in one folder (on-demand) |
+| | POST | `/scan-recursive` | Full recursive scan |
+| | POST | `/file-info` | Detailed file info + PNG metadata |
+| **File Ops** | POST | `/move-files` | Move files between folders |
+| | POST | `/rename-file` | Rename single file |
+| | POST | `/batch-rename` | Batch rename with template/regex/sequential |
+| | POST | `/auto-rename` | Sequential auto-rename |
+| **Trash** | POST | `/trash` | Soft-delete to `.gallery/.trash/` |
+| | GET | `/trash` | List trash contents |
+| | POST | `/restore` | Restore from trash |
+| | POST | `/empty-trash` | Permanently delete trash |
+| **Ratings** | GET | `/ratings` | Get file ratings |
+| | POST | `/ratings` | Set file ratings (1-5) |
+| **Tags** | GET | `/tags` | Get all tags |
+| | POST | `/tags` | Create/update tag (name + color) |
+| | DELETE | `/tags` | Delete tag |
+| | POST | `/file-tags` | Add/remove tags on files |
+| **Views** | GET | `/views` | Get saved view states |
+| | POST | `/views` | Save view state |
+| **Search** | POST | `/search` | Search PNG metadata fields |
+| | POST | `/find-duplicates` | Find duplicate files by hash |
+| **Stats** | POST | `/folder-stats` | Folder statistics (count, size) |
+
+### 8.4 Backend — Gallery Database
+
+**File**: `Orchestrator/orchestrator/gallery_db.py` (~681 lines)
+
+```python
+class GalleryDB:
+    ├── __init__(project_path: str)
+    │   └── Loads/creates {project_path}/.gallery/gallery.json
+    ├── 
+    │   RATINGS:
+    │   ├── get_ratings() -> dict[str, int]
+    │   ├── set_rating(filepath: str, rating: int)
+    │   └── remove_rating(filepath: str)
+    ├── 
+    │   TAGS:
+    │   ├── get_tags() -> dict[str, TagInfo]
+    │   ├── create_tag(name: str, color: str) -> TagInfo
+    │   ├── update_tag(tag_id: str, name: str, color: str)
+    │   ├── delete_tag(tag_id: str)
+    │   ├── get_file_tags(filepath: str) -> list[str]
+    │   ├── add_file_tag(filepath: str, tag_id: str)
+    │   └── remove_file_tag(filepath: str, tag_id: str)
+    ├── 
+    │   VIEWS:
+    │   ├── get_views() -> dict[str, ViewState]
+    │   └── save_view(name: str, state: ViewState)
+    ├── 
+    │   TRASH:
+    │   ├── trash_file(filepath: str) -> TrashEntry
+    │   ├── list_trash() -> list[TrashEntry]
+    │   ├── restore_file(trash_id: str) -> str
+    │   └── empty_trash()
+    └── 
+        INTERNAL:
+        ├── _load() -> dict
+        ├── _save(data: dict)  # Atomic write (temp + rename)
+        └── _ensure_gallery_dir()
+```
+
+**Atomic Write Pattern**:
+```python
+def _save(self, data: dict):
+    tmp = self.db_path.with_suffix('.tmp')
+    with open(tmp, 'w') as f:
+        json.dump(data, f, indent=2)
+    tmp.rename(self.db_path)  # Atomic on same filesystem
+```
+
+### 8.5 Frontend — Gallery UI
+
+**File**: `CinemaPromptEngineering/frontend/src/gallery/GalleryUI.tsx` (~1142 lines)
+
+**Main Component**: Renders as a top-level tab, loaded lazily.
+
+**Layout**:
+```
+┌──────────────────────────────────────────────────────────┐
+│  GalleryToolbar (view toggle, sort, filter, search)      │
+├──────────┬───────────────────────────────────┬───────────┤
+│          │                                   │           │
+│  Folder  │   Main Content Area               │  Detail   │
+│  Tree    │   (Grid / List / Masonry /        │  Panel    │
+│          │    Timeline view)                  │           │
+│          │                                   │           │
+├──────────┴───────────────────────────────────┴───────────┤
+│  BatchBar (visible during multi-select)                   │
+│  StatusBar (file count, folder size)                     │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 8.6 Frontend — Zustand Store
+
+**File**: `CinemaPromptEngineering/frontend/src/gallery/store/gallery-store.ts`
+
+**Key State**:
+```typescript
+interface GalleryState {
+  projectPath: string | null;
+  folderTree: FolderNode[];
+  currentFolder: string | null;
+  files: GalleryFile[];
+  selectedFiles: Set<string>;
+  viewMode: 'grid' | 'list' | 'masonry' | 'timeline';
+  sortBy: 'name' | 'date' | 'size' | 'rating';
+  sortOrder: 'asc' | 'desc';
+  ratings: Record<string, number>;
+  tags: Record<string, TagInfo>;
+  fileTags: Record<string, string[]>;
+  searchQuery: string;
+  filterRating: number | null;
+  filterTags: string[];
+  // ... actions
+}
+```
+
+### 8.7 Frontend — API Service
+
+**File**: `CinemaPromptEngineering/frontend/src/gallery/services/gallery-service.ts`
+
+All API calls route to Orchestrator port 9820 (`/api/gallery/*`). Handles request/response serialization, error handling, and abort signals for in-flight requests.
+
+### 8.8 Frontend — Components (28 files)
+
+| Component | Purpose |
+|-----------|---------|
+| `BatchBar` | Multi-select action bar (move, rename, tag, trash) |
+| `BatchRenameDialog` | Template/regex/sequential rename dialog |
+| `Breadcrumb` | Folder path breadcrumb navigation |
+| `CompareView` | Side-by-side image comparison |
+| `ContextMenu` | Right-click context menu |
+| `DetailPanel` | File detail sidebar (metadata, tags, ratings) |
+| `DropMoveDialog` | Drag-and-drop move confirmation |
+| `DuplicateFinder` | Find duplicate files by hash |
+| `FilterBar` | Rating/tag filter controls |
+| `FolderStats` | Folder statistics display |
+| `FolderTree` | Collapsible folder tree sidebar |
+| `GalleryGrid` | Grid view with thumbnails |
+| `GalleryLightbox` | Full-screen image viewer |
+| `GalleryList` | List view with file details |
+| `GalleryMasonry` | Pinterest-style masonry layout (borderless, 4px gaps) |
+| `GalleryThumbnail` | Individual thumbnail with overlay controls |
+| `GalleryToolbar` | Top toolbar (view mode, sort, actions) |
+| `HoverPreview` | Large preview on thumbnail hover |
+| `MoveDialog` | Move files to folder dialog |
+| `MoveToNewFolderDialog` | Create new folder and move |
+| `RenameDialog` | Single file rename |
+| `SearchPanel` | PNG metadata search interface |
+| `TagBadge` | Colored tag pill component |
+| `TagManager` | Create/edit/delete tags dialog |
+| `TimelineView` | Chronological timeline layout |
+| `TrashBin` | Trash management (list, restore, empty) |
+| `VideoScrubber` | Video thumbnail scrubber on hover |
+| `components.css` | Shared component styles |
+
+### 8.9 Cross-Tab Communication
+
+Gallery and Storyboard communicate via `window` CustomEvents:
+
+```
+Gallery Tab                                    Storyboard Tab
+───────────                                    ──────────────
+                    ─── gallery:request-image-params ───►
+                    ◄── gallery:image-params-response ──
+                    ─── gallery:send-reference-image ───►
+                    ─── gallery:restore-workflow-from-metadata ──►
+                    ─── gallery:files-renamed ───────────►
+```
+
+**Event Details**:
+- **`gallery:request-image-params`**: Gallery dispatches with `{ filepath }`. Storyboard searches panel imageHistory for matching file and responds with workflow + parameters.
+- **`gallery:image-params-response`**: Storyboard responds with `{ filepath, workflow, parameters }` or `{ filepath, error }`.
+- **`gallery:send-reference-image`**: Gallery sends `{ dataUrl, filename }` for use as a reference input in Storyboard panels.
+- **`gallery:restore-workflow-from-metadata`**: Gallery reads PNG metadata and sends full `{ workflow, parameters }` to restore state in Storyboard.
+- **`gallery:files-renamed`**: Gallery sends `{ renames: [{oldPath, newPath}] }` after batch rename. Storyboard updates `panel.image` and `imageHistory` URLs.
+
+### 8.10 Progressive Loading Strategy
+
+```
+1. User opens Gallery tab
+   ↓
+2. POST /api/gallery/scan-tree  (instant — dirs only, no file stat)
+   ↓
+3. Folder tree renders immediately
+   ↓
+4. User clicks a folder
+   ↓
+5. POST /api/gallery/scan-folder  (on-demand — files + thumbnails for one folder)
+   ↓
+6. Files render in selected view mode
+```
+
+This two-phase approach avoids the 2-minute bottleneck of scanning all files upfront on NAS.
+
+---
+
+## 9. Canvas Architecture Overhaul (February 6, 2026)
+
+### 9.1 Overview
+
 Complete redesign of the canvas system to support free-form panel positioning, drag-to-move, multi-select, alignment tools, and per-panel folders.
 
-### 8.2 Panel Interface Extension
+### 9.2 Panel Interface Extension
 
 **Extended Panel Interface** (`StoryboardUI.tsx`):
 ```typescript
@@ -1152,7 +1463,7 @@ interface Panel {
 }
 ```
 
-### 8.3 New Components
+### 9.3 New Components
 
 #### PanelHeader.tsx
 **Location**: `CinemaPromptEngineering/frontend/src/storyboard/components/PanelHeader.tsx`
@@ -1234,7 +1545,7 @@ interface GenerationProgressProps {
   - Combines phase + currentNode + nodeCounter into descriptive line
   - Example: "Phase 1/2 · KSampler · Step 5/14"
 
-### 8.4 Drag and Move System
+### 9.4 Drag and Move System
 
 **Implementation**: Native mouse events (not dnd-kit)
 
@@ -1251,7 +1562,7 @@ const [dragStart, setDragStart] = useState({ x: 0, y: 0, panelX: 0, panelY: 0 })
 
 **Multi-Panel Movement**: When dragging a selected panel, all selected panels move together maintaining relative positions.
 
-### 8.5 Multi-Select System
+### 9.5 Multi-Select System
 
 **Selection Methods**:
 1. **Ctrl+Click**: Toggle individual panel selection
@@ -1266,7 +1577,7 @@ const [marqueeEnd, setMarqueeEnd] = useState({ x: 0, y: 0 });
 
 **Visual Feedback**: Blue semi-transparent rectangle during selection.
 
-### 8.6 Alignment and Distribution
+### 9.6 Alignment and Distribution
 
 **Alignment Toolbar**: Appears when 2+ panels selected
 
@@ -1276,7 +1587,7 @@ const [marqueeEnd, setMarqueeEnd] = useState({ x: 0, y: 0 });
 
 **UI**: Floating toolbar with 6 SVG icon buttons
 
-### 8.7 Snap-to-Panel Guides
+### 9.7 Snap-to-Panel Guides
 
 **Activation**: Hold Shift during drag
 
@@ -1294,7 +1605,7 @@ const [snapGuides, setSnapGuides] = useState<Array<{
 }>>([]);
 ```
 
-### 8.8 Per-Panel Folder Structure
+### 9.8 Per-Panel Folder Structure
 
 **Folder Resolution**:
 ```typescript
@@ -1310,7 +1621,7 @@ resolvePanelFolder(panelName: string): string {
 
 **Version Scanning**: Updated to scan by panel name (folder name) instead of numeric ID
 
-### 8.9 Canvas Zoom and Pan
+### 9.9 Canvas Zoom and Pan
 
 **Zoom Behavior**: Zoom from mouse pointer (not top-left corner)
 
@@ -1325,7 +1636,7 @@ const [canvasZoom, setCanvasZoom] = useState(1);
 const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
 ```
 
-### 8.10 Files Modified
+### 9.10 Files Modified
 
 **Frontend**:
 - `StoryboardUI.tsx`: Drag handlers, multi-select, alignment, snap guides
@@ -1335,7 +1646,7 @@ const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
 **Backend**:
 - `Orchestrator/orchestrator/api/server.py`: Panel folder scanning (by name not ID), version extraction
 
-### 8.11 Video Generation Pipeline
+### 9.11 Video Generation Pipeline
 
 **File**: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-client.ts`
 
@@ -1366,7 +1677,7 @@ getExtensionFromUrl(url: string): string
 - `scan_project_images`: Same extended set
 - `serve_image`: Maps `.mp4→video/mp4`, `.mov→video/quicktime`, `.avi→video/x-msvideo`, `.webm→video/webm`, `.mkv→video/x-matroska`
 
-### 8.12 WebSocket Progress Architecture
+### 9.12 WebSocket Progress Architecture
 
 **File**: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-websocket.ts`
 
@@ -1433,9 +1744,9 @@ ComfyUI WebSocket → handleProgress/handleExecuting
 
 ---
 
-## 9. Recent Changes & Architecture Findings
+## 10. Recent Changes & Architecture Findings
 
-### 9.1 Project Settings Storage (January 30, 2026)
+### 10.1 Project Settings Storage (January 30, 2026)
 
 **Problem**: Frontend was sending pattern with `{project}` token but backend had no access to actual project name, causing it to use `*` wildcard for file searches.
 
@@ -1488,7 +1799,7 @@ ComfyUI WebSocket → handleProgress/handleExecuting
 
 ---
 
-### 9.2 Critical Architecture Discovery
+### 10.2 Critical Architecture Discovery
 
 **IMPORTANT**: The frontend StoryboardUI does NOT use the Orchestrator for ComfyUI workflow submission!
 
@@ -1550,7 +1861,7 @@ The orchestrator is currently ONLY used for:
 
 ---
 
-### 9.3 File Version Scanning Fix
+### 10.3 File Version Scanning Fix
 
 **Original Problem**:
 - Pattern: `Panel_{panel}\{project}_Panel{panel}_{version}`
@@ -1587,7 +1898,7 @@ The orchestrator is currently ONLY used for:
 
 ---
 
-### 9.4 Python Cache Issues (Debugging Notes)
+### 10.4 Python Cache Issues (Debugging Notes)
 
 **Issue**: Changes to `server.py` not reflected in running server.
 
@@ -1610,7 +1921,7 @@ Get-ChildItem -Path "Z:\Python\DirectorsConsole" -Recurse -Directory -Filter "__
 
 ---
 
-### 8.5 Import Chain Discovery
+### 10.5 Import Chain Discovery
 
 The entry point `start-all.ps1` runs:
 ```powershell
@@ -1633,4 +1944,4 @@ orchestrator/api/server.py  ← ACTUAL CODE LOCATION
 ---
 
 *End of Code Map - Director's Console Project Eliot*
-*Last Updated: February 9, 2026 - Video pipeline, progress sidebar, per-node stage tracking*
+*Last Updated: February 22, 2026 - Gallery module, cross-tab communication, progressive loading*

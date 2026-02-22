@@ -1,180 +1,442 @@
 # Director's Console Orchestrator - API Documentation
 
-## Phase 1: FastAPI Layer Implementation
+> **Last Updated**: February 22, 2026  
+> **Server**: FastAPI on port 9820  
+> **Entry Point**: `orchestrator/api/server.py` (exposed via `orchestrator/api/__init__.py`)
 
-### Overview
+---
 
-The Orchestrator now exposes a REST API for submitting ComfyUI workflows programmatically. This enables integration with other Director's Console tools like StoryboardUI2 and CinemaPromptEngineering (CPE).
+## Overview
+
+The Orchestrator API provides REST endpoints for:
+- **Job Management** — Submit, track, and cancel ComfyUI workflow jobs
+- **Backend Management** — Monitor and control ComfyUI render nodes
+- **Job Groups** — Parallel execution across multiple backends with WebSocket progress
+- **Project Management** — Save/load projects, scan images, manage files
+- **Path Translation** — Cross-platform path mapping (Windows/Linux/macOS)
+- **Gallery** — Full media browser with 23 endpoints for file management, ratings, tags, search
 
 ### Architecture
 
 ```
-┌─────────────────┐
-│  StoryboardUI2  │
-│       CPE       │
-└────────┬────────┘
-         │ HTTP/JSON
-         ▼
-┌─────────────────┐
-│  FastAPI Layer  │◄── orchestrator/api.py
-│   (Phase 1)     │
-└────────┬────────┘
-         │ (Phase 2: Will integrate)
-         ▼
-┌─────────────────┐
-│   JobManager    │
-│  BackendMgr     │
-└─────────────────┘
+┌──────────────────────┐
+│  Frontend (React)    │
+│  Port 5173           │
+└──────────┬───────────┘
+           │ REST / WebSocket
+           ▼
+┌──────────────────────┐
+│  Orchestrator API    │◄── orchestrator/api/server.py
+│  Port 9820           │◄── orchestrator/api/gallery_routes.py
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐     ┌──────────────────────┐
+│  JobManager          │     │  gallery_db.py        │
+│  Scheduler           │     │  JSON flat-file       │
+│  BackendManager      │     │  {project}/.gallery/  │
+└──────────┬───────────┘     └──────────────────────┘
+           │
+           ▼
+┌──────────────────────┐
+│  ComfyUI Backends    │
+│  (Render Nodes)      │
+└──────────────────────┘
 ```
 
 ### Quick Start
 
-#### 1. Install Dependencies
-
 ```bash
-cd /mnt/nas/Python/DirectorsConsole/Orchestrator
-pip install -r requirements.txt
+cd Orchestrator
+python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
-This will install FastAPI, Uvicorn, and all other required dependencies.
+### Interactive Documentation
 
-#### 2. Start the API Server
+- **Swagger UI**: http://localhost:9820/docs
+- **ReDoc**: http://localhost:9820/redoc
 
-```bash
-# Default (localhost:9800)
-python -m orchestrator.server
+---
 
-# Custom host/port
-python -m orchestrator.server --host 0.0.0.0 --port 8080
+## Core API Endpoints
 
-# Development mode (auto-reload)
-python -m orchestrator.server --reload --log-level debug
-```
+### Health Check
 
-#### 3. Test the API
+#### `GET /health`
 
-Open another terminal and run:
+Returns server health status.
 
-```bash
-python test_api.py
-```
-
-Or use curl:
-
-```bash
-# Health check
-curl http://127.0.0.1:9800/api/health
-
-# Submit a job
-curl -X POST http://127.0.0.1:9800/api/job \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_id": "my_workflow_001",
-    "parameters": {
-      "prompt": "cinematic shot",
-      "steps": 20
-    },
-    "metadata": {
-      "source": "storyboard"
-    }
-  }'
-```
-
-### API Endpoints
-
-#### `POST /api/job` - Submit Workflow Job
-
-Submit a workflow manifest for execution.
-
-**Request Body:**
-
+**Response** `200 OK`:
 ```json
 {
-  "workflow_id": "string (required)",
-  "parameters": {
-    "param1": "value1",
-    "param2": 123
-  },
-  "metadata": {
-    "source": "storyboard",
-    "scene_id": "shot_001"
-  }
+  "status": "ok",
+  "timestamp": "2026-02-22T12:00:00",
+  "backends_online": 2,
+  "version": "0.2.0"
 }
 ```
 
-**Response (202 Accepted):**
+---
 
+### Job Management
+
+#### `POST /api/job` — Submit Job
+
+Submit a workflow manifest for execution on a ComfyUI backend.
+
+**Request**:
+```json
+{
+  "workflow_id": "flux_dev",
+  "parameters": { "prompt": "cinematic shot", "steps": 20 },
+  "metadata": { "source": "storyboard", "panel_id": "Panel_01" }
+}
+```
+
+**Response** `202 Accepted`:
 ```json
 {
   "job_id": "uuid-string",
   "status": "accepted",
   "message": "Job accepted for execution",
-  "submitted_at": "2026-01-28T12:00:00"
+  "submitted_at": "2026-02-22T12:00:00"
 }
 ```
 
-**Phase 1 Behavior:**
-- Logs the received job to console
-- Generates a mock job_id
-- Returns acceptance response
-- **Does NOT execute** (mocked for now)
+#### `GET /api/jobs` — List All Jobs
 
-**Phase 2 (Future):**
-- Will integrate with JobManager
-- Will trigger actual workflow execution
-- Will return real job_id for tracking
+#### `GET /api/jobs/{id}` — Get Job Status
+
+#### `POST /api/jobs/{id}/cancel` — Cancel Job
 
 ---
 
-#### `GET /api/health` - Health Check
+### Backend Management
 
-Check API server health status.
+#### `GET /api/backends` — List Backends
 
-**Response (200 OK):**
+Returns all registered ComfyUI render nodes with status.
 
+#### `GET /api/backends/{id}` — Backend Details
+
+#### `GET /api/backends/{id}/status` — Backend Status
+
+---
+
+### Job Groups (Parallel Execution)
+
+#### `POST /api/job-groups` — Create Job Group
+
+Submit multiple jobs for parallel execution across backends.
+
+#### `GET /api/job-groups` — List Job Groups
+
+#### `GET /api/job-groups/{id}` — Get Job Group Status
+
+#### `WS /ws/job-groups/{id}` — Real-Time Progress
+
+WebSocket endpoint for live progress updates during parallel generation.
+
+---
+
+### Project Management
+
+#### `POST /api/scan-project-images` — Scan Project Images
+
+Scan a project folder for generated images and videos.
+
+**Request**: `{ "path": "/mnt/Mandalore/Projects/Eliot" }`
+
+#### `GET /api/serve-image` — Serve Image
+
+Serve an image or video file from the project folder.
+
+**Query Params**: `?path=/mnt/Mandalore/Projects/Eliot/Panel_01/image.png`
+
+**Supported MIME Types**: `.png`, `.jpg`, `.webp`, `.gif`, `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`
+
+#### `DELETE /api/delete-image` — Delete Image
+
+#### `POST /api/create-folder` — Create Folder
+
+#### `GET /api/scan-versions` — Scan Versions
+
+Find existing file versions for naming template resolution.
+
+#### `GET /api/project` — Get Current Project
+
+#### `POST /api/save-project` — Save Project Metadata
+
+#### `POST /api/load-project` — Load Project Metadata
+
+#### `GET /api/browse-folders` — Browse Folders
+
+#### `GET /api/png-metadata` — Get PNG Metadata
+
+Read ComfyUI workflow metadata embedded in PNG files.
+
+---
+
+### Path Translation (Cross-Platform)
+
+Translates paths between Windows, Linux, and macOS mount points using configured mappings.
+
+#### `GET /api/path-mappings` — List Mappings
+
+Returns all configured path mappings and the current OS.
+
+**Response**:
 ```json
 {
-  "status": "ok",
-  "timestamp": "2026-01-28T12:00:00",
-  "backends_online": 0,
-  "version": "0.1.0"
+  "mappings": [
+    {
+      "id": "uuid",
+      "windows": "W:\\",
+      "linux": "/mnt/Mandalore",
+      "macos": "/Volumes/Mandalore",
+      "enabled": true
+    }
+  ],
+  "current_os": "linux"
 }
 ```
 
+#### `POST /api/path-mappings` — Add Mapping
+
+#### `PUT /api/path-mappings/{id}` — Update Mapping
+
+#### `DELETE /api/path-mappings/{id}` — Remove Mapping
+
+#### `POST /api/translate-path` — Test Translation
+
+Translate a path using configured mappings.
+
+**Request**: `{ "path": "W:\\VFX\\Eliot\\renders" }`  
+**Response**: `{ "translated": "/mnt/Mandalore/VFX/Eliot/renders", "original": "W:\\VFX\\Eliot\\renders" }`
+
 ---
 
-#### `GET /api/backends` - List Backends
+## Gallery API Endpoints
 
-Get information about available ComfyUI backends.
+All Gallery endpoints are prefixed with `/api/gallery/` and routed through `gallery_routes.py`.
 
-**Response (200 OK):**
+**Storage**: JSON flat-file at `{projectPath}/.gallery/gallery.json`. SQLite is incompatible with CIFS/SMB NAS mounts due to missing POSIX file lock support.
 
+### Browsing
+
+#### `POST /api/gallery/scan-tree` — Folder Tree
+
+Returns directory tree structure for the project (fast, dirs only, no file stat).
+
+**Request**:
 ```json
-[]
+{ "projectPath": "/mnt/Mandalore/Projects/Eliot" }
 ```
 
-**Phase 1:** Returns empty list.  
-**Phase 2:** Will query BackendManager for actual backend status.
+**Response**:
+```json
+{
+  "tree": [
+    {
+      "name": "Panel_01",
+      "path": "/mnt/Mandalore/Projects/Eliot/Panel_01",
+      "children": []
+    }
+  ]
+}
+```
+
+#### `POST /api/gallery/scan-folder` — Folder Contents
+
+Returns files in a single folder with metadata (on-demand loading).
+
+**Request**:
+```json
+{
+  "projectPath": "/mnt/Mandalore/Projects/Eliot",
+  "folderPath": "Panel_01"
+}
+```
+
+**Response**:
+```json
+{
+  "files": [
+    {
+      "name": "Eliot_Panel01_v001.png",
+      "path": "/mnt/Mandalore/Projects/Eliot/Panel_01/Eliot_Panel01_v001.png",
+      "size": 2048576,
+      "modified": "2026-02-22T10:30:00",
+      "type": "image"
+    }
+  ]
+}
+```
+
+#### `POST /api/gallery/scan-recursive` — Full Recursive Scan
+
+Scans all files in all subdirectories. Use sparingly on large projects.
+
+#### `POST /api/gallery/file-info` — File Details
+
+Returns detailed file info including PNG metadata (workflow, parameters).
+
+**Request**: `{ "projectPath": "...", "filePath": "Panel_01/image.png" }`
+
+### File Operations
+
+#### `POST /api/gallery/move-files` — Move Files
+
+Move files between folders within the project.
+
+**Request**:
+```json
+{
+  "projectPath": "...",
+  "files": ["Panel_01/image1.png", "Panel_01/image2.png"],
+  "destination": "Panel_02"
+}
+```
+
+#### `POST /api/gallery/rename-file` — Rename Single File
+
+**Request**: `{ "projectPath": "...", "filePath": "old_name.png", "newName": "new_name.png" }`
+
+#### `POST /api/gallery/batch-rename` — Batch Rename
+
+Rename multiple files using template, regex, or sequential patterns.
+
+**Request**:
+```json
+{
+  "projectPath": "...",
+  "files": ["img1.png", "img2.png", "img3.png"],
+  "mode": "template",
+  "template": "{project}_{panel}_v{seq:3}",
+  "startNumber": 1
+}
+```
+
+**Modes**: `template` (token-based), `regex` (find/replace), `sequential` (numbered)
+
+#### `POST /api/gallery/auto-rename` — Auto-Rename
+
+Sequential auto-rename with project naming conventions.
+
+### Trash (Soft Delete)
+
+Files are moved to `{projectPath}/.gallery/.trash/` with metadata for restoration.
+
+#### `POST /api/gallery/trash` — Trash Files
+
+**Request**: `{ "projectPath": "...", "files": ["Panel_01/image.png"] }`
+
+#### `GET /api/gallery/trash` — List Trash
+
+**Query Params**: `?projectPath=/mnt/Mandalore/Projects/Eliot`
+
+#### `POST /api/gallery/restore` — Restore from Trash
+
+**Request**: `{ "projectPath": "...", "trashIds": ["uuid1", "uuid2"] }`
+
+#### `POST /api/gallery/empty-trash` — Empty Trash
+
+Permanently deletes all trashed files.
+
+### Ratings
+
+#### `GET /api/gallery/ratings` — Get Ratings
+
+**Query Params**: `?projectPath=...`
+
+**Response**: `{ "ratings": { "Panel_01/image.png": 4, "Panel_02/image.png": 5 } }`
+
+#### `POST /api/gallery/ratings` — Set Rating
+
+**Request**: `{ "projectPath": "...", "filePath": "Panel_01/image.png", "rating": 4 }`
+
+Rating values: 1-5 (0 to remove)
+
+### Tags
+
+#### `GET /api/gallery/tags` — Get All Tags
+
+**Response**:
+```json
+{
+  "tags": {
+    "uuid1": { "name": "Hero Shot", "color": "#ff6b6b" },
+    "uuid2": { "name": "Approved", "color": "#51cf66" }
+  }
+}
+```
+
+#### `POST /api/gallery/tags` — Create/Update Tag
+
+**Request**: `{ "projectPath": "...", "name": "Hero Shot", "color": "#ff6b6b" }`
+
+#### `DELETE /api/gallery/tags` — Delete Tag
+
+**Request**: `{ "projectPath": "...", "tagId": "uuid1" }`
+
+#### `POST /api/gallery/file-tags` — Add/Remove File Tags
+
+**Request**:
+```json
+{
+  "projectPath": "...",
+  "filePath": "Panel_01/image.png",
+  "addTags": ["uuid1"],
+  "removeTags": ["uuid2"]
+}
+```
+
+### Views
+
+Saved view configurations (sort order, filters, view mode).
+
+#### `GET /api/gallery/views` — Get Views
+
+#### `POST /api/gallery/views` — Save View
+
+### Search
+
+#### `POST /api/gallery/search` — Search PNG Metadata
+
+Search through ComfyUI workflow metadata embedded in PNG files.
+
+**Request**:
+```json
+{
+  "projectPath": "...",
+  "query": "cinematic shot",
+  "fields": ["prompt", "negative_prompt"]
+}
+```
+
+#### `POST /api/gallery/find-duplicates` — Find Duplicates
+
+Find duplicate files by content hash.
+
+**Request**: `{ "projectPath": "..." }`
+
+**Response**: Groups of files with identical content hashes.
+
+### Statistics
+
+#### `POST /api/gallery/folder-stats` — Folder Statistics
+
+**Request**: `{ "projectPath": "...", "folderPath": "Panel_01" }`
+
+**Response**: `{ "fileCount": 42, "totalSize": 1073741824, "imageCount": 38, "videoCount": 4 }`
 
 ---
 
-### Interactive API Documentation
+## Configuration
 
-FastAPI provides automatic interactive documentation:
-
-- **Swagger UI:** http://127.0.0.1:9800/docs
-- **ReDoc:** http://127.0.0.1:9800/redoc
-
-These are auto-generated from the code and always up-to-date.
-
----
-
-### Configuration
-
-The API server uses the same `config.yaml` as the desktop UI:
+The API server uses `config.yaml`:
 
 ```yaml
-# config.yaml
 data_dir: "./data"
 log_dir: "./logs"
 
@@ -188,208 +450,42 @@ backends:
     max_concurrent_jobs: 2
 ```
 
-Specify a custom config:
+### Environment Variables
 
-```bash
-python -m orchestrator.server --config /path/to/config.yaml
-```
-
----
-
-### Integration Example (StoryboardUI2)
-
-```python
-import httpx
-
-async def submit_shot_to_orchestrator(workflow_id: str, params: dict):
-    """Submit a shot from StoryboardUI2 to the Orchestrator."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "http://127.0.0.1:9800/api/job",
-            json={
-                "workflow_id": workflow_id,
-                "parameters": params,
-                "metadata": {
-                    "source": "storyboard_ui",
-                    "shot_id": params.get("shot_id"),
-                },
-            },
-        )
-        response.raise_for_status()
-        job = response.json()
-        print(f"Job submitted: {job['job_id']}")
-        return job["job_id"]
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORCHESTRATOR_PORT` | 9820 | API server port |
+| `ORCHESTRATOR_COMFY_NODES` | (from config) | Comma-separated ComfyUI node addresses |
+| `ORCHESTRATOR_CORS_ORIGINS` | `*` | Allowed CORS origins |
 
 ---
 
-### Logging
-
-Logs are written to:
-- **Console:** Real-time output
-- **File:** `logs/orchestrator.log` (rotating, 5MB max)
-
-Adjust log level:
-
-```bash
-python -m orchestrator.server --log-level debug
-```
-
-Levels: `debug`, `info`, `warning`, `error`
-
----
-
-### Phase 2 Roadmap
-
-#### Planned Enhancements:
-
-1. **Job Manager Integration**
-   - Connect `/api/job` to actual JobManager
-   - Execute workflows on backends
-   - Return real job IDs
-
-2. **Job Status Queries**
-   - `GET /api/job/{job_id}` - Get job status
-   - `GET /api/job/{job_id}/outputs` - Get job outputs
-
-3. **Job Control**
-   - `DELETE /api/job/{job_id}` - Cancel job
-
-4. **Real-Time Updates**
-   - `WebSocket /api/job/{job_id}/stream` - Progress streaming
-
-5. **Backend Monitoring**
-   - `/api/backends` returns actual backend health
-   - Backend affinity/selection via API
-
-6. **Watchdog Integration**
-   - Monitor `Inbox` folder for JSON manifests
-   - Auto-submit files dropped by StoryboardUI2
-
----
-
-### Development Notes
-
-#### Code Structure
+## Code Structure
 
 ```
 orchestrator/
-├── api.py          # FastAPI app and endpoints (NEW)
-├── server.py       # CLI entry point for API server (NEW)
-├── app.py          # Existing PyQt6 desktop UI
+├── api/
+│   ├── __init__.py          # Exposes app from server.py
+│   ├── server.py            # FastAPI app, core endpoints (~60+)
+│   └── gallery_routes.py    # Gallery API router (23 endpoints, ~2050 lines)
+├── gallery_db.py            # JSON flat-file gallery storage (~681 lines)
+├── path_translator.py       # Cross-platform path translation
+├── app.py                   # Desktop app entry
+├── main.py                  # CLI entry
 ├── core/
 │   └── engine/
-│       └── job_manager.py  # Job execution engine
-└── utils/
-    ├── config.py          # Config loading
-    └── logging_config.py  # Logging setup
-```
-
-#### Coding Standards (from AGENTS.md)
-
-✓ **Type Hints:** All functions have type hints  
-✓ **Async First:** API endpoints are async  
-✓ **Logging:** All actions logged via `logger`  
-✓ **Docstrings:** Google-style docstrings  
-✓ **Error Handling:** No silent failures
-
----
-
-### Troubleshooting
-
-#### Port Already in Use
-
-```bash
-# Find process using port 9800
-lsof -i :9800
-# Kill it
-kill -9 <PID>
-```
-
-Or use a different port:
-
-```bash
-python -m orchestrator.server --port 8001
-```
-
-#### Import Errors
-
-Make sure you're in the Orchestrator directory:
-
-```bash
-cd /mnt/nas/Python/DirectorsConsole/Orchestrator
-```
-
-And installed dependencies:
-
-```bash
-pip install -r requirements.txt
+│       ├── job_manager.py   # Job execution engine
+│       ├── scheduler.py     # Backend scheduling
+│       └── graph_executor.py
+├── backends/
+│   ├── client.py            # ComfyUI HTTP/WS client
+│   ├── manager.py           # Backend registry
+│   └── health_monitor.py
+└── data/
+    └── path_mappings.json   # Persistent path mapping config
 ```
 
 ---
 
-### Testing
-
-Run the test suite:
-
-```bash
-# Start server
-python -m orchestrator.server
-
-# In another terminal
-python test_api.py
-```
-
-Expected output:
-
-```
-Testing Health Check Endpoint
-Status Code: 200
-Response: {
-  "status": "ok",
-  "timestamp": "...",
-  "backends_online": 0,
-  "version": "0.1.0"
-}
-
-Testing Job Submission Endpoint
-Status Code: 202
-Response: {
-  "job_id": "...",
-  "status": "accepted",
-  "message": "Job accepted for execution (Phase 1: Mock)",
-  "submitted_at": "..."
-}
-```
-
----
-
-### Next Steps
-
-**For Agents:**
-
-1. **Phase 2:** Connect API to JobManager
-   - Modify `submit_job()` to call `job_manager.run_job()`
-   - Return real job IDs
-   - Track job state
-
-2. **Watchdog:** Implement file-based job submission
-   - Monitor `Inbox/` folder
-   - Parse JSON manifests
-   - Auto-submit to API
-
-3. **WebSocket:** Real-time progress streaming
-   - Push updates to connected clients
-   - Use for live UI updates in StoryboardUI2
-
-**For Integration:**
-
-1. Update StoryboardUI2 to submit to API instead of localhost ComfyUI
-2. Update CPE to generate API manifests
-3. Test end-to-end pipeline
-
----
-
-*Created: 2026-01-28*  
-*Agent: Director's Architect (Builder)*  
-*Phase: 1 - FastAPI Layer*
+*Updated: February 22, 2026*  
+*Project: Director's Console - Project Eliot*

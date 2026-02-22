@@ -19,14 +19,25 @@
    - FastAPI REST API for job submission (`orchestrator/api/server.py`)
    - Multi-backend ComfyUI node management
    - Real-time job progress via WebSocket
+   - Gallery API: 23 endpoints for file browsing, batch rename, ratings, tags, search, trash
    - **⚠️ NOTE:** Frontend communicates DIRECTLY with ComfyUI nodes, NOT through Orchestrator API for workflow execution
-   - Orchestrator used for: job groups, backend status, project management
+   - Orchestrator used for: job groups, backend status, project management, gallery operations
    - Job groups feature for parallel execution across multiple backends
+
+3. **Gallery** - Full-featured media browser and file management (top-level tab)
+   - React/TypeScript frontend module (`frontend/src/gallery/`)
+   - 37 frontend files: main UI, Zustand store, API service, 28 components
+   - Backend: 23 REST endpoints on Orchestrator (`/api/gallery/*`) via `gallery_routes.py`
+   - Storage: JSON flat-file at `{projectPath}/.gallery/gallery.json` (NAS/CIFS compatible — SQLite incompatible with CIFS mounts)
+   - Cross-tab communication with Storyboard via `window` CustomEvents
+   - **⚠️ NOTE:** Gallery metadata is per-project, stored alongside project files on NAS
 
 ### Communication Architecture
 
 - **Inter-Process**: JSON manifests via shared storage (TrueNAS) + REST API status broadcasting
 - **Data Flow**: CPE → Orchestrator → ComfyUI Render Nodes
+- **Gallery ↔ Storyboard**: Cross-tab CustomEvents on `window` (reference images, workflow restore, file rename sync)
+- **Gallery → Orchestrator**: REST API for all gallery operations (`/api/gallery/*`)
 - **Storage Location**: User based, set from Project Settings in the Frontend
 
 ---
@@ -71,6 +82,13 @@ DirectorsConsole/
 │   │   └── providers/              # LLM provider integrations
 │   ├── cinema_rules/               # Core rules engine
 │   ├── frontend/                   # React frontend
+│   │   └── src/
+│   │       ├── storyboard/         # Storyboard Canvas tab
+│   │       └── gallery/            # Gallery tab (37 files)
+│   │           ├── GalleryUI.tsx    # Main gallery component
+│   │           ├── store/           # Zustand state store
+│   │           ├── services/        # API client service
+│   │           └── components/      # 28 UI components
 │   ├── ComfyCinemaPrompting/       # ComfyUI custom node
 │   └── Documentation/              # Comprehensive docs
 │
@@ -78,7 +96,9 @@ DirectorsConsole/
 │   └── orchestrator/
 │       ├── api/                    # FastAPI server package
 │       │   ├── __init__.py         # Exposes app from server.py
-│       │   └── server.py           # FastAPI server (main entry)
+│       │   ├── server.py           # FastAPI server (main entry)
+│       │   └── gallery_routes.py   # Gallery API router (23 endpoints)
+│       ├── gallery_db.py           # JSON flat-file gallery storage
 │       ├── app.py                  # Desktop app entry
 │       ├── main.py                 # CLI entry
 │       ├── core/                   # Core engine
@@ -289,6 +309,31 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 - `DELETE /api/path-mappings/{id}` - Remove a mapping
 - `POST /api/translate-path` - Test-translate a path using configured mappings
 
+**Gallery (23 endpoints, prefix `/api/gallery/`):**
+- `POST /scan-tree` - Get folder tree structure
+- `POST /scan-folder` - Get files in one folder
+- `POST /scan-recursive` - Recursive full scan
+- `POST /file-info` - Detailed file info with metadata
+- `POST /move-files` - Move files between folders
+- `POST /rename-file` - Rename single file
+- `POST /batch-rename` - Batch rename with templates/regex
+- `POST /auto-rename` - Sequential auto-rename
+- `POST /trash` - Soft-delete to .gallery/.trash/
+- `GET /trash` - List trash contents
+- `POST /restore` - Restore from trash
+- `POST /empty-trash` - Permanently delete trash
+- `GET /ratings` - Get file ratings
+- `POST /ratings` - Set file ratings
+- `GET /tags` - Get all tags
+- `POST /tags` - Create/update tag
+- `DELETE /tags` - Delete tag
+- `POST /file-tags` - Add/remove tags on files
+- `GET /views` - Get saved view states
+- `POST /views` - Save view state
+- `POST /search` - Search PNG metadata
+- `POST /find-duplicates` - Find duplicate files by hash
+- `POST /folder-stats` - Folder statistics
+
 ---
 
 ## Development Workflow
@@ -395,15 +440,27 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - **Cancel**: POST to `/interrupt` stops running generation
 - **CORS Limitation**: Cannot DELETE files directly from browser - use CPE backend `/api/delete-file` proxy
 
+### Gallery Cross-Tab Communication
+
+Gallery and Storyboard run as sibling tabs in the same browser window. They communicate via `window` CustomEvents:
+- **`gallery:request-image-params`** — Gallery dispatches to ask Storyboard for generation parameters of a file
+- **`gallery:image-params-response`** — Storyboard responds with workflow + parameters for the requested file
+- **`gallery:send-reference-image`** — Gallery sends an image to Storyboard to use as a reference input
+- **`gallery:restore-workflow-from-metadata`** — Gallery sends full PNG metadata to Storyboard to restore workflow + parameters
+- **`gallery:files-renamed`** — Gallery notifies Storyboard after batch rename, so Storyboard can update `panel.image` and `imageHistory` URLs
+
 ### Recent Features Implemented
-1. **Global Cancel Button**: Red button next to Generate, interrupts all busy nodes
-2. **Node Restart**: System menu option + Node Manager selection with checkboxes
-3. **Image Deletion**: Delete button on images (canvas + backend via proxy)
-4. **Video Generation Pipeline**: Full support for AI video workflows (Wan 2.2, CogVideoX, etc.)
-5. **Generation Progress Sidebar**: Dedicated sidebar component replacing panel overlays
-6. **Per-Node Stage Tracking**: Real-time display of executing ComfyUI node type per render node
-7. **Multi-KSampler Progress**: Accumulated progress across multiple sampler phases
-8. **Notification Fix**: Timer no longer resets on re-renders
+1. **Gallery Tab**: Full-featured media browser with 37 frontend files and 23 backend endpoints
+2. **Recent Projects Menu**: Hover-expand flyout from hamburger menu, localStorage, max 10 entries
+3. **Pinterest Masonry**: Borderless masonry view with tight gaps and opacity hover
+4. **Global Cancel Button**: Red button next to Generate, interrupts all busy nodes
+5. **Node Restart**: System menu option + Node Manager selection with checkboxes
+6. **Image Deletion**: Delete button on images (canvas + backend via proxy)
+7. **Video Generation Pipeline**: Full support for AI video workflows (Wan 2.2, CogVideoX, etc.)
+8. **Generation Progress Sidebar**: Dedicated sidebar component replacing panel overlays
+9. **Per-Node Stage Tracking**: Real-time display of executing ComfyUI node type per render node
+10. **Multi-KSampler Progress**: Accumulated progress across multiple sampler phases
+11. **Notification Fix**: Timer no longer resets on re-renders
 
 ### Common Bugs & Solutions
 
@@ -421,16 +478,37 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - *Symptom*: "No module named 'loguru'" or similar import errors
 - *Fix*: `start-all.ps1` checks imports and auto-repairs venv if unhealthy
 
+**Gallery Storage — CIFS/SQLite Incompatibility**:
+- *Symptom*: SQLite database lock errors when project path is on NAS (CIFS/SMB mount)
+- *Cause*: CIFS mounts with `nounix,soft` options do not support POSIX file locks required by SQLite
+- *Fix*: Gallery uses JSON flat-file storage at `{projectPath}/.gallery/gallery.json` instead of SQLite. All reads/writes use Python `json` module with atomic write (write to temp, rename).
+
 ### File Locations for Common Tasks
 
 **Adding API Endpoints**:
 - CPE Backend: `CinemaPromptEngineering/api/main.py`
 - Orchestrator: `Orchestrator/orchestrator/api/server.py`
+- Gallery API: `Orchestrator/orchestrator/api/gallery_routes.py`
 
 **Frontend Components**:
 - Main UI: `CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.tsx`
 - Services: `CinemaPromptEngineering/frontend/src/storyboard/services/`
 - Styles: `CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.css`
+
+**Gallery Frontend** (37 files):
+- Main UI: `CinemaPromptEngineering/frontend/src/gallery/GalleryUI.tsx`
+- Store: `CinemaPromptEngineering/frontend/src/gallery/store/gallery-store.ts`
+- API Service: `CinemaPromptEngineering/frontend/src/gallery/services/gallery-service.ts`
+- Components (28): `CinemaPromptEngineering/frontend/src/gallery/components/`
+  - BatchBar, BatchRenameDialog, Breadcrumb, CompareView, ContextMenu, DetailPanel
+  - DropMoveDialog, DuplicateFinder, FilterBar, FolderStats, FolderTree, GalleryGrid
+  - GalleryLightbox, GalleryList, GalleryMasonry, GalleryThumbnail, GalleryToolbar
+  - HoverPreview, MoveDialog, MoveToNewFolderDialog, RenameDialog, SearchPanel
+  - TagBadge, TagManager, TimelineView, TrashBin, VideoScrubber
+
+**Gallery Backend**:
+- Gallery API Router: `Orchestrator/orchestrator/api/gallery_routes.py` (23 endpoints, ~2050 lines)
+- Gallery JSON Store: `Orchestrator/orchestrator/gallery_db.py` (~681 lines)
 
 **Workflow Handling**:
 - Parser: `CinemaPromptEngineering/frontend/src/storyboard/services/workflow-parser.ts`
@@ -442,6 +520,56 @@ The frontend communicates directly with ComfyUI nodes, NOT through the Orchestra
 - ComfyUI Client: `CinemaPromptEngineering/frontend/src/storyboard/services/comfyui-client.ts`
 - Generation Progress Sidebar: `CinemaPromptEngineering/frontend/src/storyboard/components/GenerationProgress.tsx`
 - Project Manager: `CinemaPromptEngineering/frontend/src/storyboard/services/project-manager.ts`
+
+---
+
+### Recent Fixes (Feb 22, 2026)
+
+**Gallery Tab — Full Implementation** (Completed)
+- **8-Phase Gallery Build**: Complete media browser and file management as a top-level tab
+- **Backend**: 23 REST endpoints on Orchestrator (`/api/gallery/*`) via `gallery_routes.py` (~2050 lines)
+- **Storage**: JSON flat-file at `{projectPath}/.gallery/gallery.json` — SQLite is incompatible with CIFS/SMB NAS mounts
+- **Frontend**: 37 files — main UI, Zustand store, API service, 28 components
+- **Progressive Loading**: Instant folder tree via `scan-tree`, then on-demand `scan-folder` per directory
+- **Features**: Folder tree, grid/list/masonry/timeline views, batch rename (template/regex/sequential), ratings (1-5), tags (color-coded), PNG metadata search, duplicate finder (by hash), soft-delete trash, compare view, lightbox, video scrubber, hover preview, folder stats
+- **Cross-Tab Communication**: Gallery ↔ Storyboard via `window` CustomEvents:
+  - `gallery:request-image-params` / `gallery:image-params-response` — fetch generation parameters from Storyboard
+  - `gallery:send-reference-image` — send image to Storyboard as reference input
+  - `gallery:restore-workflow-from-metadata` — restore full workflow + parameters from PNG metadata
+  - `gallery:files-renamed` — sync filename changes back to Storyboard panel image history
+
+**Send to Storyboard Reference Image Fix** (Completed)
+- **Endpoint URL**: Gallery was fetching from Orchestrator port 9820, but `/api/read-image` only exists on CPE backend port 9800 (same origin). Fixed to use relative URL.
+- **Response Field**: Code read `data.data` but CPE returns `data.dataUrl`. Fixed to match actual response shape.
+
+**Batch Rename → Storyboard Sync Fix** (Completed)
+- **Root Cause**: `handleGalleryFilesRenamed` updated `imageHistory` entries but did NOT update `panel.image`. The JSX renders `<img src={panel.image}>` directly, so it showed a 404 after rename.
+- **Fix**: Also update `panel.image` to the current history entry's new URL when rename event fires.
+
+**Recent Projects Menu** (Completed)
+- **Location**: `MainMenu.tsx` — hover-expand flyout submenu from main hamburger menu
+- **Storage**: `localStorage` key `storyboard_recent_projects`, max 10 entries
+- **Features**: Project name + path + relative time display, remove individual entries, clear all
+- **Auto-Tracking**: Projects added on both `loadProject()` and `saveProject()`
+
+**Pinterest-Style Borderless Masonry** (Completed)
+- **Card Chrome Removed**: No borders, border-radius, background, or filename labels on masonry cards
+- **Tight Gaps**: Reduced from 12px to 4px column/row gap
+- **Selection**: Uses `outline` instead of `border` to avoid layout shift
+- **Hover**: Opacity fade instead of box-shadow
+
+**Files Modified:**
+- `StoryboardUI.tsx` — Send to Storyboard fix, batch rename sync fix, recent project tracking
+- `MainMenu.tsx` + `MainMenu.css` — Recent Projects submenu with flyout
+- `GalleryMasonry.tsx` — Reduced column gap to 4px
+- `components.css` — Borderless masonry styles
+- `gallery_routes.py` — All 23 Gallery API endpoints
+- `gallery_db.py` — JSON flat-file gallery storage
+
+**New Files:**
+- `CinemaPromptEngineering/frontend/src/gallery/` — Entire gallery module (37 files)
+- `Orchestrator/orchestrator/gallery_db.py` — Gallery JSON store
+- `Orchestrator/orchestrator/api/gallery_routes.py` — Gallery API router
 
 ---
 
@@ -666,5 +794,5 @@ Translated: "/mnt/Mandalore/VFX/Eliot/renders" → Path() works correctly
 
 ---
 
-*Last Updated: February 14, 2026 - Intelligent parameter disable propagation, Ollama fixes, path normalization*
+*Last Updated: February 22, 2026 - Gallery tab (full implementation), recent projects menu, Pinterest masonry, bug fixes*
 *Project: Director's Console - Project Eliot*
