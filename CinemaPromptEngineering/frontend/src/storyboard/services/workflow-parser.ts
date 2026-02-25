@@ -303,6 +303,7 @@ export class WorkflowParser {
       'EmptyLatentImage': ['width', 'height', 'batch_size'],
       'EmptySD3LatentImage': ['width', 'height', 'batch_size'],
       'LoadImage': ['image', 'upload'],
+      'LoadImageOutput': ['image', 'refresh'],
       'LoraLoader': ['lora_name', 'strength_model', 'strength_clip'],
       'LoraLoaderModelOnly': ['lora_name', 'strength_model'],
       'VAELoader': ['vae_name'],
@@ -802,8 +803,8 @@ export class WorkflowParser {
       const typedNode = node as ComfyUINode;
       const class_type = typedNode.class_type || '';
 
-      // Detect LoadImage nodes
-      if (class_type === 'LoadImage') {
+      // Detect LoadImage and LoadImageOutput nodes
+      if (class_type === 'LoadImage' || class_type === 'LoadImageOutput') {
         inputCount++;
         inputs.push({
           name: `reference_image_${inputCount}`,
@@ -977,7 +978,7 @@ export class WorkflowParser {
       const typedNode = node as ComfyUINode;
       const class_type = typedNode.class_type || '';
 
-      if (class_type === 'LoadImage') {
+      if (class_type === 'LoadImage' || class_type === 'LoadImageOutput') {
         hasLoadImage = true;
       }
 
@@ -1168,6 +1169,20 @@ export class WorkflowParser {
             // Set node to bypass mode (mode: 4)
             console.log(`[buildWorkflow] !!! BYPASSING image input node ${input.node_id} (${inputName}, class_type=${node.class_type}) !!!`);
             node.mode = 4;
+            continue;
+          }
+          
+          // If this is a LoadImageOutput node being given a user-uploaded image,
+          // convert it to a LoadImage node since uploads go to ComfyUI's input folder
+          if (node.class_type === 'LoadImageOutput') {
+            console.log(`[buildWorkflow] Converting LoadImageOutput node ${input.node_id} to LoadImage (user provided image goes to input folder)`);
+            node.class_type = 'LoadImage';
+            // Replace inputs entirely — LoadImage only needs image + upload
+            node.inputs = { image: imagePath, upload: 'image' };
+            // Update widgets_values for LoadImage format
+            if (node.widgets_values) {
+              node.widgets_values = [imagePath, 'image'];
+            }
             continue;
           }
           
@@ -1709,7 +1724,7 @@ export class WorkflowParser {
     
     // Image processing nodes that require an image input
     const imageRequiredNodes = [
-      'LoadImage', 'ImageScale', 'ImageScaleToTotalPixels', 'ImageResize',
+      'LoadImage', 'LoadImageOutput', 'ImageScale', 'ImageScaleToTotalPixels', 'ImageResize',
       'ImageResizeKJv2', 'ImageCrop', 'VAEEncode', 'DWPose', 'OpenposePreprocessor',
       'CannyEdgePreprocessor', 'LineartPreprocessor', 'DepthAnything',
       'InstantIDFaceAnalysis', 'ReActorFaceSwap', 'IPAdapter', 'ControlNetLoader',

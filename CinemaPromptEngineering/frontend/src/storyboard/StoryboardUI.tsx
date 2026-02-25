@@ -5732,8 +5732,8 @@ export function StoryboardUI() {
                                   }
                                 }
                                 
-                                // Extract LoadImage filenames
-                                if (classType === 'LoadImage' && node.inputs.image) {
+                                // Extract LoadImage/LoadImageOutput filenames
+                                if ((classType === 'LoadImage' || classType === 'LoadImageOutput') && node.inputs.image) {
                                   const imageName = node.inputs.image as string;
                                   if (!extractedImages.reference_image) {
                                     extractedImages.reference_image = imageName;
@@ -6796,7 +6796,7 @@ export function StoryboardUI() {
                       }
                     }
                     
-                    if (classType === 'LoadImage' && node.inputs.image) {
+                    if ((classType === 'LoadImage' || classType === 'LoadImageOutput') && node.inputs.image) {
                       const imageName = node.inputs.image as string;
                       if (!extractedImages.reference_image) {
                         extractedImages.reference_image = imageName;

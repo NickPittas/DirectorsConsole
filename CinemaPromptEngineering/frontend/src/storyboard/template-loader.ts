@@ -365,7 +365,7 @@ export class TemplateLoader {
     const overrideMap = new Map(overrides?.map(o => [o.nodeId, o]) || []);
 
     for (const [nodeId, node] of Object.entries(workflow)) {
-      if (node.class_type === 'LoadImage') {
+      if (node.class_type === 'LoadImage' || node.class_type === 'LoadImageOutput') {
         const override = overrideMap.get(nodeId) || {};
         
         inputs.push({

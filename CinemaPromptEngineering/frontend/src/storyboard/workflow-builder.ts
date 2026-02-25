@@ -200,7 +200,7 @@ export class WorkflowBuilder {
   }
 
   /**
-   * Apply image inputs to LoadImage and similar nodes
+   * Apply image inputs to LoadImage, LoadImageOutput, and similar nodes
    */
   private applyImages(images: ImageInput[]): void {
     for (const image of images) {
@@ -209,6 +209,18 @@ export class WorkflowBuilder {
         // LoadImage node
         if (node.class_type === 'LoadImage') {
           node.inputs.image = image.filename;
+        }
+        // LoadImageOutput node - convert to LoadImage since uploaded images
+        // go to ComfyUI's input folder, not the output folder
+        if (node.class_type === 'LoadImageOutput') {
+          node.class_type = 'LoadImage';
+          // Replace all inputs with just the image filename (LoadImage format)
+          node.inputs = { image: image.filename, upload: 'image' };
+          // Clear widgets_values since LoadImage has different widget layout
+          const nodeAny = node as any;
+          if (nodeAny.widgets_values) {
+            nodeAny.widgets_values = [image.filename, 'image'];
+          }
         }
         // LoadImageMask
         if (node.class_type === 'LoadImageMask') {
@@ -323,7 +335,7 @@ export class WorkflowBuilder {
     
     for (const nodeId of Object.keys(this.workflow)) {
       const node = this.workflow[nodeId];
-      if (node.class_type === 'LoadImage' || node.class_type === 'LoadImageMask') {
+      if (node.class_type === 'LoadImage' || node.class_type === 'LoadImageMask' || node.class_type === 'LoadImageOutput') {
         results.push({ id: nodeId, node });
       }
     }
