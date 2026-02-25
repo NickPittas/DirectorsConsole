@@ -27,7 +27,7 @@ import {
   Plus, Pencil, ChevronRight,
   Edit3, ZoomIn, ZoomOut, RotateCcw, Maximize, Crosshair,
   PanelRightClose, ChevronLeft, Eye, PanelRight, Info, OctagonX, FolderOpen,
-  Printer
+  Printer, RefreshCw
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
@@ -812,7 +812,7 @@ export function StoryboardUI() {
   const [projectSettings, setProjectSettings] = useProjectSettings();
   
   // Phase 6: Track deleted images to filter on reload
-  const [_deletedImages, setDeletedImages] = useState<Set<string>>(new Set());
+  const [deletedImages, setDeletedImages] = useState<Set<string>>(new Set());
   
   // Phase 4: Loading progress state for project scanning
   const [isLoadingProject, setIsLoadingProject] = useState(false);
@@ -4195,16 +4195,13 @@ export function StoryboardUI() {
       }
 
       // STEP 3: Build panels from scanned folders
+      // ALL folders get a panel — even empty ones (created by teammates).
       for (const panelFolder of scanResult.panels) {
-        // Filter out deleted images
-        const validImages = panelFolder.images.filter(
-          img => !savedDeletedImages.has(img.image_path)
-        );
-
-        if (validImages.length === 0) {
-          // Skip folders with no valid images
-          continue;
-        }
+        // Filter out deleted images, then sort by modified_time ascending
+        // so oldest (v001) is index 0 and newest is last.
+        const validImages = panelFolder.images
+          .filter(img => !savedDeletedImages.has(img.image_path))
+          .sort((a, b) => a.modified_time - b.modified_time);
 
         // Try to find saved panel data: first by exact name, then by fallback pair
         const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name)
@@ -4212,7 +4209,7 @@ export function StoryboardUI() {
           || undefined;
 
         // DEBUG: Log what we found
-        console.log('[Load] Panel folder:', panelFolder.panel_name, 'Saved panel found:', savedPanel ? {
+        console.log('[Load] Panel folder:', panelFolder.panel_name, 'images:', validImages.length, 'Saved panel found:', savedPanel ? {
           name: savedPanel.name,
           notes: savedPanel.notes,
           imageRatings: (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings,
@@ -4221,7 +4218,7 @@ export function StoryboardUI() {
         // Get saved image ratings for this panel
         const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
 
-        // Build image history from scanned images
+        // Build image history from scanned images (already sorted oldest→newest)
         const imageHistory: ImageHistoryEntry[] = validImages.map((img, index) => ({
           id: `${panelFolder.panel_name}_v${index + 1}`,
           url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
@@ -4456,9 +4453,7 @@ export function StoryboardUI() {
         for (const panelFolder of scanResult.panels) {
           const validImages = panelFolder.images.filter(
             img => !savedDeletedImages.has(img.image_path)
-          );
-          
-          if (validImages.length === 0) continue;
+          ).sort((a, b) => a.modified_time - b.modified_time);
           
           // Try to match by folder name, then fallback pair
           const savedPanel = savedPanels2.find(p => p.name === panelFolder.panel_name)
@@ -5255,6 +5250,97 @@ export function StoryboardUI() {
             >
               <Printer size={14} /> Print
             </button>
+            {projectSettings.path && (
+              <button 
+                className="add-panel-btn"
+                onClick={async () => {
+                  try {
+                    const scanResult = await projectManager.scanProjectPanels();
+                    if (!scanResult.success || !scanResult.panels) {
+                      showError('Failed to scan project folders');
+                      return;
+                    }
+                    
+                    const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+                    
+                    setPanels(prev => {
+                      const updatedPanels = [...prev];
+                      const existingNames = new Set(updatedPanels.map(p => p.name));
+                      
+                      for (const panelFolder of scanResult.panels) {
+                        const validImages = panelFolder.images
+                          .filter((img: { image_path: string }) => !deletedImages.has(img.image_path))
+                          .sort((a: { modified_time: number }, b: { modified_time: number }) => a.modified_time - b.modified_time);
+                        
+                        const newHistory: ImageHistoryEntry[] = validImages.map((img: { image_path: string; modified_time: number }, index: number) => ({
+                          id: `${panelFolder.panel_name}_v${index + 1}`,
+                          url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
+                          metadata: {
+                            timestamp: new Date(img.modified_time * 1000),
+                            workflowId: '',
+                            workflowName: 'Loaded',
+                            seed: 0,
+                            promptSummary: '',
+                            parameters: {},
+                            workflow: {},
+                            sourceUrl: '',
+                            savedPath: img.image_path,
+                            version: index + 1,
+                          } as ImageMetadata
+                        }));
+                        
+                        // Update existing panel or create new one
+                        const existingIdx = updatedPanels.findIndex(p => p.name === panelFolder.panel_name);
+                        if (existingIdx >= 0) {
+                          // Refresh in-place: preserve position, workflow, notes, etc.
+                          updatedPanels[existingIdx] = {
+                            ...updatedPanels[existingIdx],
+                            imageHistory: newHistory,
+                            historyIndex: newHistory.length > 0 ? newHistory.length - 1 : -1,
+                            image: newHistory.length > 0 ? newHistory[newHistory.length - 1]?.url ?? null : null,
+                            status: newHistory.length > 0 ? 'complete' as const : 'empty' as const,
+                            progress: newHistory.length > 0 ? 100 : 0,
+                          };
+                        } else {
+                          // New folder discovered — add panel
+                          existingNames.add(panelFolder.panel_name);
+                          const panelIndex = updatedPanels.length;
+                          const newId = Date.now() + panelIndex;
+                          updatedPanels.push({
+                            id: newId,
+                            name: panelFolder.panel_name,
+                            x: calculateNewPanelX(panelIndex + 1, panelIndex + 1),
+                            y: calculateNewPanelY(panelIndex + 1, panelIndex + 1),
+                            width: 300,
+                            height: 300,
+                            notes: '',
+                            imageHistory: newHistory,
+                            historyIndex: newHistory.length > 0 ? newHistory.length - 1 : -1,
+                            image: newHistory.length > 0 ? newHistory[newHistory.length - 1]?.url ?? null : null,
+                            images: [],
+                            currentImageIndex: 0,
+                            status: newHistory.length > 0 ? 'complete' as const : 'empty' as const,
+                            progress: newHistory.length > 0 ? 100 : 0,
+                            locked: false,
+                            selected: false,
+                          });
+                        }
+                      }
+                      
+                      return updatedPanels;
+                    });
+                    
+                    showInfo(`Refreshed all panels from project folder`);
+                  } catch (err) {
+                    console.error('Global refresh failed:', err);
+                    showError('Failed to refresh project');
+                  }
+                }}
+                title="Refresh all panels from project folder"
+              >
+                <RefreshCw size={14} /> Refresh
+              </button>
+            )}
             
             {/* Phase 3: Alignment Toolbar */}
             {panels.filter(p => p.selected).length >= 2 && (
@@ -5533,338 +5619,7 @@ export function StoryboardUI() {
                         size={14}
                       />
                     </div>
-                  )}
-                  
-                  {/* Image navigation for history - shows when there's history */}
-                  {panel.imageHistory.length > 1 && (
-                    <div className="image-nav history-nav">
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPanels(prev => prev.map(p => {
-                            if (p.id !== panel.id) return p;
-                            const newIdx = Math.max(0, p.historyIndex - 1);
-                            const entry = p.imageHistory[newIdx];
-                            return { ...p, historyIndex: newIdx, image: entry?.url || p.image };
-                          }));
-                        }}
-                        disabled={panel.historyIndex <= 0}
-                        title="Previous version"
-                      >◀</button>
-                      <span className="history-counter" title={`Version ${panel.historyIndex + 1} of ${panel.imageHistory.length}`}>
-                        v{panel.historyIndex + 1}/{panel.imageHistory.length}
-                      </span>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPanels(prev => prev.map(p => {
-                            if (p.id !== panel.id) return p;
-                            const newIdx = Math.min(p.imageHistory.length - 1, p.historyIndex + 1);
-                            const entry = p.imageHistory[newIdx];
-                            return { ...p, historyIndex: newIdx, image: entry?.url || p.image };
-                          }));
-                        }}
-                        disabled={panel.historyIndex >= panel.imageHistory.length - 1}
-                        title="Next version"
-                      >▶</button>
-                      <button
-                        className="restore-btn"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const entry = panel.imageHistory[panel.historyIndex];
-                          
-                          // First check if parameters are stored in entry metadata (fresh generations)
-                          if (entry?.metadata?.parameters && entry?.metadata?.workflowId) {
-                            // If workflow is different, skip the parameter reset effect
-                            if (entry.metadata.workflowId !== selectedWorkflowId) {
-                              skipParameterReset.current = true;
-                              setSelectedWorkflowId(entry.metadata.workflowId);
-                            }
-                            const restoredParams = entry.metadata.parameters as Record<string, unknown>;
-                            setParameterValues(restoredParams);
-                            parameterValuesRef.current = restoredParams;
-                            showInfo(`Restored parameters from v${panel.historyIndex + 1}`);
-                            return;
-                          }
-                          
-                          // For images loaded from disk, extract from PNG metadata
-                          const savedPath = entry?.metadata?.savedPath;
-                          if (!savedPath) {
-                            showError('No image path available');
-                            return;
-                          }
-                          
-                          try {
-                            const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
-                            const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
-                            const pngMeta = await response.json();
-                            
-                            if (!pngMeta.success || !pngMeta.prompt) {
-                              showError('Could not read PNG metadata');
-                              return;
-                            }
-                            
-                            const promptData = pngMeta.prompt as Record<string, { inputs?: Record<string, unknown>; class_type?: string }>;
-                            
-                            // Step 1: Match workflow by structural comparison (node IDs + class_types)
-                            // This is far more reliable than filename_prefix matching since workflows
-                            // built from templates preserve the same node IDs and class_types.
-                            let matchedWorkflow: typeof workflows[number] | undefined;
-                            
-                            const promptNodeIds = Object.keys(promptData).filter(k => k !== 'meta' && k !== 'version');
-                            let bestScore = 0;
-                            
-                            for (const wf of workflows) {
-                              const templateNodeIds = Object.keys(wf.workflow).filter(k => k !== 'meta' && k !== 'version');
-                              let matches = 0;
-                              
-                              for (const nodeId of promptNodeIds) {
-                                if (wf.workflow[nodeId]) {
-                                  const promptClassType = promptData[nodeId]?.class_type;
-                                  const templateClassType = (wf.workflow[nodeId] as { class_type?: string })?.class_type;
-                                  if (promptClassType && promptClassType === templateClassType) {
-                                    matches++;
-                                  }
-                                }
-                              }
-                              
-                              // Score: ratio of matching nodes, accounting for both prompt and template size
-                              const score = promptNodeIds.length > 0
-                                ? matches / Math.max(promptNodeIds.length, templateNodeIds.length)
-                                : 0;
-                              
-                              if (score > bestScore && score > 0.5) {
-                                bestScore = score;
-                                matchedWorkflow = wf;
-                              }
-                            }
-                            
-                            // Fallback: try filename_prefix matching if structural match failed
-                            if (!matchedWorkflow) {
-                              let workflowName: string | null = null;
-                              for (const node of Object.values(promptData)) {
-                                if (node.class_type === 'SaveImage' && node.inputs?.filename_prefix) {
-                                  workflowName = node.inputs.filename_prefix as string;
-                                  break;
-                                }
-                              }
-                              if (workflowName) {
-                                matchedWorkflow = workflows.find(w => w.id === workflowName);
-                                if (!matchedWorkflow) {
-                                  const normalize = (s: string) => s.toLowerCase().replace(/[_\s-]/g, '');
-                                  const normalizedTarget = normalize(workflowName);
-                                  matchedWorkflow = workflows.find(w => 
-                                    normalize(w.id).includes(normalizedTarget) || 
-                                    normalizedTarget.includes(normalize(w.id)) ||
-                                    normalize(w.name || '').includes(normalizedTarget) ||
-                                    normalizedTarget.includes(normalize(w.name || ''))
-                                  );
-                                }
-                              }
-                            }
-                            
-                            if (!matchedWorkflow) {
-                              showWarning('Could not find matching workflow. Extracting parameters only.');
-                            }
-                            
-                            // Step 2: Extract parameters using workflow's parameter definitions
-                            const extractedParams: Record<string, unknown> = {};
-                            const extractedImages: Record<string, string> = {};
-                            
-                            if (matchedWorkflow) {
-                              // Use workflow's parsed parameter definitions to map node_id -> input_name
-                              for (const param of matchedWorkflow.parsed.parameters) {
-                                const nodeId = param.node_id;
-                                const inputName = param.input_name;
-                                const node = promptData[nodeId];
-                                if (node?.inputs && inputName in node.inputs) {
-                                  const value = node.inputs[inputName];
-                                  // Skip array references (connections to other nodes)
-                                  if (!Array.isArray(value)) {
-                                    extractedParams[param.name] = value;
-                                  }
-                                }
-                              }
-                              
-                              // Extract image inputs
-                              for (const imgInput of matchedWorkflow.parsed.image_inputs) {
-                                const nodeId = imgInput.node_id;
-                                const inputName = imgInput.input_name;
-                                const node = promptData[nodeId];
-                                if (node?.inputs && inputName in node.inputs) {
-                                  const imageName = node.inputs[inputName] as string;
-                                  if (imageName && typeof imageName === 'string') {
-                                    // Store ComfyUI image filename - will need to fetch from ComfyUI
-                                    extractedImages[imgInput.name] = imageName;
-                                  }
-                                }
-                              }
-                            }
-                            
-                            // Fallback: extract common parameters from any node if workflow matching failed
-                            if (Object.keys(extractedParams).length === 0) {
-                              for (const node of Object.values(promptData)) {
-                                if (!node.inputs) continue;
-                                const classType = node.class_type || '';
-                                
-                                if (classType.includes('KSampler') || classType.includes('Sampler')) {
-                                  if (node.inputs.seed !== undefined) extractedParams.seed = node.inputs.seed;
-                                  if (node.inputs.steps !== undefined) extractedParams.steps = node.inputs.steps;
-                                  if (node.inputs.cfg !== undefined) extractedParams.cfg = node.inputs.cfg;
-                                  if (node.inputs.sampler_name) extractedParams.sampler_name = node.inputs.sampler_name;
-                                  if (node.inputs.scheduler) extractedParams.scheduler = node.inputs.scheduler;
-                                  if (node.inputs.denoise !== undefined) extractedParams.denoise = node.inputs.denoise;
-                                  if (node.inputs.positive_prompt) extractedParams.positive_prompt = node.inputs.positive_prompt;
-                                  if (node.inputs.negative_prompt) extractedParams.negative_prompt = node.inputs.negative_prompt;
-                                }
-                                
-                                if (classType === 'CLIPTextEncode' && node.inputs.text) {
-                                  const text = node.inputs.text as string;
-                                  if (typeof text === 'string' && text.length > 20 && !extractedParams.positive_prompt) {
-                                    extractedParams.positive_prompt = text;
-                                  }
-                                }
-                                
-                                if (classType.includes('TextEncode') && !extractedParams.positive_prompt) {
-                                  const text = (node.inputs.prompt || node.inputs.text) as string;
-                                  if (typeof text === 'string' && text.length > 20) {
-                                    extractedParams.positive_prompt = text;
-                                  }
-                                }
-                                
-                                // Extract LoadImage/LoadImageOutput filenames
-                                if ((classType === 'LoadImage' || classType === 'LoadImageOutput') && node.inputs.image) {
-                                  const imageName = node.inputs.image as string;
-                                  if (!extractedImages.reference_image) {
-                                    extractedImages.reference_image = imageName;
-                                  }
-                                }
-                              }
-                            }
-                            
-                            // Step 3: Apply the restored data
-                            let restoredCount = 0;
-                            
-                            // Switch workflow if matched
-                            if (matchedWorkflow && matchedWorkflow.id !== selectedWorkflowId) {
-                              skipParameterReset.current = true;
-                              setSelectedWorkflowId(matchedWorkflow.id);
-                              restoredCount++;
-                            }
-                            
-                            // Set parameters
-                            if (Object.keys(extractedParams).length > 0) {
-                              setParameterValues(prev => {
-                                const newValues = { ...prev, ...extractedParams };
-                                parameterValuesRef.current = newValues;
-                                return newValues;
-                              });
-                              restoredCount += Object.keys(extractedParams).length;
-                            }
-                            
-                            // Handle image inputs - fetch from ComfyUI and set as data URLs
-                            const imageCount = Object.keys(extractedImages).length;
-                            if (imageCount > 0) {
-                              const comfyNodes = renderNodes.filter(n => n.status === 'online');
-                              if (comfyNodes.length > 0) {
-                                const comfyUrl = comfyNodes[0].url.replace(/\/$/, '');
-                                
-                                for (const [inputName, imageName] of Object.entries(extractedImages)) {
-                                  try {
-                                    // Fetch image from ComfyUI input folder
-                                    const imageUrl = `${comfyUrl}/view?filename=${encodeURIComponent(imageName)}&type=input`;
-                                    const imgResponse = await fetch(imageUrl);
-                                    if (imgResponse.ok) {
-                                      const blob = await imgResponse.blob();
-                                      const dataUrl = await new Promise<string>((resolve) => {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => resolve(reader.result as string);
-                                        reader.readAsDataURL(blob);
-                                      });
-                                      extractedParams[inputName] = dataUrl;
-                                      restoredCount++;
-                                    }
-                                  } catch (err) {
-                                    console.warn(`Could not fetch image ${imageName}:`, err);
-                                  }
-                                }
-                                
-                                // Update parameters with fetched images
-                                if (Object.keys(extractedImages).some(k => extractedParams[k])) {
-                                  setParameterValues(prev => {
-                                    const newValues = { ...prev, ...extractedParams };
-                                    parameterValuesRef.current = newValues;
-                                    return newValues;
-                                  });
-                                }
-                              }
-                            }
-                            
-                            if (restoredCount > 0) {
-                              const workflowMsg = matchedWorkflow ? `workflow "${matchedWorkflow.name || matchedWorkflow.id}"` : '';
-                              const paramMsg = `${Object.keys(extractedParams).length} parameters`;
-                              const imageMsg = imageCount > 0 ? `, ${imageCount} images` : '';
-                              showInfo(`Restored ${workflowMsg ? workflowMsg + ', ' : ''}${paramMsg}${imageMsg}`);
-                            } else {
-                              showWarning('No parameters could be extracted from PNG');
-                            }
-                            
-                          } catch (err) {
-                            console.error('Failed to restore from PNG:', err);
-                            showError('Failed to restore parameters');
-                          }
-                        }}
-                        title="Restore workflow and parameters from this version"
-                      >↩</button>
-                      <button 
-                        className="save-btn"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const entry = panel.imageHistory[panel.historyIndex];
-                          if (entry) {
-                            try {
-                              // If project folder is configured, save directly to it
-                              if (projectSettings.path) {
-                                const panelName = panel.name || `Panel_${String(panel.id).padStart(2, '0')}`;
-                                const result = await projectManager.saveToProjectFolder(
-                                  entry.url,
-                                  panel.id,
-                                  entry.metadata.version,
-                                  entry.metadata,
-                                  panelName  // CRITICAL: Pass panel name for per-panel folder creation
-                                );
-                                
-                                if (result.success) {
-                                  showInfo(`Saved: ${result.savedPath}`);
-                                } else {
-                                  showError(`Failed to save: ${result.error}`);
-                                }
-                              } else {
-                                // Fallback to browser download if no folder configured
-                                const { filename, blob } = await projectManager.saveImageToProject(
-                                  entry.url,
-                                  panel.id,
-                                  entry.metadata.version,
-                                  entry.metadata
-                                );
-                                projectManager.triggerDownload(blob, filename);
-                                
-                                // Also download metadata JSON
-                                const metaJson = projectManager.generateMetadataJson(entry);
-                                const metaBlob = new Blob([metaJson], { type: 'application/json' });
-                                projectManager.triggerDownload(metaBlob, filename.replace('.png', '_metadata.json'));
-                                
-                                showInfo(`Downloaded: ${filename}`);
-                              }
-                            } catch (err) {
-                              showError(`Failed to save: ${err}`);
-                            }
-                          }
-                        }}
-                        title={projectSettings.path ? `Save to ${projectSettings.path}` : "Download image"}
-                      >💾</button>
-                    </div>
-                  )}
+                   )}
                   
                   {/* Minimal generating indicator — thin bottom bar + small badge */}
                   {panel.status === 'generating' && (
@@ -5899,6 +5654,305 @@ export function StoryboardUI() {
                   
                   <span className="panel-index">{panel.id}</span>
                 </div>
+                
+                {/* Image navigation for history - static bar below image */}
+                {panel.imageHistory.length > 1 && (
+                  <div className="image-nav history-nav">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPanels(prev => prev.map(p => {
+                          if (p.id !== panel.id) return p;
+                          const newIdx = Math.max(0, p.historyIndex - 1);
+                          const entry = p.imageHistory[newIdx];
+                          return { ...p, historyIndex: newIdx, image: entry?.url || p.image };
+                        }));
+                      }}
+                      disabled={panel.historyIndex <= 0}
+                      title="Previous version"
+                    >◀</button>
+                    <span className="history-counter" title={`Version ${panel.historyIndex + 1} of ${panel.imageHistory.length}`}>
+                      v{panel.historyIndex + 1}/{panel.imageHistory.length}
+                    </span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPanels(prev => prev.map(p => {
+                          if (p.id !== panel.id) return p;
+                          const newIdx = Math.min(p.imageHistory.length - 1, p.historyIndex + 1);
+                          const entry = p.imageHistory[newIdx];
+                          return { ...p, historyIndex: newIdx, image: entry?.url || p.image };
+                        }));
+                      }}
+                      disabled={panel.historyIndex >= panel.imageHistory.length - 1}
+                      title="Next version"
+                    >▶</button>
+                    <button
+                      className="restore-btn"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const entry = panel.imageHistory[panel.historyIndex];
+                        
+                        // First check if parameters are stored in entry metadata (fresh generations)
+                        if (entry?.metadata?.parameters && entry?.metadata?.workflowId) {
+                          // If workflow is different, skip the parameter reset effect
+                          if (entry.metadata.workflowId !== selectedWorkflowId) {
+                            skipParameterReset.current = true;
+                            setSelectedWorkflowId(entry.metadata.workflowId);
+                          }
+                          const restoredParams = entry.metadata.parameters as Record<string, unknown>;
+                          setParameterValues(restoredParams);
+                          parameterValuesRef.current = restoredParams;
+                          showInfo(`Restored parameters from v${panel.historyIndex + 1}`);
+                          return;
+                        }
+                        
+                        // For images loaded from disk, extract from PNG metadata
+                        const savedPath = entry?.metadata?.savedPath;
+                        if (!savedPath) {
+                          showError('No image path available');
+                          return;
+                        }
+                        
+                        try {
+                          const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+                          const response = await fetch(`${orchestratorUrl}/api/png-metadata?path=${encodeURIComponent(savedPath)}`);
+                          const pngMeta = await response.json();
+                          
+                          if (!pngMeta.success || !pngMeta.prompt) {
+                            showError('Could not read PNG metadata');
+                            return;
+                          }
+                          
+                          const promptData = pngMeta.prompt as Record<string, { inputs?: Record<string, unknown>; class_type?: string }>;
+                          
+                          // Step 1: Match workflow by structural comparison (node IDs + class_types)
+                          // This is far more reliable than filename_prefix matching since workflows
+                          // built from templates preserve the same node IDs and class_types.
+                          let matchedWorkflow: typeof workflows[number] | undefined;
+                          
+                          const promptNodeIds = Object.keys(promptData).filter(k => k !== 'meta' && k !== 'version');
+                          let bestScore = 0;
+                          
+                          for (const wf of workflows) {
+                            let matches = 0;
+                            
+                            for (const nodeId of promptNodeIds) {
+                              if (wf.workflow[nodeId]) {
+                                const promptClassType = promptData[nodeId]?.class_type;
+                                const templateClassType = (wf.workflow[nodeId] as { class_type?: string })?.class_type;
+                                if (promptClassType && promptClassType === templateClassType) {
+                                  matches++;
+                                }
+                              }
+                            }
+                            
+                            // Require at least 60% match and better than previous best
+                            const score = promptNodeIds.length > 0 ? matches / promptNodeIds.length : 0;
+                            if (score > 0.6 && score > bestScore) {
+                              bestScore = score;
+                              matchedWorkflow = wf;
+                            }
+                          }
+                          
+                          // Step 2: Extract parameters using matched workflow's parsed info
+                          const extractedParams: Record<string, unknown> = {};
+                          const extractedImages: Record<string, string> = {};
+                          
+                          if (matchedWorkflow) {
+                            // Use parsed parameter info from workflow-parser
+                            for (const param of matchedWorkflow.parsed.parameters) {
+                              const nodeId = param.node_id;
+                              const inputName = param.input_name;
+                              const node = promptData[nodeId];
+                              if (node?.inputs && inputName in node.inputs) {
+                                const value = node.inputs[inputName];
+                                // Skip array values (these are links to other nodes, not user parameters)
+                                if (!Array.isArray(value)) {
+                                  extractedParams[param.name] = value;
+                                }
+                              }
+                            }
+                            
+                            // Extract image inputs
+                            for (const imgInput of matchedWorkflow.parsed.image_inputs) {
+                              const nodeId = imgInput.node_id;
+                              const inputName = imgInput.input_name;
+                              const node = promptData[nodeId];
+                              if (node?.inputs && inputName in node.inputs) {
+                                const imageName = node.inputs[inputName] as string;
+                                if (imageName && typeof imageName === 'string') {
+                                  // Store ComfyUI image filename - will need to fetch from ComfyUI
+                                  extractedImages[imgInput.name] = imageName;
+                                }
+                              }
+                            }
+                          }
+                          
+                          // Fallback: extract common parameters from any node if workflow matching failed
+                          if (Object.keys(extractedParams).length === 0) {
+                            for (const node of Object.values(promptData)) {
+                              if (!node.inputs) continue;
+                              const classType = node.class_type || '';
+                              
+                              if (classType.includes('KSampler') || classType.includes('Sampler')) {
+                                if (node.inputs.seed !== undefined) extractedParams.seed = node.inputs.seed;
+                                if (node.inputs.steps !== undefined) extractedParams.steps = node.inputs.steps;
+                                if (node.inputs.cfg !== undefined) extractedParams.cfg = node.inputs.cfg;
+                                if (node.inputs.sampler_name) extractedParams.sampler_name = node.inputs.sampler_name;
+                                if (node.inputs.scheduler) extractedParams.scheduler = node.inputs.scheduler;
+                                if (node.inputs.denoise !== undefined) extractedParams.denoise = node.inputs.denoise;
+                                if (node.inputs.positive_prompt) extractedParams.positive_prompt = node.inputs.positive_prompt;
+                                if (node.inputs.negative_prompt) extractedParams.negative_prompt = node.inputs.negative_prompt;
+                              }
+                              
+                              if (classType === 'CLIPTextEncode' && node.inputs.text) {
+                                const text = node.inputs.text as string;
+                                if (typeof text === 'string' && text.length > 20 && !extractedParams.positive_prompt) {
+                                  extractedParams.positive_prompt = text;
+                                }
+                              }
+                              
+                              if (classType.includes('TextEncode') && !extractedParams.positive_prompt) {
+                                const text = (node.inputs.prompt || node.inputs.text) as string;
+                                if (typeof text === 'string' && text.length > 20) {
+                                  extractedParams.positive_prompt = text;
+                                }
+                              }
+                              
+                              // Extract LoadImage/LoadImageOutput filenames
+                              if ((classType === 'LoadImage' || classType === 'LoadImageOutput') && node.inputs.image) {
+                                const imageName = node.inputs.image as string;
+                                if (!extractedImages.reference_image) {
+                                  extractedImages.reference_image = imageName;
+                                }
+                              }
+                            }
+                          }
+                          
+                          // Step 3: Apply the restored data
+                          let restoredCount = 0;
+                          
+                          // Switch workflow if matched
+                          if (matchedWorkflow && matchedWorkflow.id !== selectedWorkflowId) {
+                            skipParameterReset.current = true;
+                            setSelectedWorkflowId(matchedWorkflow.id);
+                            restoredCount++;
+                          }
+                          
+                          // Set parameters
+                          if (Object.keys(extractedParams).length > 0) {
+                            setParameterValues(prev => {
+                              const newValues = { ...prev, ...extractedParams };
+                              parameterValuesRef.current = newValues;
+                              return newValues;
+                            });
+                            restoredCount += Object.keys(extractedParams).length;
+                          }
+                          
+                          // Handle image inputs - fetch from ComfyUI and set as data URLs
+                          const imageCount = Object.keys(extractedImages).length;
+                          if (imageCount > 0) {
+                            const comfyNodes = renderNodes.filter(n => n.status === 'online');
+                            if (comfyNodes.length > 0) {
+                              const comfyUrl = comfyNodes[0].url.replace(/\/$/, '');
+                              
+                              for (const [inputName, imageName] of Object.entries(extractedImages)) {
+                                try {
+                                  // Fetch image from ComfyUI input folder
+                                  const imageUrl = `${comfyUrl}/view?filename=${encodeURIComponent(imageName)}&type=input`;
+                                  const imgResponse = await fetch(imageUrl);
+                                  if (imgResponse.ok) {
+                                    const blob = await imgResponse.blob();
+                                    const dataUrl = await new Promise<string>((resolve) => {
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => resolve(reader.result as string);
+                                      reader.readAsDataURL(blob);
+                                    });
+                                    extractedParams[inputName] = dataUrl;
+                                    restoredCount++;
+                                  }
+                                } catch (err) {
+                                  console.warn(`Could not fetch image ${imageName}:`, err);
+                                }
+                              }
+                              
+                              // Update parameters with fetched images
+                              if (Object.keys(extractedImages).some(k => extractedParams[k])) {
+                                setParameterValues(prev => {
+                                  const newValues = { ...prev, ...extractedParams };
+                                  parameterValuesRef.current = newValues;
+                                  return newValues;
+                                });
+                              }
+                            }
+                          }
+                          
+                          if (restoredCount > 0) {
+                            const workflowMsg = matchedWorkflow ? `workflow "${matchedWorkflow.name || matchedWorkflow.id}"` : '';
+                            const paramMsg = `${Object.keys(extractedParams).length} parameters`;
+                            const imageMsg = imageCount > 0 ? `, ${imageCount} images` : '';
+                            showInfo(`Restored ${workflowMsg ? workflowMsg + ', ' : ''}${paramMsg}${imageMsg}`);
+                          } else {
+                            showWarning('No parameters could be extracted from PNG');
+                          }
+                          
+                        } catch (err) {
+                          console.error('Failed to restore from PNG:', err);
+                          showError('Failed to restore parameters');
+                        }
+                      }}
+                      title="Restore workflow and parameters from this version"
+                    >↩</button>
+                    <button 
+                      className="save-btn"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const entry = panel.imageHistory[panel.historyIndex];
+                        if (entry) {
+                          try {
+                            // If project folder is configured, save directly to it
+                            if (projectSettings.path) {
+                              const panelName = panel.name || `Panel_${String(panel.id).padStart(2, '0')}`;
+                              const result = await projectManager.saveToProjectFolder(
+                                entry.url,
+                                panel.id,
+                                entry.metadata.version,
+                                entry.metadata,
+                                panelName  // CRITICAL: Pass panel name for per-panel folder creation
+                              );
+                              
+                              if (result.success) {
+                                showInfo(`Saved: ${result.savedPath}`);
+                              } else {
+                                showError(`Failed to save: ${result.error}`);
+                              }
+                            } else {
+                              // Fallback to browser download if no folder configured
+                              const { filename, blob } = await projectManager.saveImageToProject(
+                                entry.url,
+                                panel.id,
+                                entry.metadata.version,
+                                entry.metadata
+                              );
+                              projectManager.triggerDownload(blob, filename);
+                              
+                              // Also download metadata JSON
+                              const metaJson = projectManager.generateMetadataJson(entry);
+                              const metaBlob = new Blob([metaJson], { type: 'application/json' });
+                              projectManager.triggerDownload(metaBlob, filename.replace('.png', '_metadata.json'));
+                              
+                              showInfo(`Downloaded: ${filename}`);
+                            }
+                          } catch (err) {
+                            showError(`Failed to save: ${err}`);
+                          }
+                        }
+                      }}
+                      title={projectSettings.path ? `Save to ${projectSettings.path}` : "Download image"}
+                    >💾</button>
+                  </div>
+                )}
                 
                 {/* Panel controls at bottom */}
                 <div className="panel-controls">
@@ -5964,6 +6018,70 @@ export function StoryboardUI() {
                       title="Delete image"
                     >
                       <Trash2 size={14} />
+                    </button>
+                  )}
+                  
+                  {/* Refresh Panel — re-scan this panel's folder for new/renamed files */}
+                  {projectSettings.path && (
+                    <button
+                      className="panel-refresh-btn"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const scanResult = await projectManager.scanProjectPanels();
+                          if (!scanResult.success || !scanResult.panels) return;
+                          
+                          const panelName = panel.name || `Panel_${String(panel.id).padStart(2, '0')}`;
+                          const matchedFolder = scanResult.panels.find(
+                            (pf: { panel_name: string }) => pf.panel_name === panelName
+                          );
+                          
+                          if (!matchedFolder) return;
+                          
+                          const validImages = matchedFolder.images
+                            .filter((img: { image_path: string }) => !deletedImages.has(img.image_path))
+                            .sort((a: { modified_time: number }, b: { modified_time: number }) => a.modified_time - b.modified_time);
+                          
+                          const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+                          
+                          const newHistory: ImageHistoryEntry[] = validImages.map((img: { image_path: string; modified_time: number }, index: number) => ({
+                            id: `${panelName}_v${index + 1}`,
+                            url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
+                            metadata: {
+                              timestamp: new Date(img.modified_time * 1000),
+                              workflowId: '',
+                              workflowName: 'Loaded',
+                              seed: 0,
+                              promptSummary: '',
+                              parameters: {},
+                              workflow: {},
+                              sourceUrl: '',
+                              savedPath: img.image_path,
+                              version: index + 1,
+                            } as ImageMetadata
+                          }));
+                          
+                          setPanels(prev => prev.map(p => {
+                            if (p.id !== panel.id) return p;
+                            return {
+                              ...p,
+                              imageHistory: newHistory,
+                              historyIndex: newHistory.length > 0 ? newHistory.length - 1 : -1,
+                              image: newHistory.length > 0 ? newHistory[newHistory.length - 1]?.url ?? null : null,
+                              status: newHistory.length > 0 ? 'complete' as const : 'empty' as const,
+                              progress: newHistory.length > 0 ? 100 : 0,
+                            };
+                          }));
+                          
+                          showInfo(`Refreshed ${panelName}: ${newHistory.length} file${newHistory.length !== 1 ? 's' : ''}`);
+                        } catch (err) {
+                          console.error('Panel refresh failed:', err);
+                          showError('Failed to refresh panel');
+                        }
+                      }}
+                      title="Refresh panel folder"
+                    >
+                      <RefreshCw size={14} />
                     </button>
                   )}
                 </div>

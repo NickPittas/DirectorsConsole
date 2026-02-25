@@ -324,8 +324,7 @@ export function GalleryMasonry({ orchestratorUrl, onContextMenu, onDoubleClick }
       ref={containerRef}
       className="gallery-masonry"
       style={{
-        columnCount,
-        columnGap: '4px',
+        gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
       }}
     >
       {visibleFiles.map((file) => (

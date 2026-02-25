@@ -2751,19 +2751,24 @@ async def scan_project_panels(
                         logger.debug(f"Could not scan panel folder {item.path}: {e}")
                         continue
 
-                    # Sort images by name
-                    panel_images.sort(key=lambda x: x.filename)
+                    # Sort images by modified_time (ascending: oldest first,
+                    # newest last) so that v001 is index 0 and the latest
+                    # image/video is the last entry. This also correctly
+                    # interleaves non-standard filenames (e.g. downloaded
+                    # references) by their filesystem timestamp.
+                    panel_images.sort(key=lambda x: x.modified_time)
 
-                    # Only include folders that have images
-                    if panel_images:
-                        panels.append(
-                            PanelFolderInfo(
-                                panel_name=item.name,
-                                folder_path=item.path,
-                                images=panel_images,
-                            )
+                    # Include ALL non-hidden subdirectories as panels,
+                    # even if they have no images yet (e.g. folders
+                    # created by teammates in other sessions).
+                    panels.append(
+                        PanelFolderInfo(
+                            panel_name=item.name,
+                            folder_path=item.path,
+                            images=panel_images,
                         )
-                        total_images += len(panel_images)
+                    )
+                    total_images += len(panel_images)
 
             return ScanProjectPanelsResponse(
                 success=True,

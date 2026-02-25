@@ -1452,27 +1452,36 @@
   color: white;
 }
 
-/* Image navigation for batch/history - hover to show */
-.image-nav {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+.panel-controls .panel-refresh-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background-color: rgba(0, 0, 0, 0.7);
-  padding: 4px 8px;
+  justify-content: center;
+  background-color: var(--sb-bg-elevated);
+  border: 1px solid var(--sb-border-medium);
   border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
+  color: var(--sb-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-/* Show nav on panel hover */
-.panel-slot:hover .image-nav {
-  opacity: 1;
-  pointer-events: auto;
+.panel-controls .panel-refresh-btn:hover {
+  background-color: rgba(80, 160, 220, 0.8);
+  border-color: rgba(80, 160, 220, 0.8);
+  color: white;
+}
+
+/* Image navigation for batch/history - static strip below image */
+.image-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: var(--sb-bg-dark);
+  padding: 3px 8px;
+  border-top: 1px solid var(--sb-border-medium);
 }
 
 .image-nav button {
@@ -1480,19 +1489,25 @@
   height: 24px;
   border: none;
   background-color: transparent;
-  color: #fff;
+  color: var(--sb-text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .image-nav button:hover {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
+  color: var(--sb-text-primary);
+}
+
+.image-nav button:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .image-nav span {
   font-size: 10px;
-  color: #ccc;
+  color: var(--sb-text-secondary);
 }
 
 .panel-footer {

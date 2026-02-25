@@ -581,11 +581,12 @@
   padding: 4px;
   overflow-y: auto;
   flex: 1;
+  display: grid;
+  gap: 4px;
+  align-items: start;
 }
 
 .gallery-masonry-item {
-  break-inside: avoid;
-  margin-bottom: 4px;
   border-radius: 0;
   overflow: hidden;
   cursor: pointer;
