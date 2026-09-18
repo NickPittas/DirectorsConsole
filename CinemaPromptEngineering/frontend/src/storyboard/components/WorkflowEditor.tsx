@@ -126,8 +126,8 @@ export function WorkflowEditor({
   const [activeTab, setActiveTab] = useState<'exposed' | 'all' | 'nodes'>('exposed');
   const [searchTerm, setSearchTerm] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const draggedIndexRef = useRef<number | null>(null);
+  const [draggedBinding, setDraggedBinding] = useState<string | null>(null);
+  const draggedBindingRef = useRef<string | null>(null);
   const [nodeDefsLoaded, setNodeDefsLoaded] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<string[]>([]);
   const loadedDefinitionsUrlRef = useRef<string | null>(null);
@@ -411,7 +411,17 @@ export function WorkflowEditor({
       console.log(`[WorkflowEditor] Detected enum from node definitions: ${classType}.${inputName}`, inputDef.options);
     }
     
-    if (configs.some(config => bindingKey(config) === bindingKey({ node_id: nodeId, input_name: inputName }))) return;
+    const targetBinding = bindingKey({ node_id: nodeId, input_name: inputName });
+    const existing = configs.find(config => bindingKey(config) === targetBinding);
+    if (existing?.exposed) return;
+    if (existing) {
+      // Re-exposing keeps the user's value, metadata, name, order, and flags.
+      setConfigs(previous => previous.map(config => bindingKey(config) === targetBinding
+        ? { ...config, exposed: true }
+        : config));
+      setHasChanges(true);
+      return;
+    }
 
     const newConfig: ParameterConfig = {
       name: `${inputName}_${nodeId}`,
@@ -432,7 +442,9 @@ export function WorkflowEditor({
       schema: inputDef?.raw,
     };
     
-    setConfigs(prev => [...prev, newConfig]);
+    setConfigs(previous => previous.some(config => bindingKey(config) === targetBinding)
+      ? previous
+      : [...previous, newConfig]);
     setHasChanges(true);
   }, [comfyUrl, configs, workflow]);
   
@@ -452,47 +464,56 @@ export function WorkflowEditor({
   }, [selectedConfig]);
   
   // Drag and drop handlers
-  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
-    setDraggedIndex(index);
-    draggedIndexRef.current = index;
+  const handleDragStart = useCallback((e: React.DragEvent, key: string) => {
+    setDraggedBinding(key);
+    draggedBindingRef.current = key;
     e.dataTransfer.effectAllowed = 'move';
     // Required for Firefox
-    e.dataTransfer.setData('text/plain', String(index));
+    e.dataTransfer.setData('text/plain', key);
   }, []);
 
   const handleDragEnd = useCallback(() => {
-    draggedIndexRef.current = null;
-    setDraggedIndex(null);
+    draggedBindingRef.current = null;
+    setDraggedBinding(null);
   }, []);
 
-  const handleDragEnter = useCallback((e: React.DragEvent, index: number) => {
+  const handleDragEnter = useCallback((e: React.DragEvent, targetKey: string) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const currentDraggedIndex = draggedIndexRef.current;
-    if (currentDraggedIndex === null || currentDraggedIndex === index) return;
+    const sourceKey = draggedBindingRef.current;
+    if (!sourceKey || sourceKey === targetKey) return;
 
-    // Reorder configs
-    setConfigs(prev => {
-      const newConfigs = [...prev];
-      const draggedConfig = newConfigs[currentDraggedIndex];
-      newConfigs.splice(currentDraggedIndex, 1);
-      newConfigs.splice(index, 0, draggedConfig);
+    setConfigs(previous => {
+      const isDisplayed = (config: ParameterConfig) => {
+        const matchesSearch = config.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          config.display_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          config.node_id.toLowerCase().includes(searchTerm.toLowerCase());
+        return (activeTab === 'exposed' ? config.exposed : true) && matchesSearch;
+      };
+      const displayed = previous.filter(isDisplayed);
+      const sourceIndex = displayed.findIndex(config => bindingKey(config) === sourceKey);
+      const targetIndex = displayed.findIndex(config => bindingKey(config) === targetKey);
+      if (sourceIndex < 0 || targetIndex < 0) return previous;
 
-      // Update order values
-      newConfigs.forEach((config, i) => {
-        config.order = i;
+      const reordered = [...displayed];
+      const [source] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetIndex, 0, source);
+      const displayedSlots = previous
+        .map((config, index) => isDisplayed(config) ? index : -1)
+        .filter(index => index >= 0);
+      const next = [...previous];
+      displayedSlots.forEach((slot, index) => {
+        next[slot] = { ...reordered[index], order: slot };
       });
-
-      return newConfigs;
+      return next;
     });
 
-    draggedIndexRef.current = index;
-    setDraggedIndex(index);
+    setDraggedBinding(sourceKey);
     setHasChanges(true);
-  }, []);
+  }, [activeTab, searchTerm]);
 
-  const handleDragOver = useCallback((e: React.DragEvent, _index: number) => {
+  const handleDragOver = useCallback((e: React.DragEvent, _key: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     // Reordering is handled in handleDragEnter for better UX
@@ -500,8 +521,8 @@ export function WorkflowEditor({
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    draggedIndexRef.current = null;
-    setDraggedIndex(null);
+    draggedBindingRef.current = null;
+    setDraggedBinding(null);
   }, []);
   
   // Filter configs based on search and tab
@@ -594,7 +615,7 @@ export function WorkflowEditor({
             {filteredConfigs.length === 0 ? (
               <p className="empty-message">No exposed parameters. Add parameters from the "All Nodes" tab.</p>
             ) : (
-              filteredConfigs.map((config, index) => (
+              filteredConfigs.map((config) => (
                 <ParameterConfigCard
                   key={`${config.node_id}-${config.input_name}`}
                   config={config}
@@ -604,12 +625,12 @@ export function WorkflowEditor({
                   onSelect={() => setSelectedConfig(config)}
                   onUpdate={(updates) => updateConfig(bindingKey(config), updates)}
                   onRemove={() => removeParameter(bindingKey(config))}
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragEnter={(e) => handleDragEnter(e, index)}
+                  onDragStart={(e) => handleDragStart(e, bindingKey(config))}
+                  onDragOver={(e) => handleDragOver(e, bindingKey(config))}
+                  onDragEnter={(e) => handleDragEnter(e, bindingKey(config))}
                   onDrop={handleDrop}
                   onDragEnd={handleDragEnd}
-                  isDragging={draggedIndex === index}
+                  isDragging={draggedBinding === bindingKey(config)}
                 />
               ))
             )}

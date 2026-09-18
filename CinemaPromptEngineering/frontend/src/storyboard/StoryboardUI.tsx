@@ -15,7 +15,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ParameterPanel } from './components/ParameterWidgets';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
 import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
-import { findWorkflowNode, getWorkflowNodeInput } from './services/workflow-editor-options';
+import {
+  findWorkflowNode,
+  getWorkflowNodeInput,
+  reconcileParameterValues,
+} from './services/workflow-editor-options';
 import { CameraAngle } from './data/cameraAngleData';
 import { useErrorNotifications, ErrorNotificationContainer } from './components/ErrorNotification';
 import { NodeManager } from './components/NodeManager';
@@ -6444,6 +6448,27 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
               comfyUrl={editorComfyUrl}
               onSave={(config) => {
                 skipParameterReset.current = true;
+                const previousConfig = editingWorkflow.config;
+                const reconciledValues = reconcileParameterValues(
+                  parameterValuesRef.current,
+                  previousConfig,
+                  config,
+                );
+                parameterValuesRef.current = reconciledValues;
+                setParameterValues(reconciledValues);
+                setPanels(prev => prev.map(panel => {
+                  const belongsToWorkflow = panel.workflowId === editingWorkflow.id ||
+                    (panel.id === selectedPanelIdRef.current && !panel.workflowId);
+                  if (!belongsToWorkflow || !panel.parameterValues) return panel;
+                  return {
+                    ...panel,
+                    parameterValues: reconcileParameterValues(
+                      panel.parameterValues,
+                      previousConfig,
+                      config,
+                    ),
+                  };
+                }));
                 setWorkflows(prev => prev.map(w =>
                   w.id === editingWorkflow.id ? { ...w, config } : w
                 ));

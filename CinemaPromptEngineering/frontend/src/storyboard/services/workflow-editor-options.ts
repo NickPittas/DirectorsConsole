@@ -10,6 +10,34 @@ export function bindingKey(binding: InputBinding): string {
   return `${String(binding.node_id)}\u0000${binding.input_name}`;
 }
 
+export interface NamedInputBinding extends InputBinding {
+  name: string;
+}
+
+/** Migrate renamed controls by binding, preferring an already-edited new key. */
+export function reconcileParameterValues(
+  values: Record<string, unknown>,
+  previousConfigs: readonly NamedInputBinding[],
+  nextConfigs: readonly NamedInputBinding[],
+): Record<string, unknown> {
+  const previousByBinding = new Map(previousConfigs.map(config => [bindingKey(config), config]));
+  const currentNames = new Set(nextConfigs.map(config => config.name));
+  const reconciled = { ...values };
+
+  for (const config of nextConfigs) {
+    const previous = previousByBinding.get(bindingKey(config));
+    const aliases = [config.name, previous?.name, `${config.input_name}_${config.node_id}`]
+      .filter((name): name is string => Boolean(name));
+    const source = aliases.find(name => Object.prototype.hasOwnProperty.call(values, name));
+    if (source && source !== config.name) reconciled[config.name] = values[source];
+    for (const alias of aliases) {
+      if (alias !== config.name && !currentNames.has(alias)) delete reconciled[alias];
+    }
+  }
+
+  return reconciled;
+}
+
 export function isLinkReference(value: unknown, knownNodeIds: Set<string>): value is [string, number] {
   return Array.isArray(value) && value.length === 2 &&
     typeof value[0] === 'string' && knownNodeIds.has(value[0]) &&

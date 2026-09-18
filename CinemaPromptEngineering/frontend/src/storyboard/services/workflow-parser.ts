@@ -1024,14 +1024,12 @@ export class WorkflowParser {
       : parsed.parameters.filter(param => configuredBindings.has(`${param.node_id}\u0000${param.input_name}`));
     type SavedConfig = NonNullable<typeof customParamConfigs>[number];
     const configByBinding = new Map<string, SavedConfig>();
-    const configByName = new Map<string, SavedConfig>();
     const binding = (nodeId: string, inputName: string) => `${nodeId}\u0000${inputName}`;
 
-    // Saved configs identify the real binding. Keep their names as a narrow
-    // compatibility layer; never fall back to an input-name-only match.
+    // Saved configs identify the real binding. Values are resolved from the
+    // current config name first, then the parsed/legacy aliases.
     for (const config of customParamConfigs || []) {
       configByBinding.set(binding(config.node_id, config.input_name), config);
-      configByName.set(config.name, config);
       if (!config.exposed) continue;
       if (!allParams.some(param => binding(param.node_id, param.input_name) === binding(config.node_id, config.input_name))) {
         allParams.push({
@@ -1047,44 +1045,42 @@ export class WorkflowParser {
     }
 
     console.log('[buildWorkflow] Applying parameters:', parameterValues);
-    for (const [paramName, value] of Object.entries(parameterValues)) {
-      const legacyConfig = configByName.get(paramName) ||
-        [...configByBinding.values()].find(config => `${config.input_name}_${config.node_id}` === paramName);
-      const param = legacyConfig
-        ? allParams.find(candidate => binding(candidate.node_id, candidate.input_name) === binding(legacyConfig.node_id, legacyConfig.input_name))
-        : allParams.find(candidate => candidate.name === paramName);
+    for (const param of allParams) {
+      const config = configByBinding.get(binding(param.node_id, param.input_name));
+      const candidateNames = config
+        ? [config.name, param.name, `${param.input_name}_${param.node_id}`]
+        : [param.name, `${param.input_name}_${param.node_id}`];
+      const paramName = candidateNames.find(name => Object.prototype.hasOwnProperty.call(parameterValues, name));
+      if (paramName === undefined) continue;
+      const value = parameterValues[paramName];
 
-      if (param) {
-        console.log(`[buildWorkflow] Matched param "${paramName}" to node ${param.node_id}.${param.input_name}`);
-        const node = workflow[param.node_id] as ComfyUINode;
-        if (node) {
-          // For widgets_values array (Qwen format), we need to update by index
-          if (node.widgets_values && Array.isArray(node.widgets_values)) {
-            const widgetIndex = this._getWidgetIndex(node.class_type || '', param.input_name);
-            if (widgetIndex >= 0) {
-              node.widgets_values[widgetIndex] = value;
-            }
+      console.log(`[buildWorkflow] Matched param "${paramName}" to node ${param.node_id}.${param.input_name}`);
+      const node = workflow[param.node_id] as ComfyUINode;
+      if (node) {
+        // For widgets_values array (Qwen format), we need to update by index
+        if (node.widgets_values && Array.isArray(node.widgets_values)) {
+          const widgetIndex = this._getWidgetIndex(node.class_type || '', param.input_name);
+          if (widgetIndex >= 0) {
+            node.widgets_values[widgetIndex] = value;
           }
-          // Also set in inputs for standard format
-          if (!node.inputs) {
-            node.inputs = {};
-          }
-          
-          // Normalize Windows backslashes to forward slashes for model/UNET paths
-          // This fixes paths like "Qwen\model.safetensors" -> "Qwen/model.safetensors"
-          let normalizedValue = value;
-          if (param.input_name === 'unet_name' || param.input_name === 'ckpt_name' || 
-              param.input_name === 'model_name' || param.input_name === 'lora_name') {
-            if (typeof value === 'string' && value.includes('\\')) {
-              normalizedValue = value.replace(/\\/g, '/');
-              console.log(`[buildWorkflow] Normalized path for ${param.input_name}: ${value} -> ${normalizedValue}`);
-            }
-          }
-          
-          node.inputs[param.input_name] = normalizedValue;
         }
-      } else {
-        console.log(`[buildWorkflow] No match for param "${paramName}"`);
+        // Also set in inputs for standard format
+        if (!node.inputs) {
+          node.inputs = {};
+        }
+
+        // Normalize Windows backslashes to forward slashes for model/UNET paths
+        // This fixes paths like "Qwen\model.safetensors" -> "Qwen/model.safetensors"
+        let normalizedValue = value;
+        if (param.input_name === 'unet_name' || param.input_name === 'ckpt_name' ||
+            param.input_name === 'model_name' || param.input_name === 'lora_name') {
+          if (typeof value === 'string' && value.includes('\\')) {
+            normalizedValue = value.replace(/\\/g, '/');
+            console.log(`[buildWorkflow] Normalized path for ${param.input_name}: ${value} -> ${normalizedValue}`);
+          }
+        }
+
+        node.inputs[param.input_name] = normalizedValue;
       }
     }
 
