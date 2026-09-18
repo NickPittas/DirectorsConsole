@@ -39,13 +39,13 @@ Run this from the repository root after setup:
 python scripts/check.py
 ```
 
-It runs the root and Orchestrator pytest suites, all thirteen standalone Node regressions (including session storage and production recovery-consumer checks), frontend lint, and the production build. It never adds `PYTHONPATH`; `-c pytest.ini` makes the root import paths explicit when both test trees are selected. The command intentionally fails if any check fails.
+It runs the root and Orchestrator pytest suites, all fourteen standalone Node regressions (including runtime /object_info schema discovery, typed controls, session storage, and production recovery-consumer checks), frontend lint, and the production build. It never adds `PYTHONPATH`; `-c pytest.ini` makes the root import paths explicit when both test trees are selected. The command intentionally fails if any check fails.
 
 Individual equivalent commands are:
 
 ```bash
 python -m pytest -c pytest.ini tests/ Orchestrator/tests/ -q
-for test in tests/test_comfyui_websocket_node.js tests/test_oauth_sync.js tests/test_settings_oauth.js tests/test_storyboard_generation_run.js tests/test_storyboard_metadata.js tests/test_batch_rename_dialog_race.js tests/test_storyboard_issue6_connection.js tests/test_storyboard_issue7_checkpoint.js tests/test_error_boundary_hint.js tests/test_project_ux_fixes.js tests/test_session_draft_storage.js tests/test_session_recovery_node.js tests/test_session_recovery_consumer.js; do node "$test"; done
+for test in tests/test_comfyui_websocket_node.js tests/test_oauth_sync.js tests/test_settings_oauth.js tests/test_storyboard_generation_run.js tests/test_storyboard_metadata.js tests/test_batch_rename_dialog_race.js tests/test_storyboard_issue6_connection.js tests/test_storyboard_issue7_checkpoint.js tests/test_workflow_schema_controls.js tests/test_error_boundary_hint.js tests/test_project_ux_fixes.js tests/test_session_draft_storage.js tests/test_session_recovery_node.js tests/test_session_recovery_consumer.js; do node "$test"; done
 (cd CinemaPromptEngineering/frontend && npm run lint)
 (cd CinemaPromptEngineering/frontend && npm run build)
 ```

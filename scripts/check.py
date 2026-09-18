@@ -40,6 +40,7 @@ CHECKS = [
             ROOT / "tests/test_batch_rename_dialog_race.js",
             ROOT / "tests/test_storyboard_issue6_connection.js",
             ROOT / "tests/test_storyboard_issue7_checkpoint.js",
+            ROOT / "tests/test_workflow_schema_controls.js",
             ROOT / "tests/test_error_boundary_hint.js",
             ROOT / "tests/test_project_ux_fixes.js",
             ROOT / "tests/test_session_draft_storage.js",

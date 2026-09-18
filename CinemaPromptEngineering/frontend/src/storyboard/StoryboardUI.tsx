@@ -15,6 +15,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ParameterPanel } from './components/ParameterWidgets';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
 import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
+import { findWorkflowNode, getWorkflowNodeInput } from './services/workflow-editor-options';
 import { CameraAngle } from './data/cameraAngleData';
 import { useErrorNotifications, ErrorNotificationContainer } from './components/ErrorNotification';
 import { NodeManager } from './components/NodeManager';
@@ -1303,14 +1304,22 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         let changed = false;
         const migrated = wfs.map(wf => {
           let wfChanged = false;
-          // Fix config entries
-          const newConfig = wf.config?.map(cfg => {
+          // Fix config entries and discard bindings that no longer exist in
+          // the current graph. Explicit [] remains [] and is authoritative.
+          const newConfig = (wf.config || []).filter(cfg => {
+            const node = findWorkflowNode(wf.workflow, cfg.node_id);
+            const valid = Boolean(node) && (
+              getWorkflowNodeInput(node, cfg.input_name) !== undefined || cfg.category === 'image_input'
+            );
+            if (!valid) wfChanged = true;
+            return valid;
+          }).map(cfg => {
             if (cfg.category === 'image_input' && cfg.name?.includes('video') && cfg.type === 'image') {
               wfChanged = true;
               return { ...cfg, type: 'video' as const };
             }
             return cfg;
-          }) || [];
+          });
           // Fix parsed.image_inputs entries
           const newParsed = wf.parsed ? {
             ...wf.parsed,
@@ -2165,8 +2174,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           default: param.default,
           description: param.description,
           constraints: param.constraints,
+          schemaStatus: param.schemaStatus,
+          schemaType: param.schemaType,
+          schema: param.schema,
           order: index,
-          exposed: true,
+          // A pure API import has no App Mode exposure metadata. Keep all
+          // discovered literals in the editor until the user explicitly exposes them.
+          exposed: false,
           category: 'parameter',
           auto_detected: true,
           user_modified: false,
@@ -2185,7 +2199,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             default: '',
             description: input.description,
             order: parsed.parameters.length + index,
-            exposed: true,
+            exposed: false,
             category: 'image_input',
             auto_detected: true,
             user_modified: false,
@@ -5293,7 +5307,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 parameters={exposedParameters.map(p => ({
                   name: p.name,
                   display_name: p.display_name,
-                  type: (p.type === 'string' ? 'prompt' : p.type) as 'integer' | 'float' | 'seed' | 'enum' | 'boolean' | 'prompt',
+                  type: p.type,
                   node_id: p.node_id,
                   input_name: p.input_name,
                   default: p.default,

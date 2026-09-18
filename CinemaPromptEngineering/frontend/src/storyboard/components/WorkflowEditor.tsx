@@ -22,7 +22,12 @@ import {
   getWorkflowNodeInput,
   listWorkflowNodes,
   resolveEnumConfig,
+  hasWorkflowBinding,
+  bindingKey,
+  isLinkReference,
 } from '../services/workflow-editor-options';
+import { WorkflowParser } from '../services/workflow-parser';
+import type { ObjectInfo } from '../services/node-definitions';
 import './WorkflowEditor.css';
 
 // ============================================================================
@@ -55,7 +60,7 @@ export interface ParameterConfig {
     min?: number;
     max?: number;
     step?: number;
-    options?: string[];
+    options?: unknown[];
     availableLoras?: string[];  // For lora type
     lora_name?: string;         // Current lora selection
     bypassed?: boolean;         // For lora bypass state
@@ -69,6 +74,9 @@ export interface ParameterConfig {
   // Source tracking
   auto_detected: boolean;
   user_modified: boolean;
+  schemaStatus?: 'offline' | 'available' | 'remote' | 'unsupported';
+  schemaType?: string;
+  schema?: unknown;
 }
 
 interface NodeInfo {
@@ -83,91 +91,22 @@ interface NodeInfo {
   }>;
 }
 
-// Known input types for auto-detection
-const KNOWN_INPUT_TYPES: Record<string, string> = {
-  seed: 'seed',
-  steps: 'integer',
-  cfg: 'float',
-  denoise: 'float',
-  strength: 'float',
-  noise_seed: 'seed',
-  text: 'prompt',
-  prompt: 'prompt',
-  positive: 'prompt',
-  negative: 'prompt',
-  width: 'integer',
-  height: 'integer',
-  batch_size: 'integer',
-  sampler_name: 'enum',
-  scheduler: 'enum',
-};
-
-// Known enum options
-const KNOWN_ENUM_OPTIONS: Record<string, string[]> = {
-  sampler_name: [
-    'euler', 'euler_cfg_pp', 'euler_ancestral', 'euler_ancestral_cfg_pp',
-    'heun', 'heunpp2', 'dpm_2', 'dpm_2_ancestral', 'lms', 'dpm_fast',
-    'dpm_adaptive', 'dpmpp_2s_ancestral', 'dpmpp_sde', 'dpmpp_2m',
-    'ddpm', 'lcm', 'ipndm', 'ddim', 'uni_pc'
-  ],
-  scheduler: ['normal', 'karras', 'exponential', 'sgm_uniform', 'simple'],
-};
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 function inferParameterType(inputName: string, value: any): string {
-  const lowerName = inputName.toLowerCase();
-  
-  // Check known types first
-  if (KNOWN_INPUT_TYPES[lowerName]) {
-    return KNOWN_INPUT_TYPES[lowerName];
-  }
-  
-  // Infer from value type
   if (typeof value === 'boolean') return 'boolean';
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) return 'integer';
-    return 'float';
-  }
-  if (typeof value === 'string') {
-    if (lowerName.includes('prompt') || lowerName.includes('text')) {
-      return 'prompt';
-    }
-    return 'string';
-  }
-  
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'float';
+  if (typeof value === 'string' && /(^|_)(prompt|text|positive|negative)($|_)/i.test(inputName)) return 'prompt';
   return 'string';
 }
 
-function getDefaultConstraints(type: string, _value: any): any {
-  switch (type) {
-    case 'integer':
-      return {
-        min: 0,
-        max: 100,
-        step: 1,
-      };
-    case 'float':
-      return {
-        min: 0,
-        max: 1,
-        step: 0.01,
-      };
-    case 'seed':
-      return {
-        min: -1,
-        max: 2147483647,
-        step: 1,
-      };
-    case 'enum':
-      return {
-        options: [],
-      };
-    default:
-      return undefined;
-  }
+function getDefaultConstraints(_type: string, _value: any): any {
+  // Runtime /object_info owns ranges and enum choices. Offline editor entries
+  // must not invent them.
+  return undefined;
 }
 
 // ============================================================================
@@ -208,10 +147,51 @@ export function WorkflowEditor({
     if (!comfyUrl) return () => { active = false; };
 
     nodeDefinitions.fetchDefinitions(comfyUrl)
-      .then(() => {
+      .then((definitions: ObjectInfo) => {
         if (!active) return;
         loadedDefinitionsUrlRef.current = comfyUrl;
         setNodeDefsLoaded(true);
+        // Schema arrival is metadata only: preserve values/visibility and add
+        // newly discovered bindings hidden in the editor.
+        const discovered = workflowRef.current && typeof WorkflowParser === 'function'
+          ? new WorkflowParser().parseWorkflow(workflowRef.current, definitions).parameters
+          : [];
+        setConfigs(previous => {
+          const discoveredByBinding = new Map(discovered.map(parameter => [bindingKey(parameter), parameter]));
+          const updated = previous.map(config => {
+            const parameter = discoveredByBinding.get(bindingKey(config));
+            if (!parameter) return config;
+            const liveOptions = parameter.constraints?.options;
+            const currentOptions = config.constraints?.options;
+            const mergedOptions = liveOptions
+              ? [...(currentOptions || []), ...liveOptions.filter(option => !(currentOptions || []).some(current => Object.is(current, option)))]
+              : currentOptions;
+            return {
+              ...config,
+              type: config.user_modified ? config.type : parameter.type,
+              schemaStatus: parameter.schemaStatus,
+              schemaType: parameter.schemaType,
+              schema: parameter.schema,
+              constraints: {
+                ...(config.user_modified ? config.constraints : parameter.constraints),
+                ...(mergedOptions ? { options: mergedOptions } : {}),
+              },
+            };
+          });
+          if (initialConfig !== undefined) return updated;
+          const known = new Set(updated.map(config => bindingKey(config)));
+          const additions = discovered
+            .filter(parameter => !known.has(bindingKey(parameter)))
+            .map((parameter, index) => ({
+              ...parameter,
+              order: updated.length + index,
+              exposed: false,
+              category: 'parameter' as const,
+              auto_detected: true,
+              user_modified: false,
+            }));
+          return additions.length ? [...updated, ...additions] : updated;
+        });
         console.log('[WorkflowEditor] Node definitions loaded');
       })
       .catch(err => {
@@ -229,13 +209,16 @@ export function WorkflowEditor({
       });
 
     return () => { active = false; };
-  }, [comfyUrl]);
+  }, [comfyUrl, initialConfig]);
   
   // Initialize configs from parsed workflow or initial config
   useEffect(() => {
-    if (initialConfig && initialConfig.length > 0) {
-      // Sort by order when loading initial config
-      const sortedConfigs = [...initialConfig].sort((a, b) => a.order - b.order);
+    if (initialConfig !== undefined) {
+      // An explicit [] is authoritative. Drop stale bindings, but never reset
+      // valid user-owned names, values, or visibility flags.
+      const sortedConfigs = initialConfig
+        .filter(config => hasWorkflowBinding(workflow, config) || config.category === 'image_input')
+        .sort((a, b) => a.order - b.order);
       setConfigs(sortedConfigs);
     } else if (parsedWorkflow) {
       // Convert parsed workflow to configs
@@ -252,6 +235,9 @@ export function WorkflowEditor({
           default: param.default,
           description: param.description,
           constraints: param.constraints,
+          schemaStatus: param.schemaStatus,
+          schemaType: param.schemaType,
+          schema: param.schema,
           order: idx,
           exposed: true,
           category: 'parameter',
@@ -308,7 +294,7 @@ export function WorkflowEditor({
       
       setConfigs(newConfigs);
     }
-  }, [parsedWorkflow, initialConfig]);
+  }, [parsedWorkflow, initialConfig, workflow]);
   
   // Apply options from the selected node's ComfyUI URL without dropping offline/imported values.
   useEffect(() => {
@@ -319,7 +305,7 @@ export function WorkflowEditor({
         if (config.input_name !== 'ckpt_name') return config;
         const node = findWorkflowNode(workflow, config.node_id);
         if (getWorkflowNodeClassType(node) !== 'CheckpointLoaderSimple') return config;
-        const liveOptions = nodeDefinitions.getEnumOptions('CheckpointLoaderSimple', 'ckpt_name') || [];
+        const liveOptions = nodeDefinitions.getEnumOptions('CheckpointLoaderSimple', 'ckpt_name', comfyUrl) || [];
         const resolved = resolveEnumConfig(workflow, config, liveOptions);
         if (
           config.type === resolved.type &&
@@ -377,6 +363,7 @@ export function WorkflowEditor({
     
     const nodes: NodeInfo[] = [];
 
+    const knownNodeIds = new Set(listWorkflowNodes(workflow).map(([nodeId]) => nodeId));
     for (const [nodeId, node] of listWorkflowNodes(workflow)) {
       const classType = getWorkflowNodeClassType(node);
       const inputEntries = Object.entries(node.inputs || {});
@@ -385,7 +372,7 @@ export function WorkflowEditor({
         if (value !== undefined) inputEntries.push(['ckpt_name', value]);
       }
       const inputs: NodeInfo['inputs'] = inputEntries
-        .filter(([, inputValue]) => !Array.isArray(inputValue))
+        .filter(([, inputValue]) => !isLinkReference(inputValue, knownNodeIds))
         .map(([inputName, inputValue]) => ({
           name: inputName,
           value: inputValue,
@@ -414,21 +401,18 @@ export function WorkflowEditor({
     // Check node definitions FIRST to see if this is actually an enum
     const node = findWorkflowNode(workflow, nodeId);
     const classType = getWorkflowNodeClassType(node);
-    if (classType) {
-      const inputDef = nodeDefinitions.getInputDefinition(classType, inputName);
-      if (inputDef?.isEnum && inputDef.options) {
+    const inputDef = classType && comfyUrl
+      ? nodeDefinitions.getInputDefinition(classType, inputName, comfyUrl)
+      : null;
+    if (inputDef?.isEnum && inputDef.options) {
         // Override the inferred type - this is actually an enum!
         type = 'enum';
-        constraints = { options: inputDef.options };
-        console.log(`[WorkflowEditor] Detected enum from node definitions: ${classType}.${inputName}`, inputDef.options);
-      }
+      constraints = { options: inputDef.options };
+      console.log(`[WorkflowEditor] Detected enum from node definitions: ${classType}.${inputName}`, inputDef.options);
     }
     
-    // Fallback: Auto-populate enum options from known list
-    if (type === 'enum' && !constraints.options && KNOWN_ENUM_OPTIONS[inputName.toLowerCase()]) {
-      constraints.options = KNOWN_ENUM_OPTIONS[inputName.toLowerCase()];
-    }
-    
+    if (configs.some(config => bindingKey(config) === bindingKey({ node_id: nodeId, input_name: inputName }))) return;
+
     const newConfig: ParameterConfig = {
       name: `${inputName}_${nodeId}`,
       display_name: inputName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -443,30 +427,29 @@ export function WorkflowEditor({
       category: 'parameter',
       auto_detected: false,
       user_modified: true,
+      schemaStatus: inputDef?.availability,
+      schemaType: inputDef?.type,
+      schema: inputDef?.raw,
     };
     
     setConfigs(prev => [...prev, newConfig]);
     setHasChanges(true);
-  }, [configs.length, workflow]);
+  }, [comfyUrl, configs, workflow]);
   
   // Update a parameter config
-  const updateConfig = useCallback((index: number, updates: Partial<ParameterConfig>) => {
-    setConfigs(prev => {
-      const newConfigs = [...prev];
-      newConfigs[index] = { ...newConfigs[index], ...updates, user_modified: true };
-      return newConfigs;
-    });
+  const updateConfig = useCallback((key: string, updates: Partial<ParameterConfig>) => {
+    setConfigs(prev => prev.map(config => bindingKey(config) === key
+      ? { ...config, ...updates, user_modified: true }
+      : config));
     setHasChanges(true);
   }, []);
   
-  // Remove a parameter
-  const removeParameter = useCallback((index: number) => {
-    setConfigs(prev => prev.filter((_, i) => i !== index));
+  // Remove by binding, not filtered-array index.
+  const removeParameter = useCallback((key: string) => {
+    setConfigs(prev => prev.filter(config => bindingKey(config) !== key));
     setHasChanges(true);
-    if (selectedConfig && configs[index] === selectedConfig) {
-      setSelectedConfig(null);
-    }
-  }, [configs, selectedConfig]);
+    if (selectedConfig && bindingKey(selectedConfig) === key) setSelectedConfig(null);
+  }, [selectedConfig]);
   
   // Drag and drop handlers
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
@@ -616,10 +599,11 @@ export function WorkflowEditor({
                   key={`${config.node_id}-${config.input_name}`}
                   config={config}
                   workflow={workflow}
+                  comfyUrl={comfyUrl}
                   isSelected={selectedConfig === config}
                   onSelect={() => setSelectedConfig(config)}
-                  onUpdate={(updates) => updateConfig(index, updates)}
-                  onRemove={() => removeParameter(index)}
+                  onUpdate={(updates) => updateConfig(bindingKey(config), updates)}
+                  onRemove={() => removeParameter(bindingKey(config))}
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={(e) => handleDragOver(e, index)}
                   onDragEnter={(e) => handleDragEnter(e, index)}
@@ -661,6 +645,7 @@ export function WorkflowEditor({
 interface ParameterConfigCardProps {
   config: ParameterConfig;
   workflow: ComfyUIWorkflow | QwenWorkflowFormat | null;
+  comfyUrl?: string;
   isSelected: boolean;
   onSelect: () => void;
   onUpdate: (updates: Partial<ParameterConfig>) => void;
@@ -676,6 +661,7 @@ interface ParameterConfigCardProps {
 function ParameterConfigCard({
   config,
   workflow,
+  comfyUrl,
   isSelected,
   onSelect,
   onUpdate,
@@ -729,6 +715,15 @@ function ParameterConfigCard({
           <span className="config-meta">
             {config.node_id} → {config.input_name} ({config.type})
           </span>
+          {config.schemaStatus === 'unsupported' && (
+            <span className="config-warning">Schema unsupported; edit the raw value or ask the node author for /object_info support.</span>
+          )}
+          {config.schemaStatus === 'remote' && (
+            <span className="config-warning">Choices are remote and unavailable until the selected managed node supplies them.</span>
+          )}
+          {config.schemaStatus === 'offline' && (
+            <span className="config-warning">Node schema unavailable offline; imported value is preserved without invented choices.</span>
+          )}
         </div>
         <div className="config-actions">
           <button 
@@ -780,21 +775,27 @@ function ParameterConfigCard({
           
           <div className="config-row">
             <label>Default Value:</label>
-            <input
-              type="text"
-              value={String(config.default)}
-              onChange={(e) => {
-                let value: any = e.target.value;
-                if (config.type === 'integer' || config.type === 'seed') {
-                  value = parseInt(value) || 0;
-                } else if (config.type === 'float') {
-                  value = parseFloat(value) || 0;
-                } else if (config.type === 'boolean') {
-                  value = value === 'true';
-                }
-                onUpdate({ default: value });
-              }}
-            />
+            {config.type === 'boolean' ? (
+              <input type="checkbox" checked={config.default === true}
+                onChange={event => onUpdate({ default: event.target.checked })} />
+            ) : (
+              <input
+                type="text"
+                value={String(config.default ?? '')}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  if (config.type === 'integer' || config.type === 'seed') {
+                    const value = Number(raw);
+                    if (raw.trim() && Number.isFinite(value) && Number.isInteger(value)) onUpdate({ default: value });
+                  } else if (config.type === 'float') {
+                    const value = Number(raw);
+                    if (raw.trim() && Number.isFinite(value)) onUpdate({ default: value });
+                  } else {
+                    onUpdate({ default: raw });
+                  }
+                }}
+              />
+            )}
           </div>
           
           <div className="config-row">
@@ -814,9 +815,10 @@ function ParameterConfigCard({
                 <input
                   type="number"
                   value={config.constraints?.min ?? 0}
-                  onChange={(e) => onUpdate({ 
-                    constraints: { ...config.constraints, min: parseFloat(e.target.value) }
-                  })}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (Number.isFinite(value)) onUpdate({ constraints: { ...config.constraints, min: value } });
+                  }}
                 />
               </div>
               <div className="config-row">
@@ -824,9 +826,10 @@ function ParameterConfigCard({
                 <input
                   type="number"
                   value={config.constraints?.max ?? 100}
-                  onChange={(e) => onUpdate({ 
-                    constraints: { ...config.constraints, max: parseFloat(e.target.value) }
-                  })}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (Number.isFinite(value)) onUpdate({ constraints: { ...config.constraints, max: value } });
+                  }}
                 />
               </div>
               <div className="config-row">
@@ -834,9 +837,10 @@ function ParameterConfigCard({
                 <input
                   type="number"
                   value={config.constraints?.step ?? 1}
-                  onChange={(e) => onUpdate({ 
-                    constraints: { ...config.constraints, step: parseFloat(e.target.value) }
-                  })}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (Number.isFinite(value)) onUpdate({ constraints: { ...config.constraints, step: value } });
+                  }}
                 />
               </div>
             </div>
@@ -848,34 +852,35 @@ function ParameterConfigCard({
               <div className="enum-options-row">
                 <input
                   type="text"
-                  value={config.constraints?.options?.join(', ') || ''}
-                  onChange={(e) => onUpdate({ 
-                    constraints: { 
-                      ...config.constraints, 
-                      options: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
-                    }
-                  })}
+                  value={config.constraints?.options?.map(option => JSON.stringify(option)).join(', ') || ''}
+                  onChange={(e) => {
+                    const values = e.target.value.split(',').map(token => token.trim()).filter(Boolean).map(token => {
+                      try { return JSON.parse(token); } catch { return token; }
+                    });
+                    onUpdate({ constraints: { ...config.constraints, options: values } });
+                  }}
                   placeholder="option1, option2, option3"
                 />
                 <button
                   type="button"
                   className="fetch-options-btn"
-                  onClick={() => {
-                    if (!workflow) return;
+                  onClick={async () => {
+                    if (!workflow || !comfyUrl) return;
                     const node = findWorkflowNode(workflow, config.node_id);
                     const classType = getWorkflowNodeClassType(node);
-                    if (classType) {
-                      const enumOptions = nodeDefinitions.getEnumOptions(classType, config.input_name);
+                    if (!classType) return;
+                    try {
+                      const inputDefinition = nodeDefinitions.getInputDefinition(classType, config.input_name, comfyUrl);
+                      const enumOptions = inputDefinition?.remote
+                        ? await nodeDefinitions.fetchRemoteOptions(comfyUrl, classType, config.input_name)
+                        : nodeDefinitions.getEnumOptions(classType, config.input_name, comfyUrl);
                       if (enumOptions && enumOptions.length > 0) {
-                        onUpdate({ 
-                          constraints: { 
-                            ...config.constraints, 
-                            options: enumOptions
-                          }
-                        });
+                        onUpdate({ constraints: { ...config.constraints, options: enumOptions }, schemaStatus: 'available' });
                       } else {
-                        alert(`No enum options found for ${classType}.${config.input_name}.\nMake sure ComfyUI is connected.`);
+                        alert(`No options are available for ${classType}.${config.input_name} on the selected managed node.`);
                       }
+                    } catch (error) {
+                      alert(`Options unavailable for ${classType}.${config.input_name}: ${error instanceof Error ? error.message : String(error)}`);
                     }
                   }}
                   title="Fetch options from ComfyUI"
