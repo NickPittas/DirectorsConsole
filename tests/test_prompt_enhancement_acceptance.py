@@ -104,6 +104,15 @@ def _payload(provider: str, credentials: dict[str, str], *, task: str = "i2v") -
     }
 
 
+def _local_h3_i2v_output(alignment: str, narrative: str) -> str:
+    return (
+        f"{alignment}\n\n"
+        f"integrated_multimodal_description: {narrative}\n\n"
+        "overall_soundscape: N/A\n\n"
+        "non_diegetic_music: N/A"
+    )
+
+
 def _provider_body(provider: str, content: str) -> dict[str, Any]:
     if provider in {"openai", "github_copilot"}:
         return {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
@@ -274,3 +283,112 @@ def test_invalid_structure_keeps_real_refreshed_oauth_token(
     assert response.status_code == 200
     assert response.json()["success"] is False
     assert response.json()["oauth_token"] == new_token
+
+
+@pytest.mark.parametrize(
+    ("assets", "alignment", "narrative"),
+    [
+        (
+            [
+                {"binding_id": "first", "kind": "image", "role": "first_frame", "ordinal": 1},
+                {"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 2},
+            ],
+            "How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 8.25-second mark of the target video.",
+            "[Shot 1] The supplied opening state changes continuously into <Picture 2>.",
+        ),
+        (
+            [
+                {"binding_id": "first", "kind": "image", "role": "first_frame", "ordinal": 1},
+                {"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 2},
+            ],
+            "How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 3) aligns with the 8.25-second mark of the target video.",
+            "[Shot 1] The opening state holds. [Shot 2] Motion builds. [Shot 3] The supplied ending state arrives at <Picture 2>.",
+        ),
+        (
+            [{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 1}],
+            "How the reference pictures align with the target video — <Picture 1> (from [Shot 1]) aligns with the 8.25-second mark of the target video.",
+            "[Shot 1] The final-frame composition remains visible as <Picture 1>.",
+        ),
+        (
+            [{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 1}],
+            "How the reference pictures align with the target video — <Picture 1> (from [Shot 2]) aligns with the 8.25-second mark of the target video.",
+            "[Shot 1] The scene develops. [Shot 2] The final-frame composition settles on <Picture 1>.",
+        ),
+    ],
+)
+def test_endpoint_accepts_exact_h3_keyframe_alignment_and_keeps_refreshed_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    assets: list[dict[str, Any]],
+    alignment: str,
+    narrative: str,
+) -> None:
+    old_token = "fake-old-token"
+    new_token = "fake-new-token"
+    storage = CredentialStorage(tmp_path / "credentials.db")
+    storage.set_credentials(
+        "antigravity",
+        ProviderCredentials(
+            oauth_token=old_token,
+            oauth_refresh_token="fake-refresh",
+            oauth_expires_at=int(time.time()) - 1,
+        ),
+    )
+    monkeypatch.setattr(main, "get_credential_storage", lambda: storage)
+    monkeypatch.setattr(
+        "api.providers.oauth.refresh_token",
+        AsyncMock(return_value={"access_token": new_token, "expires_in": 3600}),
+    )
+    output = _local_h3_i2v_output(alignment, narrative)
+    session = _Session(_provider_body("antigravity", output))
+    monkeypatch.setattr(LLM_MODULE.aiohttp, "ClientSession", lambda: session)
+    payload = _payload("antigravity", {"oauth_token": old_token})
+    payload["enhancement_context"]["assets"] = assets
+
+    response = TestClient(main.app).post("/enhance-prompt", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["enhanced_prompt"] == output
+    assert response.json()["oauth_token"] == new_token
+
+
+@pytest.mark.parametrize(
+    ("assets", "alignment", "narrative", "error"),
+    [
+        (
+            [
+                {"binding_id": "first", "kind": "image", "role": "first_frame", "ordinal": 1},
+                {"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 2},
+            ],
+            "How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 blah 8.25",
+            "[Shot 1] The supplied opening state changes continuously into <Picture 2>.",
+            "FL2VA",
+        ),
+        (
+            [{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 1}],
+            "How the reference pictures align with the target video — <Picture 1> (from GARBAGE) aligns with the 8.25-second mark of the target video.",
+            "[Shot 1] The final-frame composition remains visible as <Picture 1>.",
+            "L2VA",
+        ),
+    ],
+)
+def test_endpoint_rejects_malformed_h3_keyframe_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    assets: list[dict[str, Any]],
+    alignment: str,
+    narrative: str,
+    error: str,
+) -> None:
+    session = _Session(_provider_body("openai", _local_h3_i2v_output(alignment, narrative)))
+    monkeypatch.setattr(LLM_MODULE.aiohttp, "ClientSession", lambda: session)
+    monkeypatch.setattr(main, "get_credential_storage", lambda: CredentialStorage(tmp_path / "empty.db"))
+    payload = _payload("openai", {"api_key": "fake-key"})
+    payload["enhancement_context"]["assets"] = assets
+
+    response = TestClient(main.app).post("/enhance-prompt", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert error in response.json()["error"]

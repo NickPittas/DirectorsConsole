@@ -117,6 +117,56 @@ def test_context_errors_are_400_before_provider(monkeypatch: pytest.MonkeyPatch)
     llm.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("target_model", "dialect", "assets", "expected_error"),
+    [
+        (
+            "minimax_h3",
+            "local_h3",
+            [{"binding_id": "first", "kind": "image", "role": "first_frame", "ordinal": 3}],
+            "first-only input must use first_frame ordinal 1",
+        ),
+        (
+            "ltx_2.5",
+            "ltx_native",
+            [{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 1}],
+            "ltx_2.5 i2v requires a first_frame",
+        ),
+    ],
+)
+def test_endpoint_rejects_invalid_i2v_context_before_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    target_model: str,
+    dialect: str,
+    assets: list[dict[str, Any]],
+    expected_error: str,
+) -> None:
+    provider = AsyncMock(side_effect=AssertionError("provider must not run"))
+    monkeypatch.setattr(main.llm_service, "enhance_prompt", provider)
+    response = TestClient(main.app).post(
+        "/enhance-prompt",
+        json={
+            "user_prompt": "scene",
+            "llm_provider": "ollama",
+            "llm_model": "local",
+            "target_model": target_model,
+            "project_type": "live_action",
+            "config": {},
+            "credentials": {},
+            "enhancement_context": {
+                "task": "i2v",
+                "reference_dialect": dialect,
+                "duration_seconds": 8.25,
+                "assets": assets,
+                "reference_order_confirmed": True,
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert expected_error in response.json()["detail"]
+    provider.assert_not_called()
+
+
 def test_local_h3_first_last_structure_and_exact_gaps() -> None:
     context = _context(
         "i2v",

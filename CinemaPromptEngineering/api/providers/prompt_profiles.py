@@ -535,8 +535,14 @@ def _parse_local_h3_sections(content: str, fields: tuple[str, ...]) -> tuple[dic
     return sections, None
 
 
-def _validate_local_h3_alignment_prefix(content: str, context: EnhancementContext) -> str | None:
-    """Require only the official base-guide prefix for I2V outputs."""
+def _validate_local_h3_alignment_prefix(
+    content: str,
+    context: EnhancementContext,
+    narrative: str,
+) -> str | None:
+    """Require an exact official alignment line for local-H3 I2V output."""
+    import re
+
     alignment = _local_h3_keyframe_alignment(context)
     if alignment is None:
         if any(asset.role == "last_frame" for asset in context.assets):
@@ -548,29 +554,39 @@ def _validate_local_h3_alignment_prefix(content: str, context: EnhancementContex
         return "local_h3 I2VA output must contain only its required alignment line followed by one blank line"
     if not lines[2].startswith("integrated_multimodal_description") or not lines[2][len("integrated_multimodal_description") :].lstrip().startswith(":"):
         return "local_h3 I2VA output must place integrated_multimodal_description immediately after its alignment prefix"
+
     actual = lines[0]
-    first = any(asset.role == "first_frame" for asset in context.assets)
-    last = any(asset.role == "last_frame" for asset in context.assets)
+    first = next((asset for asset in context.assets if asset.role == "first_frame"), None)
+    last = next((asset for asset in context.assets if asset.role == "last_frame"), None)
+    shot_numbers = [int(number) for number in re.findall(r"\[Shot ([1-9]\d*)\]", narrative)]
+    final_shot = shot_numbers[-1] if shot_numbers else None
+
     if first and last:
-        if not actual.startswith("How the reference pictures align with the target video — Picture 1 (from Shot 1)"):
-            return "local_h3 FL2VA output must use the official first/last-frame instruction"
+        duration = re.escape(f"{context.duration_seconds:.2f}")
+        match = re.fullmatch(
+            rf"How the reference pictures align with the target video — "
+            rf"Picture {first.ordinal} \(from Shot 1\) aligns with the 0\.00-second mark of the target video; "
+            rf"Picture {last.ordinal} \(from Shot ([1-9]\d*)\) aligns with the {duration}-second mark of the target video\.",
+            actual,
+        )
+        if not match:
+            return "local_h3 FL2VA output must use the full official first/last-frame alignment line"
+        if final_shot is None or int(match.group(1)) != final_shot:
+            return "local_h3 FL2VA alignment must name the final narrative Shot"
     elif first:
-        if not actual.startswith("For the target video, at 0.00 seconds into the target video,"):
-            return "local_h3 I2VA alignment must begin at 0.00 seconds"
         if actual != alignment:
             return "local_h3 I2VA output must use the official first-frame instruction"
-    elif not actual.startswith("How the reference pictures align with the target video — <Picture 1> (from "):
-        return "local_h3 L2VA output must use the official last-frame instruction"
-    if "Picture 1" not in actual:
-        return "local_h3 keyframe alignment must use Picture 1 for the first supplied base slot"
-    if last:
-        end = f"{context.duration_seconds:.2f}"
-        if end not in actual:
-            return f"local_h3 keyframe alignment must end at the supplied duration ({end} seconds)"
-        if first and "Picture 2" not in actual:
-            return "local_h3 FL2VA alignment must use Picture 2 for the last supplied base slot"
-    if not actual.endswith("of the target video.") and not actual.endswith("is fully referenced."):
-        return "local_h3 keyframe alignment must be a complete official guide instruction"
+    elif last:
+        duration = re.escape(f"{context.duration_seconds:.2f}")
+        match = re.fullmatch(
+            rf"How the reference pictures align with the target video — "
+            rf"<Picture {last.ordinal}> \(from \[Shot ([1-9]\d*)\]\) aligns with the {duration}-second mark of the target video\.",
+            actual,
+        )
+        if not match:
+            return "local_h3 L2VA output must use the full official last-frame alignment line"
+        if final_shot is None or int(match.group(1)) != final_shot:
+            return "local_h3 L2VA alignment must name the final narrative Shot"
     return None
 
 
@@ -605,11 +621,11 @@ def validate_local_h3_output(
     start_index = 2 if context.task == "i2v" else 0
     if len(lines) <= start_index or not lines[start_index].startswith(first_field) or not lines[start_index][len(first_field) :].lstrip().startswith(":"):
         return f"local_h3 output must begin with '{first_field}:' and contain no generic preamble"
+    narrative_field = "detailed_description" if context.task == "ref2v" else "integrated_multimodal_description"
     if context.task == "i2v":
-        alignment_error = _validate_local_h3_alignment_prefix(content, context)
+        alignment_error = _validate_local_h3_alignment_prefix(content, context, sections[narrative_field])
         if alignment_error:
             return alignment_error
-    narrative_field = "detailed_description" if context.task == "ref2v" else "integrated_multimodal_description"
     if "[Shot 1]" not in sections[narrative_field]:
         return f"local_h3 {narrative_field} must include [Shot 1]"
 
