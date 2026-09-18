@@ -1,31 +1,36 @@
 # MiniMax H3 prompt guide
 
-**Guide scope:** target ID `minimax_h3`, exact vendor model `MiniMax-H3`; the same mode guidance applies to `minimax_h3_max` where the source describes H3 Max.
-**Retrieval date:** 2026-09-18.
-**This is prompt guidance only.** It does not claim a ComfyUI workflow, local node, API credential, account access, region access, or generation backend.
+This guide distinguishes the local MiniMax-H3 checkpoint from the hosted MiniMax API. It is prompting guidance only: it does not claim a node, weights, credentials, account, or media upload.
 
 ## Verified sources
 
-- Retrieved 2026-09-18: [MiniMax model release notes](https://platform.minimax.io/docs/release-notes/models), H3 release status.
-- Retrieved 2026-09-18: [MiniMax video generation guide](https://platform.minimax.io/docs/guides/video-generation), H3/H3 Max modes, inputs, limits, and camera tokens.
-- Retrieved 2026-09-18: [Video Generation V2 create API](https://platform.minimax.io/docs/api-reference/video-generation-v2-create), content roles and request bounds.
-- Retrieved 2026-09-18: [MiniMax H3 announcement](https://www.minimax.io/blog/minimax-h3), multimodal context and native audio.
-- Retrieved 2026-09-18: [H3 prompt gallery](https://platform.minimax.io/docs/guides/video-prompt), illustrative prompt structures.
+- Retrieved 2026-09-18: [MiniMax local T2VA/I2VA/FL2VA/L2VA guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md)
+- Retrieved 2026-09-18: [MiniMax local full-reference guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md)
+- Retrieved 2026-09-18: [MiniMax local deployment guide](https://platform.minimax.io/docs/guides/local-deploy-h3)
+- Retrieved 2026-09-18: [MiniMax V2 create API](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)
 
-## Mode-specific prompt structure
+## Local H3 dialect
 
-- **Text-to-video:** describe one text scene with subject, setting, action sequence, shot scale, camera movement, lighting, format or duration only when supplied, and sound. For finer camera guidance, place only the verified tokens `[pan]`, `[zoom]`, or `[static]` directly after the relevant description.
-- **First-frame image-to-video:** when the user supplies a first-frame image, describe the delta motion and temporal change from that frame. Do not restate an invented image description or asset number.
-- **Last-frame image-to-video:** when the user supplies a last-frame image, describe an action that resolves into that supplied ending state.
-- **First-and-last-frame image-to-video:** use both only when both supplied assets exist; describe the subject's continuous path from the supplied opening state to the supplied ending state.
-- **Reference-to-video:** reference images, videos, and audio have distinct roles. State each supplied asset's role in natural language: subject/character, scene, prop, camera movement, style, motion, voice, or editing rhythm. Keep the relationships explicit and describe the target action.
+When the selected dialect is `local_h3`, write text, image-to-video, and last/first-frame prompts as named text sections, not JSON. Keep this exact order:
 
-The verified V2 content roles are `first_frame`, `last_frame`, `reference_image`, `reference_video`, and `reference_audio`. Image-to-video/keyframe content and multimodal reference content are mutually exclusive in the verified V2 API. Never combine first/last-frame roles with reference-image, reference-video, or reference-audio roles in one invented mode. H3 accepts native stereo audio and reference audio, but the fetched official material does not verify a distinct spoken-dialogue control. Do not invent dialogue controls or dialogue text; preserve dialogue only when the user provides it.
+```text
+integrated_multimodal_description: ...
 
-The verified sources do not document a negative-prompt field. Do not add or recommend a negative prompt; if the caller's response schema requires that field, it may remain empty. Do not invent attachments, reference IDs, API fields, languages, or backend/workflow controls. If the user has not supplied a numbered asset, do not manufacture `Image 1`, `Video 1`, or `Audio 1`.
+overall_soundscape: ...
+
+non_diegetic_music: ...
+```
+
+For `ref2v`, use these six sections in this exact order: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, `non_diegetic_music`. Define supplied content with `<Subject N>`, `<Picture N>`, `<Video N>`, and `<Audio N>` labels. Use source tags only for confirmed per-kind ordinals in connection order; `<Subject N>` names derived content and is not an asset ID. In `summary`, begin with a bracketed task type; in `retention_analysis`, use only the documented visible markers `fully_preserved`, `partially_preserved`, `attribute_transfer`, `weak_reference` and audio markers `fully_copy`, `partially_copy`, `reference`, `weak_reference`. Preserve source order and gaps.
+
+T2V starts with the three core sections. I2V begins with the prescribed first-frame line, `For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.` FL2V begins with a first/last alignment line; L2V begins with a last-frame alignment line. First/last-frame alignment begins at 0.00 seconds and ends at the supplied effective duration; L2V/last-frame alignment must use that duration formatted to exactly two decimals. Never fabricate a duration or a source asset. In ordinary shots, Shot 1 has no cut timestamp; later shots have increasing cut times within the supplied duration.
+
+Describe natural camera motion with type, meaningful amplitude, and speed in the shot prose. Do not append invented camera tokens. Give vocal subjects stable IDs such as `(S1)` and preserve user-provided dialogue literally inside `<d>[Language] ...</d>`; do not invent, translate, or paraphrase dialogue. Put ambience and physical sounds in `overall_soundscape`, and audience-only score in `non_diegetic_music`; use `N/A` only when the user explicitly requests silence or no score.
+
+## Hosted MiniMax API dialect
+
+When the selected dialect is `minimax_api`, use concise natural prose appropriate to the caller's task and the API's structured content roles. Do not emit local H3 section headings or local `<Picture>` tags unless the caller explicitly supplied such text. The hosted API uses content roles for first/last frames and reference media; do not invent provider asset IDs, negative fields, dialogue controls, or attachments. H3 and H3 Max reference numbering is not a verified universal prompt syntax, so describe only confirmed bindings supplied by the caller.
 
 ## Output contract
 
-Return exactly one final prompt paragraph, with no headings, explanations, source citations, provenance, or alternatives. Keep cinematic configuration details as visual descriptions rather than visible equipment.
-
-**Illustrative example (not an official quote):** A 10-second vertical view of a rain-darkened market alley, a courier in a tan coat weaving between stalls [pan right], then stopping beneath a lantern [static]. Warm light catches the wet stones while tram bells and market chatter fill the air.
+For local H3, obey the named-section structure above. For the hosted dialect, return one final natural-language prompt without explanations, citations, alternatives, or duplicated paragraphs. In both dialects, retain the user's configuration and supplied dialogue; do not claim aesthetic or media validation that the enhancer cannot perform.

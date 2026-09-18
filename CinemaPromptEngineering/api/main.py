@@ -36,6 +36,13 @@ from api.providers.credential_storage import (
     ProviderCredentials,
     StoredSettings,
 )
+from api.providers.prompt_profiles import (
+    EnhancementContext,
+    get_profile,
+    profile_metadata,
+    validate_context,
+    validate_local_h3_output,
+)
 
 # Import template router
 from api.templates import router as templates_router
@@ -2236,6 +2243,7 @@ class EnhancePromptRequest(BaseModel):
     project_type: ProjectType
     config: dict[str, Any]
     credentials: dict[str, Any]
+    enhancement_context: EnhancementContext | None = None
 
 
 class EnhancePromptResponse(BaseModel):
@@ -2248,6 +2256,12 @@ class EnhancePromptResponse(BaseModel):
     model_used: str = ""
     warnings: list[str] = []
     error: str | None = None
+
+
+@app.get("/prompt-enhancement/profiles")
+async def get_prompt_enhancement_profiles() -> dict[str, Any]:
+    """Return the authoritative target/task/dialect metadata for prompt enhancement."""
+    return {"profiles": profile_metadata()}
 
 
 def _remove_duplicate_prompt(content: str) -> str:
@@ -2307,12 +2321,31 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
     """
     refreshed_oauth_token: str | None = None
     try:
-        # Get system prompt for target model and project type
-        # Animation projects use animation-specific prompts without camera references
-        system_prompt = get_system_prompt(request.target_model, request.project_type.value)
+        # Validate semantic context before touching credentials or a provider.
+        target_profile = get_profile(request.target_model)
+        effective_context = request.enhancement_context
+        canonical_target = request.target_model
+        dialect_id: str | None = None
+        if effective_context is not None:
+            canonical_target, target_profile, dialect = validate_context(
+                request.target_model, effective_context
+            )
+            dialect_id = dialect["id"]
+        elif target_profile is not None:
+            # Video targets without metadata retain legacy calls as T2V while
+            # still selecting the target's verified default dialect.
+            effective_context = EnhancementContext(
+                task="t2v", assets=[], reference_order_confirmed=True
+            )
+            dialect_id = target_profile["default_dialect"]
+            canonical_target = request.target_model
+
+        # Get system prompt for target model and project type.
+        # Animation projects use animation-specific prompts without camera references.
+        system_prompt = get_system_prompt(canonical_target, request.project_type.value)
 
         warnings: list[str] = []
-        if not is_video_model(request.target_model):
+        if not is_video_model(canonical_target):
             movement = request.config.get("movement", {})
             motion_style = request.config.get("motion", {}).get("motion_style")
             has_motion = (
@@ -2332,7 +2365,9 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             request.user_prompt,
             request.config,
             request.project_type.value,
-            request.target_model,
+            canonical_target,
+            effective_context,
+            dialect_id,
         )
         
         # Refresh only a matching, known-expiring saved standard OAuth token.
@@ -2363,12 +2398,32 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             provider=request.llm_provider,
             model=request.llm_model,
             credentials=creds,
+            output_token_budget=4096 if dialect_id == "local_h3" else None,
         )
-        
+
         if result.success:
-            # Post-process to remove duplicates (some LLMs repeat the prompt)
-            enhanced = _remove_duplicate_prompt(result.content)
-            
+            if result.truncated and dialect_id == "local_h3":
+                return EnhancePromptResponse(
+                    success=False,
+                    oauth_token=refreshed_oauth_token,
+                    error="The provider stopped at its output limit; the structured prompt is incomplete. Try again with a larger provider limit.",
+                )
+            if dialect_id == "local_h3" and effective_context is not None:
+                structure_error = validate_local_h3_output(result.content, effective_context)
+                if structure_error:
+                    return EnhancePromptResponse(
+                        success=False,
+                        oauth_token=refreshed_oauth_token,
+                        error=structure_error,
+                    )
+
+            # Structured local H3 output must not be paragraph-deduplicated.
+            enhanced = (
+                result.content.strip()
+                if dialect_id == "local_h3"
+                else _remove_duplicate_prompt(result.content)
+            )
+
             return EnhancePromptResponse(
                 success=True,
                 enhanced_prompt=enhanced,
@@ -2383,6 +2438,8 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
                 oauth_token=refreshed_oauth_token,
                 error=result.error,
             )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:
         return EnhancePromptResponse(
             success=False,

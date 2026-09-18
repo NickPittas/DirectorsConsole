@@ -15,6 +15,7 @@ from cinema_rules.target_models import (
     TARGET_MODELS,
     normalize_target_model,
 )
+from api.providers.prompt_profiles import EnhancementContext, format_binding_context
 
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,8 @@ def build_enhancement_prompt(
     config: dict,
     project_type: str,
     target_model: str,
+    enhancement_context: EnhancementContext | None = None,
+    dialect_id: str | None = None,
 ) -> str:
     """Build the full prompt to send to the LLM for enhancement.
 
@@ -287,6 +290,13 @@ def build_enhancement_prompt(
         The formatted prompt for the LLM
     """
     config_context = format_config_context(config, project_type, target_model)
+    task_context = ""
+    if enhancement_context is not None:
+        dialect = dialect_id or enhancement_context.reference_dialect or "natural_prose"
+        task_context = f"""\n\nENHANCEMENT TASK: {enhancement_context.task}
+PROMPT DIALECT: {dialect}
+{format_binding_context(enhancement_context, target_model, {"id": dialect})}
+"""
 
     return f"""TARGET MODEL:
 {target_model}
@@ -294,12 +304,15 @@ def build_enhancement_prompt(
 USER'S SCENE IDEA:
 {user_prompt}
 
-{config_context}
+{config_context}{task_context}
 
 CONSTRAINTS (MUST FOLLOW):
 - Use the provided configuration context as authoritative; do not invent replacements.
+- Preserve the user's intent and supplied dialogue, language, duration, music, and reference descriptions.
 - Do not contradict the user's scene; reconcile conflicts in favor of the provided configuration.
-- If a detail is not provided, do not add it unless required by the model guide.
-- Follow the system prompt's output format and structure for the target model.
+- If a detail is not provided, do not add it unless the selected target guide requires a compatible cinematic bridge.
+- Follow the selected target guide's task, dialect, section, and source-binding contract.
+- The server received metadata only and cannot inspect media or validate a workflow graph; use only confirmed bindings above.
+- Do not invent attachments, provider asset IDs, source contents, dialogue, durations, music, or API controls.
 
-Output ONLY the final prompt - no explanations, no duplicates, no examples."""
+Output ONLY the final prompt in the required format - no explanations, citations, alternatives, or examples."""

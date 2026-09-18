@@ -1,29 +1,19 @@
 # MiniMax H3 Max prompt guide
 
-**Guide scope:** target ID `minimax_h3_max`, exact vendor model `MiniMax-H3-Max`; this guide follows the official H3/H3 Max V2 API documentation and does not imply account-wide availability.
-**Retrieval date:** 2026-09-18.
-**This is prompt guidance only.** It does not claim a ComfyUI workflow, local node, API credential, account access, region access, or generation backend.
+This guide is for the hosted `MiniMax-H3-Max` API variant only. It does not imply a verified local H3-Max checkpoint, node, account, or media upload.
 
 ## Verified sources
 
-- Retrieved 2026-09-18: [MiniMax model release notes](https://platform.minimax.io/docs/release-notes/models), H3 release status.
-- Retrieved 2026-09-18: [MiniMax video generation guide](https://platform.minimax.io/docs/guides/video-generation), H3 Max mode and input guidance.
-- Retrieved 2026-09-18: [Video Generation V2 create API](https://platform.minimax.io/docs/api-reference/video-generation-v2-create), exact content roles and request bounds.
-- Retrieved 2026-09-18: [MiniMax H3 announcement](https://www.minimax.io/blog/minimax-h3), multimodal context and native audio.
-- Retrieved 2026-09-18: [H3 prompt gallery](https://platform.minimax.io/docs/guides/video-prompt), official prompt-shape examples.
+- Retrieved 2026-09-18: [MiniMax video generation guide](https://platform.minimax.io/docs/guides/video-generation)
+- Retrieved 2026-09-18: [MiniMax V2 create API](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)
+- Retrieved 2026-09-18: [MiniMax H3 announcement](https://www.minimax.io/blog/minimax-h3)
 
-## Mode-specific prompt structure
+## Prompt guidance
 
-- **Text-to-video:** use a compact natural-language brief: subject and setting, sequential physical actions, shot scale and camera movement, light and palette, then sound. Put only verified camera tokens `[pan]`, `[zoom]`, or `[static]` immediately after the relevant description.
-- **First-frame image-to-video:** with a supplied first frame, describe the change and movement that begins from it; do not invent a new starting image.
-- **Last-frame image-to-video:** with a supplied last frame, describe the motion that resolves into that supplied state.
-- **First-and-last-frame image-to-video:** use the pair only when both assets are supplied and describe the continuous transition between them.
-- **Reference-to-video:** assign each supplied image, video, or audio asset a natural-language role such as character, scene, prop, motion, camera, style, voice, or editing rhythm. Make the relationship to the generated action explicit.
+Use the hosted API dialect's natural-language brief: establish the subject and setting, describe sequential physical actions, then the shot scale, natural camera movement, light, palette, and supplied sound. For a supplied first or last frame, describe only the motion from that established state or the path that resolves into it. For reference generation, describe each caller-confirmed image, video, or audio binding by its supplied role; do not invent numbered assets, provider IDs, dialogue, language, or negative fields.
 
-The fetched V2 documentation defines `first_frame`, `last_frame`, `reference_image`, `reference_video`, and `reference_audio` content roles. It treats image-to-video and reference-to-video as mutually exclusive: first/last-frame roles cannot be mixed with reference-image, reference-video, or reference-audio roles. H3 Max's verified resolution and duration limits differ from H3; do not promise a setting unless the user or calling API supplies it. Native audio and reference audio are documented, but a distinct spoken-dialogue control is not. Do not invent dialogue, language, negative prompts, attachments, reference IDs, API fields, or workflow/backend controls; if the caller's response schema requires a negative field, it may remain empty. If no numbered asset was supplied, do not create `Image 1`, `Video 1`, or `Audio 1` labels.
+Image-to-video keyframes and reference-to-video inputs are mutually exclusive in the documented API. The enhancer can validate the caller's declared roles, but cannot inspect media or verify graph bindings. Preserve user-provided dialogue and audio instructions; never add dialogue merely because audio exists. Keep camera motion natural in the prose rather than appending unverified command syntax.
 
 ## Output contract
 
-Return exactly one final prompt paragraph, with no headings, explanations, source citations, provenance, or alternatives. Use cinematic configuration as visual language, never visible rigs or crew.
-
-**Illustrative example (not an official quote):** A wide 16:9 view of a quiet observatory at night. A researcher raises a hand toward the rotating dome [static], then crosses to the window as reflected starlight moves across the floor [zoom]. The room hums softly beneath the user's supplied audio.
+Return one final natural-language prompt with no headings, explanations, citations, alternatives, or duplicated paragraphs. Do not emit local H3 named sections: local structured fields apply only to the explicit `local_h3` dialect of `minimax_h3`.
