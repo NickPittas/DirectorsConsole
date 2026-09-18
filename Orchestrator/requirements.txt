@@ -31,6 +31,7 @@ uvicorn[standard]>=0.32.0
 
 # Image Processing (for PNG metadata extraction)
 Pillow>=10.0.0
+opencv-python>=4.8.0
 
 # Development Dependencies
 # Install with: pip install -r requirements.txt[dev]

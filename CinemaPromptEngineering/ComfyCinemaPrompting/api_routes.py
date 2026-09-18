@@ -22,6 +22,7 @@ from cinema_rules.prompts import PromptGenerator
 from cinema_rules.presets.live_action import LIVE_ACTION_PRESETS
 from cinema_rules.presets.animation import ANIMATION_PRESETS
 from cinema_rules.presets.cinematography_styles import CINEMATOGRAPHY_STYLES
+from cinema_rules.target_models import get_target_models
 
 # Initialize engine
 engine = RuleEngine()
@@ -29,6 +30,32 @@ engine = RuleEngine()
 # Backend server configuration
 BACKEND_URL = os.environ.get("CINEMA_BACKEND_URL", "http://localhost:9800")
 logger = logging.getLogger(__name__)
+
+NODE_DIR = Path(__file__).resolve().parent
+EDITOR_APP_PREFIX = "/cinema_prompt/app"
+EDITOR_APP_DIR = NODE_DIR / "web" / "app"
+EDITOR_INDEX_PATH = EDITOR_APP_DIR / "index.html"
+
+
+async def _serve_editor_index(request):
+    """Serve the bundled editor or explain how to build the missing bundle."""
+    if not EDITOR_INDEX_PATH.is_file():
+        return web.Response(
+            status=503,
+            text=(
+                "Cinema Prompt editor bundle is missing. Build it with "
+                "`npm run build:comfyui` from CinemaPromptEngineering/frontend."
+            ),
+        )
+    return web.FileResponse(EDITOR_INDEX_PATH)
+
+
+async def _redirect_editor_root(request):
+    """Canonicalize the editor URL so relative assets resolve below its prefix."""
+    if not EDITOR_INDEX_PATH.is_file():
+        return await _serve_editor_index(request)
+    raise web.HTTPFound(f"{EDITOR_APP_PREFIX}/")
+
 
 # Helper for JSON response
 def json_response(data):
@@ -73,9 +100,11 @@ async def handle_generate_prompt(request):
         
         if project_type == "live_action":
             config = LiveActionConfig(**config_dict)
+            validation = engine.validate_live_action(config)
             prompt = generator.generate_live_action_prompt(config)
         elif project_type == "animation":
             config = AnimationConfig(**config_dict)
+            validation = engine.validate_animation(config)
             prompt = generator.generate_animation_prompt(config)
         else:
             return web.Response(status=400, text="Invalid project_type")
@@ -83,7 +112,8 @@ async def handle_generate_prompt(request):
         return json_response({
             "prompt": prompt,
             "negative_prompt": generator.get_negative_prompt(),
-            "model_notes": ""
+            "model_notes": "",
+            "validation": validation.model_dump(mode="json"),
         })
     except Exception as e:
         return web.Response(status=400, text=str(e))
@@ -118,6 +148,43 @@ async def handle_get_cinematography_style(request):
         # Return empty if not found, or 404
         return web.Response(status=404)
     return json_response(style.dict())
+
+async def handle_options(request):
+    """Return canonical enum options using the shared rules-engine helper."""
+    data = await get_json(request)
+    project_type = data.get("project_type")
+    field_path = data.get("field_path")
+    config_dict = data.get("current_config", {})
+
+    try:
+        if project_type == "live_action":
+            current_config = LiveActionConfig(**config_dict)
+        elif project_type == "animation":
+            current_config = AnimationConfig(**config_dict)
+        else:
+            return web.json_response({"detail": "Invalid project_type"}, status=422)
+
+        options, disabled_options, disabled_reasons = engine.get_available_options(
+            field_path=field_path,
+            current_config=current_config,
+        )
+    except Exception as error:
+        logger.warning("Invalid options request: %s", error)
+        return web.json_response({"detail": str(error)}, status=422)
+
+    if not options:
+        return web.json_response(
+            {"detail": f"Unknown field path: {field_path}"},
+            status=404,
+        )
+
+    return json_response({
+        "field_path": field_path,
+        "options": options,
+        "disabled_options": disabled_options,
+        "disabled_reasons": disabled_reasons,
+    })
+
 
 async def handle_apply_live_action_preset(request):
     data = await get_json(request)
@@ -163,29 +230,34 @@ async def handle_list_enums(request):
     return json_response({}) 
 
 async def handle_get_target_models(request):
-    models = [
-        {"id": "generic", "name": "Generic / SD1.5", "category": "Standard"},
-        {"id": "midjourney", "name": "Midjourney v6", "category": "Premium"},
-        {"id": "flux", "name": "FLUX.1", "category": "Premium"},
-        {"id": "sdxl", "name": "SDXL", "category": "Standard"},
-        {"id": "wan2.2", "name": "Wan 2.2", "category": "Video"},
-        {"id": "runway", "name": "Runway Gen-3", "category": "Video"},
-        {"id": "pika", "name": "Pika Art", "category": "Video"},
-        {"id": "cogvideo", "name": "CogVideoX", "category": "Video"},
-        {"id": "hunyuan", "name": "Hunyuan Video", "category": "Video"},
-    ]
-    return json_response(models)
+    """Return the dependency-free shared target catalog."""
+    return json_response(get_target_models(include_legacy=True))
 
 # Register routes
 def register_routes():
     app = PromptServer.instance.app
     routes = web.RouteTableDef()
     
-    # Prefix: /cinema-prompt/api
+    # Prefix: /cinema_prompt/api
     base = "/cinema_prompt/api"
+
+    # Keep the node's editor separate from WEB_DIRECTORY: ComfyUI uses that
+    # directory to discover extension JavaScript, while this route serves the
+    # built application and its relative assets.
+    app.router.add_get(EDITOR_APP_PREFIX, _redirect_editor_root)
+    app.router.add_get(f"{EDITOR_APP_PREFIX}/", _serve_editor_index)
+    if EDITOR_APP_DIR.is_dir():
+        app.router.add_static(EDITOR_APP_PREFIX, EDITOR_APP_DIR)
+    else:
+        logger.warning(
+            "Cinema Prompt editor bundle is missing at %s; %s will return a build hint",
+            EDITOR_APP_DIR,
+            EDITOR_APP_PREFIX,
+        )
     
     app.router.add_post(f"{base}/validate", handle_validate)
     app.router.add_post(f"{base}/generate-prompt", handle_generate_prompt)
+    app.router.add_post(f"{base}/options", handle_options)
     
     app.router.add_get(f"{base}/presets/live-action", handle_get_live_action_presets)
     app.router.add_get(f"{base}/presets/animation", handle_get_animation_presets)
@@ -514,8 +586,6 @@ async def handle_save_options(request):
     )
 
 
-# NOTE: Routes are NOT auto-registered anymore.
-# The frontend connects directly to the standalone backend at localhost:9800.
-# This file is kept for potential future use but is not loaded by default.
-# To re-enable, import and call register_routes() from __init__.py
+# Routes are registered by the node package when ComfyUI imports it.  The
+# bundled frontend uses this prefix in ComfyUI builds and remains same-origin.
 

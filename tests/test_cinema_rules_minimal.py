@@ -1,7 +1,4 @@
 """Minimal test to verify cinema_rules is importable and functional."""
-import sys
-sys.path.insert(0, r'Z:\python\DirectorsConsole\CinemaPromptEngineering')
-
 # Test 1: Import cinema_rules
 import cinema_rules
 assert cinema_rules.__version__ == "0.2.0"

@@ -60,6 +60,8 @@ ipython_config.py
 
 # Environment files
 .env
+# CPE backend OAuth secrets (keep the documented sample tracked)
+CinemaPromptEngineering/.env
 .env.local
 .env.*.local
 .venvrc
@@ -219,6 +221,9 @@ config.user.yaml
 output/
 exports/
 downloads/
+
+# Generated standalone ComfyUI rules copy
+CinemaPromptEngineering/ComfyCinemaPrompting/cinema_rules/
 
 # Workflow backups
 *.workflow.backup

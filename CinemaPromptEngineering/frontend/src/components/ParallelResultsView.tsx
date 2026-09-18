@@ -206,25 +206,6 @@ export function ParallelResultsView({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
 
-  if (!jobGroup || jobGroup.child_jobs.length === 0) {
-    return (
-      <div className="parallel-results-view empty">
-        <div className="empty-state">
-          <Zap size={32} />
-          <p>No parallel generation results available</p>
-        </div>
-      </div>
-    );
-  }
-
-  const { child_jobs, status, completed_count, failed_count, total_count } = jobGroup;
-
-  const completedJobs = child_jobs.filter((j: ChildJob) => j.status === 'completed');
-  const runningJobs = child_jobs.filter((j: ChildJob) => j.status === 'running');
-  const pendingJobs = child_jobs.filter((j: ChildJob) => j.status === 'pending');
-
-  const isComplete = status === 'completed' || status === 'failed' || status === 'partial_complete';
-
   const handleCardClick = useCallback(
     (job: ChildJob, index: number) => {
       if (job.status === 'completed') {
@@ -251,6 +232,25 @@ export function ParallelResultsView({
       setEnlargedImage(job.outputs.images[0].url);
     }
   }, []);
+
+  if (!jobGroup || jobGroup.child_jobs.length === 0) {
+    return (
+      <div className="parallel-results-view empty">
+        <div className="empty-state">
+          <Zap size={32} />
+          <p>No parallel generation results available</p>
+        </div>
+      </div>
+    );
+  }
+
+  const { child_jobs, status, completed_count, failed_count, total_count } = jobGroup;
+
+  const completedJobs = child_jobs.filter((j: ChildJob) => j.status === 'completed');
+  const runningJobs = child_jobs.filter((j: ChildJob) => j.status === 'running');
+  const pendingJobs = child_jobs.filter((j: ChildJob) => j.status === 'pending');
+
+  const isComplete = status === 'completed' || status === 'failed' || status === 'partial_complete';
 
   return (
     <div className={`parallel-results-view ${compact ? 'compact' : ''}`}>

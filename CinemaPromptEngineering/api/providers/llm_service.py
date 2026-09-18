@@ -490,11 +490,10 @@ class LLMService:
 
         # Debug: Log the token type to help diagnose issues
         token = credentials.oauth_token
-        token_preview = token[:15] if token else "NONE"
         is_jwt = token.startswith("eyJ") if token else False
         is_github_oauth = token.startswith("gho_") if token else False
         logger.info(
-            f"[Copilot API] Token preview: {token_preview}... | Is JWT: {is_jwt} | Is GitHub OAuth: {is_github_oauth}"
+            f"[Copilot API] Token type | Is JWT: {is_jwt} | Is GitHub OAuth: {is_github_oauth}"
         )
 
         if is_github_oauth:
@@ -1727,11 +1726,10 @@ class LLMService:
             }
 
         token = credentials.oauth_token
-        token_preview = token[:15] if token else "NONE"
         is_copilot_token = token.startswith("tid=") or token.startswith("eyJ") if token else False
         is_github_oauth = token.startswith("gho_") if token else False
         logger.info(
-            f"[Copilot Models] Token preview: {token_preview}... | Is Copilot token: {is_copilot_token} | Is GitHub OAuth: {is_github_oauth}"
+            f"[Copilot Models] Token type | Is Copilot token: {is_copilot_token} | Is GitHub OAuth: {is_github_oauth}"
         )
 
         if is_github_oauth:

@@ -32,6 +32,7 @@ from .system_prompts import (
     build_enhancement_prompt,
     get_target_models,
     TARGET_MODELS,
+    MODEL_ID_ALIASES,
     is_video_model,
 )
 
@@ -65,5 +66,6 @@ __all__ = [
     "build_enhancement_prompt",
     "get_target_models",
     "TARGET_MODELS",
+    "MODEL_ID_ALIASES",
     "is_video_model",
 ]

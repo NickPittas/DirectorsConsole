@@ -28,10 +28,7 @@ templates_system/
 │   ├── prompt_builder.py   # Prompt assembly
 │   ├── angle_library.py    # Camera angles
 │   ├── export_manager.py   # Export functionality
-│   ├── session_manager.py  # Session save/load
-│   ├── comfyui_client.py   # ComfyUI HTTP client
-│   ├── batch_generation.py # Batch processing
-│   └── comfyui_websocket.py # WebSocket client
+│   └── session_manager.py  # Session save/load
 ├── data/                   # Data files
 │   ├── angles.txt         # 96 camera angle definitions
 │   ├── template_schema.json # JSON schema
@@ -81,10 +78,8 @@ workflow = builder.build(
     }
 )
 
-# Send to ComfyUI
-from templates_system import ComfyUIClient
-client = ComfyUIClient("http://127.0.0.1:8188")
-prompt_id = client.queue_prompt(workflow)
+# Submit the resulting workflow through the live frontend or
+# Orchestrator ComfyUI client.
 ```
 
 ### Camera Angles
@@ -222,8 +217,6 @@ Templates are JSON files with this structure:
 Required Python packages:
 - `pydantic` - Data validation
 - `jsonschema` - Template validation
-- `requests` - ComfyUI HTTP client
-- `websockets` - ComfyUI WebSocket client
 - `Pillow` - Image handling
 - `reportlab` - PDF export (optional)
 

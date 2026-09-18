@@ -3,11 +3,16 @@ name = "cinema-prompt-engineering"
 version = "0.1.0"
 description = "Professional cinematography prompt generator for AI image/video models"
 authors = ["Cinema Prompt Engineering Team"]
-readme = "README.md"
 packages = [
     { include = "cinema_rules" },
     { include = "api" },
-    { include = "comfyui_node" },
+    { include = "templates_system" },
+    { include = "workflow_parser" },
+]
+include = [
+    { path = "templates_system/data/angles.txt", format = ["sdist", "wheel"] },
+    { path = "templates_system/data/template_schema.json", format = ["sdist", "wheel"] },
+    { path = "templates_system/templates/*.json", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry.dependencies]
@@ -17,6 +22,13 @@ fastapi = "^0.109.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
 httpx = "^0.26.0"
 aiohttp = "^3.9.0"
+jsonschema = "^4.20.0"
+requests = "^2.31.0"
+python-multipart = ">=0.0.6"
+python-dotenv = ">=1.0.0"
+pillow = ">=10.0.0"
+cryptography = ">=41.0.0"
+loguru = ">=0.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

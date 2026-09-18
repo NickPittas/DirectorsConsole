@@ -250,7 +250,6 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
     projectPath,
     loadFolderFiles,
     setFolderTree,
-    setCurrentFiles,
     setRatings,
     setAllTags,
     setIsLoading,
@@ -284,7 +283,7 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
     loadedProjectRef.current = projectPath;
     setIsLoading(true); // Set immediately so loading overlay shows (resetGallery clears it)
     loadGalleryData();
-  }, [projectPath, isActive]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectPath, isActive, loadGalleryData, resetGallery, setIsLoading]);
 
   // ---------------------------------------------------------------------------
   // Auto-save view state (debounced)
@@ -336,6 +335,7 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
     filterRating,
     filterTags,
     currentPath,
+    isActive,
   ]);
 
   // ---------------------------------------------------------------------------

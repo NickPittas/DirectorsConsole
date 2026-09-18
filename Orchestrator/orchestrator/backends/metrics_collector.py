@@ -16,6 +16,7 @@ from typing import Any, Callable, Protocol, Sequence
 from orchestrator.core.models.backend import BackendConfig
 from orchestrator.core.models.metrics import MetricsSnapshot
 from orchestrator.backends.metrics_helpers import (
+    safe_get_metrics_agent,
     safe_get_queue_status,
     safe_get_system_stats,
 )
@@ -124,17 +125,19 @@ class MetricsCollector:
         """
         # Fetch all data concurrently
         system_stats_task = safe_get_system_stats(client)
+        metrics_agent_task = safe_get_metrics_agent(client)
         queue_status_task = safe_get_queue_status(client)
 
-        system_stats, queue_status = await asyncio.gather(
+        system_stats, metrics_agent, queue_status = await asyncio.gather(
             system_stats_task,
+            metrics_agent_task,
             queue_status_task,
         )
 
         return self._build_snapshot(
             config,
             system_stats,
-            None,
+            metrics_agent,
             queue_status,
         )
 

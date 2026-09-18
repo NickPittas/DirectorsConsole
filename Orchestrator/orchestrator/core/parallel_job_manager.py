@@ -163,6 +163,9 @@ class ParallelJobManager:
         Args:
             job_group: The job group to execute.
         """
+        if job_group.status == JobGroupStatus.CANCELLED:
+            return
+
         tasks = []
 
         for child_job in job_group.child_jobs:
@@ -246,6 +249,7 @@ class ParallelJobManager:
         client = self._client_factory(backend)
         child_job.status = ChildJobStatus.RUNNING
         child_job.started_at = datetime.utcnow()
+        prompt_id: str | None = None
 
         try:
             # Patch seed into workflow
@@ -282,33 +286,16 @@ class ParallelJobManager:
 
                 # Get results
                 history = await client.get_history(prompt_id)
-                outputs = await self._collect_outputs(client, history, prompt_id)
-
-                child_job.status = ChildJobStatus.COMPLETED
-                child_job.completed_at = datetime.utcnow()
-                child_job.outputs = outputs
-                child_job.progress = 100.0
-
-                # Emit completion event with outputs
-                await self._emit_event(
-                    job_group.id,
-                    {
-                        "type": "child_completed",
-                        "job_id": child_job.job_id,
-                        "backend_id": child_job.backend_id,
-                        "seed": child_job.seed,
-                        "outputs": outputs,
-                        "completed_at": child_job.completed_at.isoformat(),
-                    },
-                )
-
-                logger.info(
-                    f"Child job {child_job.job_id} completed on {backend.id}"
-                )
+                await self._complete_child_job(job_group, child_job, client, history, prompt_id)
 
         except asyncio.TimeoutError:
             child_job.status = ChildJobStatus.TIMEOUT
             child_job.error_message = f"Timeout after {job_group.timeout_seconds}s"
+            remote_status = await self._cancel_remote_prompt(client, prompt_id, child_job)
+            if remote_status == "completed" and await self._recover_completed_prompt(
+                job_group, child_job, client, prompt_id
+            ):
+                return
             await self._emit_event(
                 job_group.id,
                 {
@@ -318,20 +305,22 @@ class ParallelJobManager:
                     "timeout_seconds": job_group.timeout_seconds,
                 },
             )
-            # Attempt to interrupt the backend
-            try:
-                await client.interrupt()
-            except Exception as e:
-                logger.debug(f"Failed to interrupt backend: {e}")
 
         except asyncio.CancelledError:
             child_job.status = ChildJobStatus.CANCELLED
+            remote_status = await self._cancel_remote_prompt(client, prompt_id, child_job)
+            if remote_status == "completed" and await self._recover_completed_prompt(
+                job_group, child_job, client, prompt_id
+            ):
+                raise
             await self._emit_event(
                 job_group.id,
                 {
                     "type": "child_cancelled",
                     "job_id": child_job.job_id,
                     "backend_id": child_job.backend_id,
+                    "remote_cancelled": remote_status == "cancelled",
+                    "error": child_job.error_message,
                 },
             )
             raise
@@ -414,6 +403,94 @@ class ParallelJobManager:
 
         return patched
 
+    async def _complete_child_job(
+        self,
+        job_group: JobGroup,
+        child_job: ChildJob,
+        client: ComfyUIClient,
+        history: dict,
+        prompt_id: str,
+    ) -> None:
+        """Store outputs and emit the normal completion event exactly once."""
+        outputs = await self._collect_outputs(client, history, prompt_id)
+        child_job.status = ChildJobStatus.COMPLETED
+        child_job.completed_at = datetime.utcnow()
+        child_job.outputs = outputs
+        child_job.progress = 100.0
+        child_job.error_type = None
+        child_job.error_message = None
+        await self._emit_event(
+            job_group.id,
+            {
+                "type": "child_completed",
+                "job_id": child_job.job_id,
+                "backend_id": child_job.backend_id,
+                "seed": child_job.seed,
+                "outputs": outputs,
+                "completed_at": child_job.completed_at.isoformat(),
+            },
+        )
+        logger.info(f"Child job {child_job.job_id} completed on {child_job.backend_id}")
+
+    async def _recover_completed_prompt(
+        self,
+        job_group: JobGroup,
+        child_job: ChildJob,
+        client: ComfyUIClient,
+        prompt_id: str,
+    ) -> bool:
+        """Recover a successful prompt observed during cancellation."""
+        try:
+            history = await client.get_history(prompt_id)
+            await self._complete_child_job(job_group, child_job, client, history, prompt_id)
+            return True
+        except Exception as error:
+            child_job.status = ChildJobStatus.CANCELLED
+            child_job.error_type = "RemoteCancellationUnconfirmed"
+            child_job.error_message = (
+                "Remote cancellation was reported after completion, but outputs "
+                f"could not be recovered: {error}"
+            )
+            logger.warning(f"Child job {child_job.job_id}: {child_job.error_message}")
+            return False
+
+    async def _cancel_remote_prompt(
+        self,
+        client: ComfyUIClient,
+        prompt_id: str | None,
+        child_job: ChildJob,
+    ) -> str:
+        """Cancel backend work, retaining an actionable error if unconfirmed."""
+        if prompt_id is None:
+            detail = "Submission may still be in flight; no prompt ID was returned"
+            status = "unconfirmed"
+        else:
+            try:
+                result = await client.cancel_prompt(prompt_id)
+                # Accept the old bool result from a third-party test/client while
+                # preferring the explicit verified status from ComfyUIClient.
+                if result is True:
+                    status = "cancelled"
+                elif result is False:
+                    status = "unconfirmed"
+                elif result in {"cancelled", "completed", "unconfirmed"}:
+                    status = result
+                else:
+                    status = "unconfirmed"
+                if status == "cancelled":
+                    return status
+                if status == "completed":
+                    return status
+                detail = f"Prompt {prompt_id} cancellation remains unconfirmed"
+            except Exception as error:
+                status = "unconfirmed"
+                detail = f"Could not cancel prompt {prompt_id}: {error}"
+
+        child_job.error_type = "RemoteCancellationUnconfirmed"
+        child_job.error_message = f"Remote cancellation unconfirmed. {detail}"
+        logger.warning(f"Child job {child_job.job_id}: {child_job.error_message}")
+        return status
+
     async def _collect_outputs(
         self,
         client: ComfyUIClient,
@@ -454,6 +531,10 @@ class ParallelJobManager:
         Args:
             job_group: Job group to update.
         """
+        if job_group.status == JobGroupStatus.CANCELLED:
+            job_group.completed_at = job_group.completed_at or datetime.utcnow()
+            return
+
         completed = job_group.completed_count
         failed = job_group.failed_count
         total = len(job_group.child_jobs)
@@ -481,7 +562,8 @@ class ParallelJobManager:
             group_id: ID of the job group to cancel.
 
         Returns:
-            Dictionary with counts of interrupted and already complete jobs.
+            Counts of stopped and already complete jobs, plus unconfirmed remote
+            cancellations when the backend could not acknowledge cancellation.
 
         Raises:
             ValueError: If job group not found.
@@ -490,30 +572,60 @@ class ParallelJobManager:
         if not job_group:
             raise ValueError(f"Job group {group_id} not found")
 
-        interrupted = 0
         already_complete = 0
+        cancelled_tasks: list[asyncio.Task] = []
+        cancelled_children: list[ChildJob] = []
 
         for child_job in job_group.child_jobs:
             if child_job.status in [
                 ChildJobStatus.COMPLETED,
                 ChildJobStatus.FAILED,
                 ChildJobStatus.TIMEOUT,
+                ChildJobStatus.CANCELLED,
             ]:
                 already_complete += 1
                 continue
 
             task = self._running_tasks.get(child_job.job_id)
-            if task:
+            if task and not task.done():
                 task.cancel()
-                interrupted += 1
+                cancelled_tasks.append(task)
+                cancelled_children.append(child_job)
+            elif child_job.status == ChildJobStatus.QUEUED:
+                child_job.status = ChildJobStatus.CANCELLED
 
         job_group.status = JobGroupStatus.CANCELLED
-        logger.info(
-            f"Cancelled job group {group_id}: "
-            f"{interrupted} interrupted, {already_complete} already complete"
-        )
 
-        return {"interrupted": interrupted, "already_complete": already_complete}
+        if cancelled_tasks:
+            await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+
+        # Tasks cancelled before their first instruction never submitted work.
+        for child_job in cancelled_children:
+            if child_job.status == ChildJobStatus.QUEUED:
+                child_job.status = ChildJobStatus.CANCELLED
+        recovered = sum(
+            child.status == ChildJobStatus.COMPLETED for child in cancelled_children
+        )
+        already_complete += recovered
+        unconfirmed = sum(
+            child.error_type == "RemoteCancellationUnconfirmed"
+            for child in cancelled_children
+            if child.status != ChildJobStatus.COMPLETED
+        )
+        interrupted = sum(
+            child.status == ChildJobStatus.CANCELLED
+            and child.error_type != "RemoteCancellationUnconfirmed"
+            for child in cancelled_children
+        )
+        logger.info(
+            f"Cancelled job group {group_id}: {interrupted} stopped, "
+            f"{unconfirmed} remote cancellations unconfirmed, "
+            f"{already_complete} already_complete"
+        )
+        result = {"interrupted": interrupted, "already_complete": already_complete}
+        if unconfirmed:
+            result["unconfirmed"] = unconfirmed
+        return result
 
     def register_websocket_handler(
         self,

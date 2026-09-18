@@ -290,22 +290,23 @@ export function WorkflowEditor({
   
   // Update LoRA configs when availableLoras changes after initial load
   useEffect(() => {
-    if (availableLoras.length > 0 && configs.length > 0) {
-      setConfigs(prevConfigs => 
-        prevConfigs.map(config => {
-          if (config.category === 'lora') {
-            return {
-              ...config,
-              constraints: {
-                ...config.constraints,
-                availableLoras: availableLoras
-              }
-            };
-          }
-          return config;
-        })
-      );
-    }
+    if (availableLoras.length === 0) return;
+
+    setConfigs(prevConfigs => {
+      if (prevConfigs.length === 0) return prevConfigs;
+      return prevConfigs.map(config => {
+        if (config.category === 'lora') {
+          return {
+            ...config,
+            constraints: {
+              ...config.constraints,
+              availableLoras: availableLoras
+            }
+          };
+        }
+        return config;
+      });
+    });
   }, [availableLoras]);
   
   // Auto-save to localStorage
@@ -407,7 +408,7 @@ export function WorkflowEditor({
     
     setConfigs(prev => [...prev, newConfig]);
     setHasChanges(true);
-  }, [configs.length]);
+  }, [configs.length, workflow]);
   
   // Update a parameter config
   const updateConfig = useCallback((index: number, updates: Partial<ParameterConfig>) => {

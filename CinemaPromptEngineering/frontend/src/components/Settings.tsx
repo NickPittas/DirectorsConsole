@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '@/api/client';
 
 // =============================================================================
@@ -63,6 +63,7 @@ export interface ProviderCredentials {
   endpoint?: string;
   oauthToken?: string;
   oauthRefreshToken?: string;
+  oauthExpiresAt?: number | null;
   oauthClientId?: string;
   oauthClientSecret?: string;
 }
@@ -421,6 +422,20 @@ function saveSettingsToLocalStorage(settings: SavedSettings): void {
   }
 }
 
+function saveSettingsToLocalStorageOrThrow(settings: SavedSettings): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+}
+
+export function updateSavedOAuthToken(providerId: string, token: string): void {
+  const settings = loadSettingsFromLocalStorage();
+  if (!settings.providers[providerId]) return;
+  settings.providers[providerId] = {
+    ...settings.providers[providerId],
+    oauthToken: token,
+  };
+  saveSettingsToLocalStorage(settings);
+}
+
 // Check if migration has been done
 function isMigrationComplete(): boolean {
   return localStorage.getItem(MIGRATION_FLAG_KEY) === 'true';
@@ -433,52 +448,47 @@ function markMigrationComplete(): void {
 
 // Server-side API functions
 async function loadSettingsFromServer(): Promise<SavedSettings> {
-  try {
-    // Get all credentials from server
-    const serverData = await api.getAllCredentials();
-    
-    // Fetch full credentials for each provider (with per-provider error handling)
-    const providers: Record<string, ProviderCredentials> = {};
-    for (const providerId of Object.keys(serverData.providers)) {
-      try {
-        const fullCreds = await api.getProviderCredentials(providerId);
-        if (fullCreds.exists) {
-          providers[providerId] = {
-            apiKey: fullCreds.api_key,
-            endpoint: fullCreds.endpoint,
-            oauthToken: fullCreds.oauth_token,
-            oauthRefreshToken: fullCreds.oauth_refresh_token,
-            oauthClientId: fullCreds.oauth_client_id,
-            oauthClientSecret: fullCreds.oauth_client_secret,
-          };
-        }
-      } catch (providerError) {
-        // Log but continue loading other providers
-        console.warn(`Failed to load credentials for ${providerId}:`, providerError);
-      }
+  // Get all credentials from server
+  const serverData = await api.getAllCredentials();
+
+  // A failed row must fail the load; otherwise unreadable encrypted data
+  // appears to be an empty provider.
+  const providers: Record<string, ProviderCredentials> = {};
+  for (const providerId of Object.keys(serverData.providers)) {
+    const fullCreds = await api.getProviderCredentials(providerId);
+    if (fullCreds.exists) {
+      providers[providerId] = {
+        apiKey: fullCreds.api_key,
+        endpoint: fullCreds.endpoint,
+        oauthToken: fullCreds.oauth_token,
+        oauthRefreshToken: fullCreds.oauth_refresh_token,
+        oauthExpiresAt: fullCreds.oauth_expires_at,
+        oauthClientId: fullCreds.oauth_client_id,
+        oauthClientSecret: fullCreds.oauth_client_secret,
+      };
     }
-    
-    return {
-      activeProvider: serverData.active_provider,
-      providers,
-    };
-  } catch (e) {
-    console.error('Failed to load settings from server:', e);
-    // Fallback to localStorage
-    return loadSettingsFromLocalStorage();
   }
+
+  return {
+    activeProvider: serverData.active_provider,
+    providers,
+  };
 }
 
 async function saveCredentialsToServer(providerId: string, creds: ProviderCredentials): Promise<void> {
   try {
-    await api.updateProviderCredentials(providerId, {
+    const result = await api.updateProviderCredentials(providerId, {
       api_key: creds.apiKey,
       endpoint: creds.endpoint,
       oauth_token: creds.oauthToken,
       oauth_refresh_token: creds.oauthRefreshToken,
+      oauth_expires_at: creds.oauthExpiresAt,
       oauth_client_id: creds.oauthClientId,
       oauth_client_secret: creds.oauthClientSecret,
     });
+    if (!result.success) {
+      throw new Error(`Credential update for ${providerId} was not accepted`);
+    }
   } catch (e) {
     console.error(`Failed to save credentials for ${providerId} to server:`, e);
     throw e;
@@ -736,6 +746,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   const [credentials, setCredentials] = useState<Record<string, ProviderCredentials>>({});
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -743,6 +754,8 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   // Default LLM model selection state
   const [selectedLlmProvider, setSelectedLlmProvider] = useState<string>('');
   const [selectedLlmModel, setSelectedLlmModel] = useState<string>('');
+  const selectedLlmModelRef = useRef(selectedLlmModel);
+  selectedLlmModelRef.current = selectedLlmModel;
   const [availableModels, setAvailableModels] = useState<Array<{id: string, name: string, recommended: boolean}>>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   
@@ -759,16 +772,110 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   
   // Track if current OAuth provider has a built-in client ID
   const [_hasBuiltinClient, setHasBuiltinClient] = useState(false);
+  const credentialsRef = useRef<Record<string, ProviderCredentials>>(credentials);
+  const oauthMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-  // Helper to refresh OAuth tokens for providers that need it
-  const refreshExpiredTokens = async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
+  type OAuthCredentialUpdate = {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: number | null;
+  };
+
+  // OAuth tuple writes are serialized so an older response cannot overwrite a newer one.
+  const updateOAuthCredentials = useCallback(async (
+    providerId: string,
+    update: OAuthCredentialUpdate,
+    options: {
+      baseCredentials?: ProviderCredentials;
+      optimistic?: boolean;
+    } = {},
+  ): Promise<void> => {
+    const mutation = oauthMutationQueueRef.current.then(async () => {
+      const current = {
+        ...(credentialsRef.current[providerId] || options.baseCredentials || {}),
+      };
+      const updatedCredentials: ProviderCredentials = {
+        ...current,
+        oauthToken: update.accessToken,
+        oauthRefreshToken: update.refreshToken === undefined
+          ? current.oauthRefreshToken
+          : update.refreshToken,
+        oauthExpiresAt: update.expiresAt,
+      };
+      const previousOAuthTuple: ProviderCredentials = {
+        ...current,
+        oauthToken: current.oauthToken || '',
+        oauthRefreshToken: current.oauthRefreshToken || '',
+        oauthExpiresAt: current.oauthExpiresAt ?? null,
+      };
+      const apply = (next: ProviderCredentials) => {
+        credentialsRef.current = {
+          ...credentialsRef.current,
+          [providerId]: next,
+        };
+        setCredentials(prev => ({
+          ...prev,
+          [providerId]: next,
+        }));
+      };
+      const restore = () => apply(current);
+
+      if (options.optimistic !== false) apply(updatedCredentials);
+
+      let serverUpdated = false;
+      try {
+        await saveCredentialsToServer(providerId, updatedCredentials);
+        serverUpdated = true;
+
+        const saved = loadSettingsFromLocalStorage();
+        saveSettingsToLocalStorageOrThrow({
+          ...saved,
+          providers: {
+            ...saved.providers,
+            [providerId]: {
+              ...saved.providers[providerId],
+              oauthToken: updatedCredentials.oauthToken,
+              oauthRefreshToken: updatedCredentials.oauthRefreshToken,
+              oauthExpiresAt: updatedCredentials.oauthExpiresAt,
+            },
+          },
+        });
+
+        if (options.optimistic === false) apply(updatedCredentials);
+      } catch (error) {
+        restore();
+
+        // If the server already accepted the tuple but local persistence failed,
+        // put the previous usable tuple back before reporting failure.
+        if (serverUpdated) {
+          try {
+            await saveCredentialsToServer(providerId, previousOAuthTuple);
+          } catch (rollbackError) {
+            console.error('Failed to roll back OAuth credentials after persistence failure:', rollbackError);
+            throw new Error(
+              `OAuth credentials were not saved locally, and server rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            );
+          }
+        }
+
+        throw error;
+      }
+    });
+
+    oauthMutationQueueRef.current = mutation.catch(() => undefined);
+    return mutation;
+  }, []);
+
+  // Helper to refresh OAuth tokens for providers that need it.
+  const refreshExpiredTokens = useCallback(async (providers: Record<string, ProviderCredentials>): Promise<Record<string, ProviderCredentials>> => {
     const refreshedProviders = { ...providers };
-    
+    const currentCredentials = providers.github_copilot;
+
     // For GitHub Copilot, try to refresh if we have the GitHub access token stored
-    if (providers.github_copilot?.oauthRefreshToken && providers.github_copilot?.oauthToken) {
+    if (currentCredentials?.oauthRefreshToken && currentCredentials.oauthToken) {
       try {
         // Check if token looks like a JWT (Copilot JWT starts with eyJ)
-        const token = providers.github_copilot.oauthToken;
+        const token = currentCredentials.oauthToken;
         if (token.startsWith('eyJ')) {
           // Try to decode and check expiration (JWTs are base64-encoded JSON)
           try {
@@ -776,16 +883,26 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             const expiresAt = payload.exp ? payload.exp * 1000 : 0;
             const now = Date.now();
             const fiveMinutes = 5 * 60 * 1000;
-            
+
             if (expiresAt > 0 && expiresAt - now < fiveMinutes) {
               console.log('[Settings] GitHub Copilot token expires soon, refreshing...');
               const result = await api.refreshOAuthToken('github_copilot');
               if (result.success && result.oauth_token) {
                 console.log('[Settings] GitHub Copilot token refreshed successfully');
-                refreshedProviders.github_copilot = {
-                  ...refreshedProviders.github_copilot,
+                const refreshedCredentials = {
+                  ...currentCredentials,
                   oauthToken: result.oauth_token,
+                  oauthExpiresAt: result.expires_at ?? currentCredentials.oauthExpiresAt ?? null,
                 };
+                await updateOAuthCredentials(
+                  'github_copilot',
+                  {
+                    accessToken: refreshedCredentials.oauthToken,
+                    expiresAt: refreshedCredentials.oauthExpiresAt,
+                  },
+                  { baseCredentials: currentCredentials, optimistic: false },
+                );
+                refreshedProviders.github_copilot = refreshedCredentials;
               } else {
                 console.warn('[Settings] Failed to refresh GitHub Copilot token:', result.error_description);
               }
@@ -795,10 +912,20 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             console.log('[Settings] Could not decode token expiration, attempting refresh...');
             const result = await api.refreshOAuthToken('github_copilot');
             if (result.success && result.oauth_token) {
-              refreshedProviders.github_copilot = {
-                ...refreshedProviders.github_copilot,
+              const refreshedCredentials = {
+                ...currentCredentials,
                 oauthToken: result.oauth_token,
+                oauthExpiresAt: result.expires_at ?? currentCredentials.oauthExpiresAt ?? null,
               };
+              await updateOAuthCredentials(
+                'github_copilot',
+                {
+                  accessToken: refreshedCredentials.oauthToken,
+                  expiresAt: refreshedCredentials.oauthExpiresAt,
+                },
+                { baseCredentials: currentCredentials, optimistic: false },
+              );
+              refreshedProviders.github_copilot = refreshedCredentials;
             }
           }
         }
@@ -806,9 +933,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         console.warn('[Settings] Error refreshing GitHub Copilot token:', error);
       }
     }
-    
+
     return refreshedProviders;
-  };
+  }, [updateOAuthCredentials]);
 
   // Load settings from server on mount (with localStorage migration)
   useEffect(() => {
@@ -820,26 +947,25 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
       try {
         // First, try migration if needed
         await migrateLocalStorageToServer();
-        
+
         // Then load from server
-        let saved = await loadSettingsFromServer();
-        
+        const saved = await loadSettingsFromServer();
+
         if (!isMounted) return;
-        
-        // Try to refresh expired OAuth tokens
-        saved = {
-          ...saved,
-          providers: await refreshExpiredTokens(saved.providers),
-        };
-        
-        if (!isMounted) return;
-        
+
         setActiveProvider(saved.activeProvider);
         setCredentials(saved.providers);
+        credentialsRef.current = saved.providers;
         setConnectionStatus('disconnected');
         setConnectionError(null);
+        setSettingsLoadError(null);
         setHasUnsavedChanges(false);
-        
+
+        // Try to refresh expired OAuth tokens
+        await refreshExpiredTokens(saved.providers);
+
+        if (!isMounted) return;
+
         // Load LLM model settings from server
         const llmSettings = await loadLlmSettingsFromServer();
         if (llmSettings && isMounted) {
@@ -848,15 +974,21 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         }
       } catch (error) {
         console.error('Failed to load settings from server, falling back to localStorage:', error);
-        
+
         if (!isMounted) return;
+
+        const message = error instanceof Error
+          ? error.message
+          : 'Failed to load stored credentials. Check the backend and credential storage.';
+        setSettingsLoadError(message);
+        setConnectionStatus('error');
+        setConnectionError(message);
         
-        // Fallback to localStorage
+        // Keep the existing localStorage fallback, but make the server failure visible.
         const saved = loadSettings();
         setActiveProvider(saved.activeProvider);
+        credentialsRef.current = saved.providers;
         setCredentials(saved.providers);
-        setConnectionStatus('disconnected');
-        setConnectionError(null);
         setHasUnsavedChanges(false);
         
         // Load LLM model settings from localStorage
@@ -873,7 +1005,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
     return () => {
       isMounted = false;
     };
-  }, [isOpen]);
+  }, [isOpen, refreshExpiredTokens]);
 
   // Fetch LLM models when selected provider changes
   useEffect(() => {
@@ -913,7 +1045,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         if (result.success && result.models.length > 0) {
           setAvailableModels(result.models);
           // Auto-select first recommended or first model if current selection is invalid
-          if (!result.models.find(m => m.id === selectedLlmModel)) {
+          if (!result.models.find(m => m.id === selectedLlmModelRef.current)) {
             const recommended = result.models.find(m => m.recommended);
             setSelectedLlmModel(recommended?.id || result.models[0]?.id || '');
           }
@@ -968,7 +1100,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   }, []);
 
   // Handle credential updates (with immediate server persist for OAuth tokens)
-  const updateCredential = useCallback((field: keyof ProviderCredentials, value: string) => {
+  const updateCredential = useCallback((field: keyof ProviderCredentials, value: string | number | null) => {
     if (!activeProvider) return;
     
     setCredentials(prev => {
@@ -976,23 +1108,61 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         ...prev,
         [activeProvider]: {
           ...prev[activeProvider],
-          [field]: value || undefined,
+          [field]: value,
         },
       };
       
       // For OAuth tokens and client credentials, persist immediately to server (fire and forget)
-      if (field === 'oauthToken' || field === 'oauthRefreshToken' || field === 'oauthClientId' || field === 'oauthClientSecret') {
+      if (field === 'oauthToken' || field === 'oauthRefreshToken' || field === 'oauthExpiresAt' || field === 'oauthClientId' || field === 'oauthClientSecret') {
         const creds = updated[activeProvider];
         saveCredentialsToServer(activeProvider, creds).catch((err) => {
           console.error(`Failed to persist ${field} to server:`, err);
         });
       }
       
+      credentialsRef.current = updated;
       return updated;
     });
     setHasUnsavedChanges(true);
     setConnectionStatus('disconnected');
   }, [activeProvider]);
+
+  const handleOAuthDisconnect = useCallback(async () => {
+    if (!activeProvider) return;
+
+    setConnectionStatus('connecting');
+    setConnectionError(null);
+    try {
+      await updateOAuthCredentials(
+        activeProvider,
+        { accessToken: '', refreshToken: '', expiresAt: null },
+        { optimistic: false },
+      );
+      setHasUnsavedChanges(true);
+      setConnectionStatus('disconnected');
+    } catch (error) {
+      console.error('Failed to persist OAuth disconnect:', error);
+      setConnectionStatus('error');
+      setConnectionError(error instanceof Error ? error.message : 'Failed to disconnect OAuth');
+    }
+  }, [activeProvider, updateOAuthCredentials]);
+
+  // A manually pasted token is ad-hoc; do not associate it with saved OAuth refresh state.
+  const handleManualOAuthTokenChange = useCallback((value: string) => {
+    if (!activeProvider) return;
+
+    void updateOAuthCredentials(
+      activeProvider,
+      { accessToken: value, refreshToken: '', expiresAt: null },
+    ).then(() => {
+      setHasUnsavedChanges(true);
+      setConnectionStatus('disconnected');
+    }).catch((error) => {
+      console.error('Failed to persist manually entered OAuth token:', error);
+      setConnectionStatus('error');
+      setConnectionError(error instanceof Error ? error.message : 'Failed to save OAuth token');
+    });
+  }, [activeProvider, updateOAuthCredentials]);
 
   // Test connection
   const handleTestConnection = useCallback(async () => {
@@ -1076,19 +1246,22 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
               setDeviceFlowState(null);
               
               // For GitHub Copilot, use the copilot_token (JWT for Copilot API)
-              // and store the GitHub access_token for refreshing the JWT later
+              // and store the GitHub access_token for refreshing the JWT later.
               if (activeProvider === 'github_copilot' && tokenResponse.copilot_token) {
                 // copilot_token is the JWT (eyJ...) that works with api.githubcopilot.com
-                updateCredential('oauthToken', tokenResponse.copilot_token);
-                // Store the GitHub access_token (gho_...) so we can refresh the JWT later
-                updateCredential('oauthRefreshToken', tokenResponse.access_token);
+                await updateOAuthCredentials(activeProvider, {
+                  accessToken: tokenResponse.copilot_token,
+                  refreshToken: tokenResponse.access_token,
+                  expiresAt: tokenResponse.copilot_expires_at ?? tokenResponse.expires_at ?? null,
+                });
               } else {
-                // Standard OAuth token for other providers
-                updateCredential('oauthToken', tokenResponse.access_token);
-                // Store refresh_token if available
-                if (tokenResponse.refresh_token) {
-                  updateCredential('oauthRefreshToken', tokenResponse.refresh_token);
-                }
+                // A fresh authorization replaces the account; clear omitted
+                // refresh and expiry values instead of retaining the old tuple.
+                await updateOAuthCredentials(activeProvider, {
+                  accessToken: tokenResponse.access_token,
+                  refreshToken: tokenResponse.refresh_token ?? '',
+                  expiresAt: tokenResponse.expires_at ?? null,
+                });
               }
               setConnectionStatus('connected');
             } else if (tokenResponse.should_continue) {
@@ -1209,12 +1382,14 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
               const tokenResponse = await api.pollCallbackToken(activeProvider, authResponse.state);
               
               if (tokenResponse.success && tokenResponse.access_token) {
-                // Success! Store the token
+                // A fresh authorization replaces the account; clear omitted
+                // refresh and expiry values instead of retaining the old tuple.
                 setIsPolling(false);
-                updateCredential('oauthToken', tokenResponse.access_token);
-                if (tokenResponse.refresh_token) {
-                  updateCredential('oauthRefreshToken', tokenResponse.refresh_token);
-                }
+                await updateOAuthCredentials(activeProvider, {
+                  accessToken: tokenResponse.access_token,
+                  refreshToken: tokenResponse.refresh_token ?? '',
+                  expiresAt: tokenResponse.expires_at ?? null,
+                });
                 setConnectionStatus('connected');
                 
                 // Close popup if still open (only if we have a popup reference)
@@ -1260,7 +1435,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           }
           
           // Listen for callback
-          const handleMessage = (event: MessageEvent) => {
+          const handleMessage = async (event: MessageEvent) => {
             if (event.origin !== window.location.origin) return;
             
             if (event.data?.type === 'oauth_callback') {
@@ -1270,11 +1445,19 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                 setConnectionStatus('error');
                 setConnectionError(event.data.error_description || event.data.error);
               } else if (event.data.access_token) {
-                updateCredential('oauthToken', event.data.access_token);
-                if (event.data.refresh_token) {
-                  updateCredential('oauthRefreshToken', event.data.refresh_token);
+                try {
+                  // A fresh authorization replaces the account; clear omitted
+                  // refresh and expiry values instead of retaining the old tuple.
+                  await updateOAuthCredentials(activeProvider, {
+                    accessToken: event.data.access_token,
+                    refreshToken: event.data.refresh_token ?? '',
+                    expiresAt: event.data.expires_at ?? null,
+                  });
+                  setConnectionStatus('connected');
+                } catch (error) {
+                  setConnectionStatus('error');
+                  setConnectionError(error instanceof Error ? error.message : 'Failed to save OAuth token');
                 }
-                setConnectionStatus('connected');
               }
             }
           };
@@ -1296,7 +1479,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
       setConnectionError(error instanceof Error ? error.message : 'OAuth initiation failed');
       setDeviceFlowState(null);
     }
-  }, [activeProvider, selectedProvider, updateCredential, connectionStatus]);
+  }, [activeProvider, selectedProvider, credentials, updateOAuthCredentials, connectionStatus]);
   
   // Cancel device flow polling
   const handleCancelDeviceFlow = useCallback(() => {
@@ -1321,6 +1504,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             endpoint,
           };
         });
+        credentialsRef.current = newCreds;
         setCredentials(newCreds);
         setHasUnsavedChanges(true);
         
@@ -1459,6 +1643,10 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
               </optgroup>
             </select>
           </section>
+
+          {settingsLoadError && (
+            <p style={styles.errorText} role="alert">{settingsLoadError}</p>
+          )}
 
           {/* Provider Configuration */}
           {selectedProvider && (
@@ -1600,11 +1788,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                         <div style={styles.buttonRow}>
                           <button
                             style={{ ...styles.button, ...styles.buttonSecondary, flex: 1 }}
-                            onClick={() => {
-                              updateCredential('oauthToken', '');
-                              updateCredential('oauthRefreshToken', '');
-                              setConnectionStatus('disconnected');
-                            }}
+                            onClick={handleOAuthDisconnect}
                           >
                             Disconnect
                           </button>
@@ -1759,7 +1943,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                               style={styles.input}
                               placeholder="Access token"
                               value={currentCredentials.oauthToken || ''}
-                              onChange={(e) => updateCredential('oauthToken', e.target.value)}
+                              onChange={(e) => handleManualOAuthTokenChange(e.target.value)}
                               autoComplete="off"
                             />
                           </div>

@@ -29,7 +29,6 @@ from .core import (
     AngleLibrary,
     ExportManager,
     SessionManager,
-    ComfyUIClient,
 )
 
 __all__ = [
@@ -47,5 +46,4 @@ __all__ = [
     "AngleLibrary",
     "ExportManager",
     "SessionManager",
-    "ComfyUIClient",
 ]

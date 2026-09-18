@@ -23,6 +23,10 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+class CredentialStorageError(RuntimeError):
+    """A stored credential row exists but cannot be read safely."""
+
+
 # =============================================================================
 # Models
 # =============================================================================
@@ -33,6 +37,7 @@ class ProviderCredentials(BaseModel):
     endpoint: Optional[str] = None
     oauth_token: Optional[str] = None
     oauth_refresh_token: Optional[str] = None
+    oauth_expires_at: Optional[float] = None
     oauth_client_id: Optional[str] = None
     oauth_client_secret: Optional[str] = None
     updated_at: Optional[str] = None
@@ -297,7 +302,12 @@ class CredentialStorage:
     # -------------------------------------------------------------------------
     
     def get_credentials(self, provider_id: str) -> Optional[ProviderCredentials]:
-        """Get credentials for a provider."""
+        """Get credentials for a provider.
+
+        Returns ``None`` only when no row exists. Existing rows that cannot be
+        decrypted or decoded raise ``CredentialStorageError`` so callers cannot
+        mistake unreadable data for a new provider.
+        """
         try:
             with self._get_connection() as conn:
                 cursor = conn.execute(
@@ -305,11 +315,11 @@ class CredentialStorage:
                     (provider_id,)
                 )
                 row = cursor.fetchone()
-                
+
                 if not row:
                     logger.debug(f"[Storage] No credentials found for {provider_id}")
                     return None
-                
+
                 try:
                     decrypted = self._encryption.decrypt(row[0], conn)
                     data = json.loads(decrypted)
@@ -317,15 +327,44 @@ class CredentialStorage:
                     logger.debug(f"[Storage] Successfully loaded credentials for {provider_id}")
                     return ProviderCredentials(**data)
                 except Exception as e:
-                    logger.error(f"Failed to decrypt credentials for {provider_id}: {e}")
-                    return None
+                    logger.error(f"Failed to read credentials for {provider_id}: {e}")
+                    raise CredentialStorageError(
+                        f"Unable to read stored credentials for '{provider_id}'. "
+                        "Restore the original CINEMA_ENCRYPTION_SEED or machine "
+                        "identity; do not erase the credential data."
+                    ) from e
+        except CredentialStorageError:
+            raise
         except Exception as e:
             logger.error(f"[Storage] Database error loading credentials for {provider_id}: {e}")
-            return None
+            raise CredentialStorageError(
+                f"Unable to read stored credentials for '{provider_id}'. "
+                "Restore the original CINEMA_ENCRYPTION_SEED or machine "
+                "identity; do not erase the credential data."
+            ) from e
     
+    def _validate_existing_credentials(self, conn: sqlite3.Connection) -> None:
+        """Validate every stored credential before writing any credential data."""
+        rows = conn.execute(
+            "SELECT provider_id, encrypted_data FROM credentials"
+        ).fetchall()
+        for provider_id, encrypted_data in rows:
+            try:
+                stored = json.loads(self._encryption.decrypt(encrypted_data, conn))
+                ProviderCredentials(**stored)
+            except Exception as exc:
+                logger.error("Failed to validate credentials for %s: %s", provider_id, exc)
+                raise CredentialStorageError(
+                    f"Unable to read stored credentials for '{provider_id}'. "
+                    "Restore the original CINEMA_ENCRYPTION_SEED or machine "
+                    "identity; do not erase the credential data."
+                ) from exc
+
     def set_credentials(self, provider_id: str, credentials: ProviderCredentials):
         """Set credentials for a provider."""
         with self._get_connection() as conn:
+            # Validate all rows first, including when provider_id is new.
+            self._validate_existing_credentials(conn)
             # Don't store updated_at in encrypted data
             data = credentials.model_dump(exclude={'updated_at'}, exclude_none=True)
             encrypted = self._encryption.encrypt(json.dumps(data), conn)
@@ -349,9 +388,17 @@ class CredentialStorage:
     
     def list_providers(self) -> list[str]:
         """List all providers with stored credentials."""
-        with self._get_connection() as conn:
-            cursor = conn.execute("SELECT provider_id FROM credentials")
-            return [row[0] for row in cursor.fetchall()]
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT provider_id FROM credentials")
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"[Storage] Database error listing credential providers: {e}")
+            raise CredentialStorageError(
+                "Unable to read stored credentials. Restore the original "
+                "CINEMA_ENCRYPTION_SEED or machine identity; do not erase the "
+                "credential data."
+            ) from e
     
     # -------------------------------------------------------------------------
     # Bulk operations
@@ -385,28 +432,71 @@ class CredentialStorage:
             self.set_credentials(provider_id, creds)
     
     def import_from_localstorage(self, data: dict):
-        """Import settings from localStorage format.
-        
-        Args:
-            data: The parsed JSON from localStorage 'cinema-ai-provider-settings'
+        """Import settings from localStorage format atomically.
+
+        Input and all existing rows that the import may replace are validated
+        before the first write. This prevents a database opened with the wrong
+        encryption seed from losing its settings or ciphertext.
         """
-        if 'activeProvider' in data:
-            self.set_setting('active_provider', data['activeProvider'])
-        
+        if not isinstance(data, dict):
+            raise ValueError("localStorage import must be an object")
+
+        active_provider = data.get('activeProvider')
+        if active_provider is not None and not isinstance(active_provider, str):
+            raise ValueError("activeProvider must be a string or null")
+
         providers = data.get('providers', {})
+        if not isinstance(providers, dict):
+            raise ValueError("providers must be an object")
+
+        imported: dict[str, ProviderCredentials] = {}
         for provider_id, creds_data in providers.items():
-            creds = ProviderCredentials(
-                api_key=creds_data.get('apiKey'),
-                endpoint=creds_data.get('endpoint'),
-                oauth_token=creds_data.get('oauthToken'),
-                oauth_refresh_token=creds_data.get('oauthRefreshToken'),
-                oauth_client_id=creds_data.get('oauthClientId'),
-                oauth_client_secret=creds_data.get('oauthClientSecret'),
-            )
-            # Only save if there's actual data
+            if not isinstance(provider_id, str) or not provider_id:
+                raise ValueError("provider IDs must be non-empty strings")
+            if not isinstance(creds_data, dict):
+                raise ValueError(f"Credentials for '{provider_id}' must be an object")
+            try:
+                creds = ProviderCredentials(
+                    api_key=creds_data.get('apiKey'),
+                    endpoint=creds_data.get('endpoint'),
+                    oauth_token=creds_data.get('oauthToken'),
+                    oauth_refresh_token=creds_data.get('oauthRefreshToken'),
+                    oauth_expires_at=creds_data.get('oauthExpiresAt'),
+                    oauth_client_id=creds_data.get('oauthClientId'),
+                    oauth_client_secret=creds_data.get('oauthClientSecret'),
+                )
+            except Exception as exc:
+                raise ValueError(f"Invalid credentials for '{provider_id}'") from exc
+            # Preserve the existing import behavior: empty provider entries do
+            # not replace a stored row.
             if any([creds.api_key, creds.endpoint, creds.oauth_token]):
-                self.set_credentials(provider_id, creds)
-        
+                imported[provider_id] = creds
+
+        with self._get_connection() as conn:
+            # Validate every row before changing credentials or settings. This
+            # also rejects an import containing only genuinely new providers.
+            self._validate_existing_credentials(conn)
+
+            if active_provider is not None:
+                conn.execute(
+                    """INSERT OR REPLACE INTO settings (key, value, updated_at)
+                       VALUES (?, ?, ?)""",
+                    ('active_provider', active_provider, datetime.utcnow().isoformat()),
+                )
+
+            for provider_id, creds in imported.items():
+                encrypted = self._encryption.encrypt(
+                    json.dumps(creds.model_dump(exclude={'updated_at'}, exclude_none=True)),
+                    conn,
+                )
+                conn.execute(
+                    """INSERT OR REPLACE INTO credentials (provider_id, encrypted_data, updated_at)
+                       VALUES (?, ?, ?)""",
+                    (provider_id, encrypted, datetime.utcnow().isoformat()),
+                )
+
+            conn.commit()
+
         logger.info(f"[Storage] Imported {len(providers)} providers from localStorage format")
 
 

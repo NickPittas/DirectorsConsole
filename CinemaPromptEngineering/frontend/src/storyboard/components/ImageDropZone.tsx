@@ -167,7 +167,7 @@ export function ImageDropZone({
   acceptType = 'image',
   isBypassed = false,
   onBypassChange,
-  comfyUrl: _comfyUrl, // eslint-disable-line @typescript-eslint/no-unused-vars
+  comfyUrl: _comfyUrl,
 }: ImageDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -352,7 +352,7 @@ export function ImageDropZone({
     if (droppedData.startsWith('data:')) {
       onChange(name, droppedData);
     }
-  }, [disabled, name, onChange, processFile]);
+  }, [acceptType, disabled, name, onChange, processFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;

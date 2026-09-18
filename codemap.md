@@ -981,6 +981,13 @@ PHASE 4: OUTPUT & STORAGE
 | POST | `/api/read-image` | Read image as base64 data URL |
 | DELETE | `/api/delete-file` | Delete file via backend proxy |
 
+### 7.2.1 Provider configuration ownership
+
+- `api/providers/registry.py` owns provider IDs, labels, API-key/OAuth types, and default endpoints. The Google API-key provider is `google` / **Google AI (Gemini)** and uses the native Google AI API endpoint.
+- `api/providers/oauth.py` owns OAuth flow structure. Antigravity is `antigravity` / **Antigravity (Gemini/Claude)** and resolves app credentials from existing provider settings or external `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET` values.
+- `api/__init__.py` loads `CinemaPromptEngineering/.env` before provider imports with non-overriding environment semantics. `.env.example` contains placeholders only; the private `.env` is not a frontend/Vite configuration.
+- For operator steps and security boundaries, link to the [README provider setup](README.md#ai-llm-provider-setup) rather than duplicating credentials procedures. Loader configuration checks pass; live provider/account verification remains pending.
+
 ### 7.3 Templates API (Port 9800, prefix `/api/templates`)
 
 | Method | Endpoint | Description |

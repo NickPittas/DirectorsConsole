@@ -5,6 +5,8 @@
 **Last Updated:** January 17, 2026  
 **Purpose:** Define optimal prompt structures for each supported AI image/video generation model
 
+> Versioned video-target research and capability bounds: [video capability/source matrix](model_prompting/video_capability_matrix.md). The linked LTX, MiniMax H3, and Seedance guides are the authoritative phase-5 enhancement guides; older model pages remain compatibility references.
+
 ---
 
 ## TABLE OF CONTENTS

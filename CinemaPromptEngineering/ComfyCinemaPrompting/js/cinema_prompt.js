@@ -1,4 +1,5 @@
 import { app } from "/scripts/app.js";
+import { api } from "/scripts/api.js";
 
 function applyConfigToNode(node, payload) {
     if (!payload || !payload.config) return;
@@ -122,7 +123,9 @@ function createModal(node) {
     };
 
     const iframe = document.createElement("iframe");
-    iframe.src = "http://localhost:3000";
+    iframe.src = typeof api.fileURL === 'function'
+        ? api.fileURL('/cinema_prompt/app/')
+        : `${api.api_base || ''}/cinema_prompt/app/`;
     Object.assign(iframe.style, {
         width: "100%",
         height: "100%",

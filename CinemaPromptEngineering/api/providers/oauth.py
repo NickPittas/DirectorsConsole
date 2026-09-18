@@ -4,13 +4,14 @@ Supports two OAuth flows:
 1. Device Flow (GitHub Copilot) - For CLI/desktop apps without browser redirect
 2. Authorization Code Flow with PKCE (Google, Antigravity, OpenAI Codex) - Standard web OAuth
 
-SECURITY: No credentials are stored in source code. All client IDs and secrets
-are managed through the encrypted credential storage system (%APPDATA%) and
-configured via the frontend Settings UI.
+Antigravity's OAuth client configuration is supplied externally through
+ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET. Personal access and
+refresh tokens remain in the existing encrypted credential storage.
 """
 
 import logging
 import os
+import time
 from typing import Optional
 from pydantic import BaseModel
 import secrets
@@ -52,8 +53,10 @@ class DeviceCodeResponse(BaseModel):
 # OAUTH CONFIGURATIONS
 # =============================================================================
 # Structural OAuth configuration only — URLs, scopes, flow types, headers.
-# Client IDs and secrets are stored in encrypted credential storage (%APPDATA%)
-# and configured through the frontend Settings UI. No defaults in source code.
+# Antigravity's client configuration must come from external configuration; it
+# must never acquire a source-code default or another application's credentials.
+ANTIGRAVITY_CLIENT_ID_ENV = "ANTIGRAVITY_CLIENT_ID"
+ANTIGRAVITY_CLIENT_SECRET_ENV = "ANTIGRAVITY_CLIENT_SECRET"
 
 OAUTH_CONFIGS = {
     # =========================================================================
@@ -101,19 +104,15 @@ OAUTH_CONFIGS = {
     # =========================================================================
     # ANTIGRAVITY (Google Cloud AI Companion) - Authorization Code Flow
     # =========================================================================
-    # NOTE: Antigravity uses Google OAuth with a PUBLIC client ID from the
-    # official VS Code Cloud Code extension. Google considers client secrets
-    # for installed/desktop applications to be non-confidential (see:
-    # https://developers.google.com/identity/protocols/oauth2/native-app).
-    # Override via ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET env vars.
+    # Client configuration is intentionally external and may also be supplied
+    # through existing stored provider settings; there is no source fallback.
     "antigravity": {
         "flow_type": "authorization_code",
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
         "redirect_uri": "http://localhost:36742/oauth-callback",
-        # Public client credentials from VS Code Cloud Code extension (non-confidential per Google OAuth docs)
-        "client_id": os.environ.get("ANTIGRAVITY_CLIENT_ID") or "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-        "client_secret": os.environ.get("ANTIGRAVITY_CLIENT_SECRET") or "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",
+        "client_id": os.environ.get(ANTIGRAVITY_CLIENT_ID_ENV),
+        "client_secret": os.environ.get(ANTIGRAVITY_CLIENT_SECRET_ENV),
         "scopes": [
             "https://www.googleapis.com/auth/cloud-platform",
             "https://www.googleapis.com/auth/userinfo.email",
@@ -179,6 +178,67 @@ OAUTH_CONFIGS = {
 }
 
 
+def resolve_client_credentials(
+    provider_id: str,
+    client_id: Optional[str],
+    client_secret: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve OAuth app credentials without inventing provider defaults.
+
+    Existing stored provider settings remain valid. Antigravity additionally
+    reads its two external environment settings at call time so a process
+    started before configuration can still fail clearly rather than making a
+    request with incomplete app credentials.
+    """
+    if provider_id not in OAUTH_CONFIGS:
+        raise ValueError(f"Unknown OAuth provider: {provider_id}")
+
+    config = OAUTH_CONFIGS[provider_id]
+    client_id = client_id or config.get("client_id")
+    client_secret = client_secret or config.get("client_secret")
+
+    if provider_id == "antigravity":
+        client_id = client_id or os.environ.get(ANTIGRAVITY_CLIENT_ID_ENV)
+        client_secret = client_secret or os.environ.get(ANTIGRAVITY_CLIENT_SECRET_ENV)
+        missing = [
+            name
+            for name, value in (
+                (ANTIGRAVITY_CLIENT_ID_ENV, client_id),
+                (ANTIGRAVITY_CLIENT_SECRET_ENV, client_secret),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Antigravity OAuth app configuration is incomplete. Missing: "
+                f"{', '.join(missing)}. Set both {ANTIGRAVITY_CLIENT_ID_ENV} "
+                f"and {ANTIGRAVITY_CLIENT_SECRET_ENV} (or supply the existing "
+                "provider settings) before connecting. Re-login alone will not "
+                "fix missing app configuration; an administrator must supply "
+                "the appropriate OAuth client configuration first."
+            )
+
+    return client_id, client_secret
+
+
+def get_token_expires_at(token_response: dict, now: float | None = None) -> int | None:
+    """Return an OAuth token's expiry as Unix seconds when supplied or derivable."""
+    expires_at = token_response.get("expires_at")
+    if expires_at is not None:
+        try:
+            return int(float(expires_at))
+        except (TypeError, ValueError):
+            pass
+
+    expires_in = token_response.get("expires_in")
+    if expires_in is None:
+        return None
+    try:
+        return int((time.time() if now is None else now) + float(expires_in))
+    except (TypeError, ValueError):
+        return None
+
+
 def generate_code_verifier() -> str:
     """Generate a PKCE code verifier."""
     return secrets.token_urlsafe(64)
@@ -197,31 +257,30 @@ def generate_state() -> str:
 
 def build_authorization_url(
     provider_id: str,
-    client_id: str,
+    client_id: Optional[str],
     redirect_uri: str,
     state: Optional[str] = None,
     code_verifier: Optional[str] = None,
+    client_secret: Optional[str] = None,
 ) -> tuple[str, OAuthState]:
     """Build the OAuth authorization URL for a provider.
     
     Args:
         provider_id: The provider identifier
-        client_id: OAuth client ID (use built-in if None)
+        client_id: OAuth client ID (use configured value if None)
         redirect_uri: Callback URL after authorization
         state: Optional state string (generated if not provided)
         code_verifier: Optional PKCE verifier (generated if needed)
+        client_secret: OAuth client secret used to validate app configuration
         
     Returns:
         Tuple of (authorization_url, oauth_state)
     """
     if provider_id not in OAUTH_CONFIGS:
         raise ValueError(f"Unknown OAuth provider: {provider_id}")
-    
+
+    client_id, _ = resolve_client_credentials(provider_id, client_id, client_secret)
     config = OAUTH_CONFIGS[provider_id]
-    
-    # Use built-in client_id if provider has one and none provided
-    if config.get("client_id") and not client_id:
-        client_id = config["client_id"]
     
     # IMPORTANT: For providers with registered redirect_uris, we MUST use the built-in one
     # because OAuth providers only accept callbacks at pre-registered URIs.
@@ -303,12 +362,15 @@ async def exchange_code_for_token(
         raise ValueError(f"Unknown OAuth provider: {provider_id}")
     
     config = OAUTH_CONFIGS[provider_id]
-    
-    # Use built-in credentials if available
-    if config.get("client_id") and not client_id:
-        client_id = config["client_id"]
-    if config.get("client_secret") and not client_secret:
-        client_secret = config["client_secret"]
+    try:
+        client_id, client_secret = resolve_client_credentials(
+            provider_id, client_id, client_secret
+        )
+    except ValueError as exc:
+        return {
+            "error": "oauth_client_configuration_missing",
+            "error_description": str(exc),
+        }
     # IMPORTANT: For providers with registered redirect_uris, we MUST use the built-in one
     # This must match exactly what was used in the authorization URL
     if config.get("redirect_uri"):
@@ -362,7 +424,11 @@ async def exchange_code_for_token(
                         "error_description": f"Server returned status {response.status_code}: {response.text}",
                     }
             
-            return response.json()
+            result = response.json()
+            expires_at = get_token_expires_at(result)
+            if expires_at is not None:
+                result["expires_at"] = expires_at
+            return result
     except ImportError:
         return {
             "error": "missing_dependency",
@@ -396,13 +462,16 @@ async def refresh_token(
         raise ValueError(f"Unknown OAuth provider: {provider_id}")
     
     config = OAUTH_CONFIGS[provider_id]
-    
-    # Use built-in credentials if available
-    if config.get("client_id") and not client_id:
-        client_id = config["client_id"]
-    if config.get("client_secret") and not client_secret:
-        client_secret = config["client_secret"]
-    
+    try:
+        client_id, client_secret = resolve_client_credentials(
+            provider_id, client_id, client_secret
+        )
+    except ValueError as exc:
+        return {
+            "error": "oauth_client_configuration_missing",
+            "error_description": str(exc),
+        }
+
     params = {
         "client_id": client_id,
         "refresh_token": refresh_token,
@@ -431,7 +500,11 @@ async def refresh_token(
                     "error_description": f"Server returned status {response.status_code}",
                 }
             
-            return response.json()
+            result = response.json()
+            expires_at = get_token_expires_at(result)
+            if expires_at is not None:
+                result["expires_at"] = expires_at
+            return result
     except Exception as e:
         return {
             "error": "request_failed",
@@ -603,8 +676,7 @@ async def poll_device_token(
             # Check for access token (success)
             if "access_token" in data:
                 github_token = data["access_token"]
-                token_preview = github_token[:10] if github_token else "NONE"
-                logger.info(f"[OAuth] Got GitHub access_token ({token_preview}...) for {provider_id}")
+                logger.info(f"[OAuth] Got GitHub access_token for {provider_id}")
                 
                 result = {
                     "success": True,
@@ -676,9 +748,7 @@ async def _get_copilot_token(
     try:
         import httpx
         
-        # Log the token type for debugging (first 10 chars only for security)
-        token_prefix = github_token[:10] if github_token else "NONE"
-        logger.info(f"[Copilot] Exchanging GitHub token ({token_prefix}...) for Copilot JWT")
+        logger.info(f"[Copilot] Exchanging GitHub token for Copilot JWT")
         logger.info(f"[Copilot] Token URL: {copilot_token_url}")
         
         # Must use exact headers that VS Code Copilot extension uses
@@ -720,8 +790,7 @@ async def _get_copilot_token(
             expires_at = data.get("expires_at")
             
             if copilot_token:
-                token_preview = copilot_token[:15] if copilot_token else "NONE"
-                logger.info(f"[Copilot] SUCCESS! Got Copilot JWT ({token_preview}...), expires: {expires_at}")
+                logger.info(f"[Copilot] SUCCESS! Got Copilot JWT, expires: {expires_at}")
             else:
                 logger.error(f"[Copilot] No token in response: {data}")
             

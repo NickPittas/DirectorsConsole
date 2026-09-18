@@ -3,29 +3,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-
-# Import the FastAPI app - will fail until API is copied
-# This import will work after we copy the API files
-import sys
-import os
-
-# Add the CinemaPromptEngineering directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "CinemaPromptEngineering"))
-
-
-try:
-    from api.main import app
-    API_AVAILABLE = True
-except ImportError:
-    API_AVAILABLE = False
-    app = None
+from api.main import app
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    if not API_AVAILABLE:
-        pytest.skip("API not yet available - needs to be copied from source")
     return TestClient(app)
 
 
@@ -105,20 +88,31 @@ class TestGeneratePromptEndpoint:
         request_data = {
             "project_type": "live_action",
             "config": {
-                "camera_type": "Digital",
-                "camera_body": "ARRI_ALEXA_35",
-                "film_stock": None,
-                "aspect_ratio": "2.39:1",
-                "lens_manufacturer": "ARRI",
-                "lens_family": "ARRI_Signature_Prime",
-                "shot_size": "Medium_Shot",
-                "composition": "Centered",
-                "movement": "Static",
-                "time_of_day": "Golden_Hour",
-                "lighting_style": "Naturalistic",
-                "lighting_sources": ["Sun"],
-                "mood": ["Serene"],
-                "color_tone": ["Warm"],
+                "camera": {
+                    "camera_type": "Digital",
+                    "manufacturer": "ARRI",
+                    "body": "Alexa_35",
+                    "sensor": "Super35",
+                    "weight_class": "Medium",
+                    "film_stock": "None",
+                    "aspect_ratio": "2.39:1",
+                },
+                "lens": {
+                    "manufacturer": "ARRI",
+                    "family": "ARRI_Signature_Prime",
+                    "focal_length_mm": 50,
+                    "is_anamorphic": False,
+                },
+                "movement": {
+                    "equipment": "Static",
+                    "movement_type": "Static",
+                    "timing": "Static",
+                },
+                "lighting": {
+                    "time_of_day": "Golden_Hour",
+                    "source": "Sun",
+                    "style": "Naturalistic",
+                },
             },
             "target_model": "sora",
         }
@@ -136,18 +130,17 @@ class TestGeneratePromptEndpoint:
             "project_type": "animation",
             "config": {
                 "medium": "2D",
-                "domain": "Anime",
-                "style_domain": "Shonen",
-                "line_treatment": "Clean_Bold",
-                "color_application": "Cel_Shaded",
-                "lighting_model": "Anime_Standard",
-                "surface_detail": "Medium_Detail",
-                "motion_style": "Dynamic_Action",
-                "virtual_camera": "Anime_Standard",
-                "shot_size": "Medium_Shot",
-                "composition": "Centered",
-                "mood": ["Energetic"],
-                "color_tone": ["Vibrant"],
+                "style_domain": "Anime",
+                "rendering": {
+                    "line_treatment": "Clean",
+                    "color_application": "Cel",
+                    "lighting_model": "Naturalistic_Simulated",
+                    "surface_detail": "Smooth",
+                },
+                "motion": {
+                    "motion_style": "Full",
+                    "virtual_camera": "Digital_Pan",
+                },
             },
             "target_model": "sora",
         }
@@ -190,27 +183,39 @@ class TestValidationEndpoint:
         request_data = {
             "project_type": "live_action",
             "config": {
-                "camera_type": "Digital",
-                "camera_body": "ARRI_ALEXA_35",
-                "aspect_ratio": "2.39:1",
-                "lens_manufacturer": "ARRI",
-                "lens_family": "ARRI_Signature_Prime",
-                "shot_size": "Medium_Shot",
-                "composition": "Centered",
-                "movement": "Static",
-                "time_of_day": "Day",
-                "lighting_style": "Naturalistic",
-                "lighting_sources": ["Sun"],
-                "mood": ["Neutral"],
-                "color_tone": ["Natural"],
+                "camera": {
+                    "camera_type": "Digital",
+                    "manufacturer": "ARRI",
+                    "body": "Alexa_35",
+                    "sensor": "Super35",
+                    "weight_class": "Medium",
+                    "film_stock": "None",
+                    "aspect_ratio": "2.39:1",
+                },
+                "lens": {
+                    "manufacturer": "ARRI",
+                    "family": "ARRI_Signature_Prime",
+                    "focal_length_mm": 50,
+                    "is_anamorphic": False,
+                },
+                "movement": {
+                    "equipment": "Static",
+                    "movement_type": "Static",
+                    "timing": "Static",
+                },
+                "lighting": {
+                    "time_of_day": "Afternoon",
+                    "source": "Sun",
+                    "style": "Naturalistic",
+                },
             },
         }
         
         response = client.post("/validate", json=request_data)
         assert response.status_code == 200
         data = response.json()
-        assert "is_valid" in data
-        assert "violations" in data
+        assert data["status"] in {"valid", "warning", "invalid"}
+        assert "messages" in data
 
 
 if __name__ == "__main__":

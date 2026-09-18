@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from orchestrator.api.server import app
-from orchestrator.api import job_groups
+from orchestrator.api import job_groups, server as api_server, ws_job_groups
 from orchestrator.core.models.job_group import (
     ChildJob,
     ChildJobStatus,
@@ -33,16 +33,31 @@ def mock_parallel_job_manager() -> MagicMock:
 
 
 @pytest.fixture
-def test_client(mock_parallel_job_manager: MagicMock) -> TestClient:
-    """Create a test client with mocked dependencies."""
-    # Set the mock manager
-    job_groups._parallel_job_manager = mock_parallel_job_manager
+def test_client(
+    mock_parallel_job_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    """Create a test client without running production manager auto-init."""
+    # The lifespan skips auto-init when this sentinel is already present.
+    monkeypatch.setattr(api_server, "_backend_manager", object())
+    monkeypatch.setattr(
+        api_server,
+        "_parallel_job_manager",
+        mock_parallel_job_manager,
+    )
+    monkeypatch.setattr(
+        job_groups,
+        "_parallel_job_manager",
+        mock_parallel_job_manager,
+    )
+    monkeypatch.setattr(
+        ws_job_groups,
+        "_parallel_job_manager",
+        mock_parallel_job_manager,
+    )
 
     with TestClient(app) as client:
         yield client
-
-    # Clean up
-    job_groups._parallel_job_manager = None
 
 
 class TestSubmitJobGroup:

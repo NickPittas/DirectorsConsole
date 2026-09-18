@@ -17,10 +17,11 @@ import type {
   OptionsResponse,
 } from '@/types';
 
-// API base URL: derived from the current window origin.
-// The CPE backend serves the frontend, so same-origin calls always work.
-// In dev mode, Vite proxy forwards these to the backend.
-const API_BASE = '';
+// ComfyUI serves the bundled app under the node's route prefix.  Development
+// and standalone builds keep using the CPE backend at the origin.
+const API_BASE = import.meta.env.PROD && import.meta.env.VITE_BUILD_MODE === 'comfyui'
+  ? '../api'
+  : '';
 
 class ApiClient {
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -331,6 +332,7 @@ class ApiClient {
     access_token?: string;
     token_type?: string;
     expires_in?: number;
+    expires_at?: number;
     refresh_token?: string;
     scope?: string;
   }> {
@@ -395,6 +397,7 @@ class ApiClient {
     token_type?: string;
     scope?: string;
     refresh_token?: string;
+    expires_at?: number;
     copilot_token?: string;  // GitHub Copilot specific
     copilot_expires_at?: number;
     error?: string;
@@ -453,6 +456,7 @@ class ApiClient {
     refresh_token?: string;
     token_type?: string;
     expires_in?: number;
+    expires_at?: number;
     scope?: string;
     message?: string;
     error?: string;
@@ -527,6 +531,7 @@ class ApiClient {
     model_used?: string;
     warnings?: string[];
     error?: string;
+    oauth_token?: string;
   }> {
     return this.fetch('/enhance-prompt', {
       method: 'POST',
@@ -605,6 +610,7 @@ class ApiClient {
       has_api_key: boolean;
       has_oauth_token: boolean;
       has_refresh_token: boolean;
+      oauth_expires_at?: number | null;
       endpoint: string | null;
       updated_at: string | null;
     }>;
@@ -619,6 +625,7 @@ class ApiClient {
     endpoint?: string;
     oauth_token?: string;
     oauth_refresh_token?: string;
+    oauth_expires_at?: number | null;
     oauth_client_id?: string;
     oauth_client_secret?: string;
     updated_at?: string;
@@ -634,6 +641,7 @@ class ApiClient {
       endpoint?: string;
       oauth_token?: string;
       oauth_refresh_token?: string;
+      oauth_expires_at?: number | null;
       oauth_client_id?: string;
       oauth_client_secret?: string;
     }
@@ -645,6 +653,7 @@ class ApiClient {
         endpoint: credentials.endpoint,
         oauth_token: credentials.oauth_token,
         oauth_refresh_token: credentials.oauth_refresh_token,
+        oauth_expires_at: credentials.oauth_expires_at,
         oauth_client_id: credentials.oauth_client_id,
         oauth_client_secret: credentials.oauth_client_secret,
       }),

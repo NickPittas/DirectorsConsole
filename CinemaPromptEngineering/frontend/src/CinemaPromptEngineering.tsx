@@ -3,9 +3,9 @@ import { useQueries } from '@tanstack/react-query';
 import { useCinemaStore } from '@/store';
 import { api } from '@/api/client';
 import type { RuleSeverity, FilmPresetSummary, AnimationPresetSummary, CinematographyStyle, OptionsResponse } from '@/types';
-import Settings, { getConfiguredProviders, getSelectedLlmSettings, loadTargetModel, saveTargetModel, type ConfiguredProvider } from '@/components/Settings';
+import Settings, { getConfiguredProviders, getSelectedLlmSettings, loadTargetModel, saveTargetModel, updateSavedOAuthToken, type ConfiguredProvider } from '@/components/Settings';
 
-// Enum options (static for now - would be fetched from API in production)
+// Fallback enum options; production builds fetch current availability from the API.
 const ENUMS = {
   // Live-action - Camera Type
   camera_type: ['Digital', 'Film'],
@@ -116,8 +116,18 @@ const ENUMS = {
   
   // Live-action - Lighting
   time_of_day: ['Dawn', 'Morning', 'Midday', 'Afternoon', 'Golden_Hour', 'Blue_Hour', 'Dusk', 'Night'],
-  lighting_source: ['Sun', 'Moon', 'Tungsten', 'HMI', 'LED', 'Kino_Flo', 'Neon', 'Practical', 'Mixed'],
-  lighting_style: ['High_Key', 'Low_Key', 'Soft', 'Hard', 'Naturalistic', 'Expressionistic', 'Chiaroscuro'],
+  // Keep fallback values aligned with the canonical enums; legacy aliases remain selectable.
+  lighting_source: [
+    'Sun', 'Moon', 'Overcast', 'Window', 'Skylight', 'Tungsten', 'HMI', 'LED', 'Kino_Flo',
+    'Neon', 'Fluorescent', 'Artificial', 'Carbon_Arc', 'Mercury_Vapor', 'Sodium_Vapor',
+    'Practical', 'Practical_Lights', 'Candle', 'Candlelight', 'Firelight', 'Television',
+    'Computer_Screen', 'Christmas_Lights', 'Mixed', 'Available', 'Available_Light',
+  ],
+  lighting_style: [
+    'High_Key', 'Low_Key', 'Soft', 'Soft_Lighting', 'Hard', 'Hard_Lighting', 'Naturalistic',
+    'Expressionistic', 'Chiaroscuro', 'Rembrandt', 'Split', 'Rim', 'Silhouette', 'Motivated',
+    'Practical_Motivated', 'Available_Light', 'High_Contrast', 'Controlled', 'Flat', 'Dramatic',
+  ],
   
   // Animation - Style
   animation_medium: ['2D', '3D', 'Hybrid', 'StopMotion'],
@@ -135,7 +145,22 @@ const ENUMS = {
   
   // Common - Visual Grammar
   shot_size: ['EWS', 'WS', 'MWS', 'MS', 'MCU', 'CU', 'BCU', 'ECU', 'OTS', 'POV'],
-  composition: ['Rule_of_Thirds', 'Centered', 'Symmetrical', 'Asymmetrical', 'Negative_Space', 'Leading_Lines'],
+  // Includes canonical preset values plus legacy values for saved configurations.
+  composition: [
+    'Rule_of_Thirds', 'Centered', 'Symmetrical', 'Asymmetrical', 'Negative_Space', 'Leading_Lines',
+    'Frame_Within_Frame', 'Diagonal', 'Golden_Ratio', 'Golden_Spiral', 'Dynamic_Symmetry',
+    'Radial_Balance', 'Headroom', 'Lead_Room', 'Fill_The_Frame', 'Depth_Layering', 'Abstract',
+    'Action_Lines', 'Aggressive_Closeups', 'Architectural', 'Architectural_Symmetry',
+    'Centered_Action', 'Cinematic', 'Classic_Composition', 'Claustrophobic', 'Comic_Panels',
+    'Constrained_Framing', 'Decorative', 'Deep_Focus', 'Disorienting_Framing', 'Disruptive',
+    'Documentary_Style', 'Dramatic_Angles', 'Dynamic', 'Dynamic_Blocking', 'Dynamic_Framing',
+    'Extreme_Close_Up', 'Geometric', 'Handheld_Frames', 'High_Contrast', 'Iconic_Silhouettes',
+    'Improvised', 'Industrial_Frames', 'Intimate', 'Intimate_Framing', 'Low_Angle', 'Minimalist',
+    'Observational', 'Organic', 'Organic_Framing', 'Organic_Wide_Frames', 'Overdesigned_Frames',
+    'POV_Framing', 'Painterly', 'Playful_Framing', 'Poetic', 'Rough_Framing', 'Scale_Emphasis',
+    'Static', 'Storybook', 'Street_Level', 'Urban', 'Venetian_Blinds', 'Wide_Angle_Centered',
+    'Wide_Frames', 'Wide_Static_Frames', 'Wide_Symmetrical',
+  ],
   mood: [
     // Light/Positive Moods
     'Cheerful', 'Happy', 'Hopeful', 'Whimsical', 'Adventurous',
@@ -174,8 +199,9 @@ const ENUMS = {
     'sdxl', 'stable_diffusion_3', 'z-image_turbo', 'qwen_image',
     // Video Models
     'sora', 'sora_2', 'veo_2', 'veo_3', 'runway_gen-3', 'runway_gen-4', 
-    'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'cogvideox', 
-    'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'qwen_vl',
+    'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'ltx_2.3', 'ltx_2.5', 'cogvideox',
+    'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
+    'qwen_vl', 'seedance_2.0', 'seedance_2.5',
   ],
 };
 
@@ -205,12 +231,18 @@ const TARGET_MODEL_NAMES: Record<string, string> = {
   'pika_2.0': 'Pika 2.0',
   'luma_dream_machine': 'Luma Dream Machine',
   'ltx_2': 'LTX-2',
+  'ltx_2.3': 'LTX 2.3',
+  'ltx_2.5': 'LTX 2.5',
   'cogvideox': 'CogVideoX',
   'hunyuan': 'Hunyuan Video',
   'wan_2.1': 'Wan 2.1',
   'wan_2.2': 'Wan 2.2',
   'minimax_video': 'Minimax Video',
+  'minimax_h3': 'MiniMax H3',
+  'minimax_h3_max': 'MiniMax H3 Max',
   'qwen_vl': 'Qwen VL',
+  'seedance_2.0': 'Seedance 2.0',
+  'seedance_2.5': 'Seedance 2.5',
 };
 
 const IMAGE_MODEL_IDS = new Set([
@@ -1985,12 +2017,12 @@ function getPresetImagePath(presetId: string): string | null {
   if (presetId in SPECIAL_MAPPINGS) {
     const mapped = SPECIAL_MAPPINGS[presetId];
     if (mapped === null) return null;
-    return `/movie-frames/${mapped}.jpg`;
+    return `${import.meta.env.BASE_URL}movie-frames/${mapped}.jpg`;
   }
 
   // Default conversion: replace underscores with hyphens
   const filename = presetId.replace(/_/g, '-').toLowerCase();
-  return `/movie-frames/${filename}.jpg`;
+  return `${import.meta.env.BASE_URL}movie-frames/${filename}.jpg`;
 }
 
 /** Format option tooltip - combines description and disabled reason */
@@ -2071,6 +2103,10 @@ function App() {
     // CPE to Storyboard prompt sharing
     setCpePromptForStoryboard,
   } = useCinemaStore();
+  const targetModelRef = useRef(targetModel);
+  const setTargetModelRef = useRef(setTargetModel);
+  targetModelRef.current = targetModel;
+  setTargetModelRef.current = setTargetModel;
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingPresets, setIsLoadingPresets] = useState(false);
@@ -2193,6 +2229,8 @@ function App() {
     const saved = getSelectedLlmSettings();
     return saved?.model || '';
   });
+  const selectedLlmProviderRef = useRef(selectedLlmProvider);
+  selectedLlmProviderRef.current = selectedLlmProvider;
   const [configuredProviders, setConfiguredProviders] = useState<ConfiguredProvider[]>([]);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
@@ -2218,7 +2256,7 @@ function App() {
       return movement.movement_type !== 'Static';
     }
     return false;
-  }, [projectType, liveActionConfig, animationConfig]);
+  }, [projectType, liveActionConfig]);
   
   // Preset panel state (right-docked collapsible panel) - with localStorage persistence
   const [isPresetPanelOpen, setIsPresetPanelOpen] = useState(() => {
@@ -2351,7 +2389,7 @@ function App() {
     if (savedLlmSettings) {
       setSelectedLlmProvider(savedLlmSettings.provider);
       setSelectedLlmModel(savedLlmSettings.model);
-    } else if (providers.length > 0 && !selectedLlmProvider) {
+    } else if (providers.length > 0 && !selectedLlmProviderRef.current) {
       // Fallback: auto-select first provider if nothing saved
       setSelectedLlmProvider(providers[0].providerId);
       if (providers[0].models.length > 0) {
@@ -2365,7 +2403,7 @@ function App() {
     // First, load saved targetModel from localStorage
     const savedTargetModel = loadTargetModel();
     if (savedTargetModel) {
-      setTargetModel(savedTargetModel);
+      setTargetModelRef.current(savedTargetModel);
     }
     
     // Then fetch available models from API
@@ -2374,9 +2412,9 @@ function App() {
       .then(models => {
         setAvailableTargetModels(models);
         // Validate saved model is still available, otherwise use first available
-        const currentModel = savedTargetModel || targetModel;
+        const currentModel = savedTargetModel || targetModelRef.current;
         if (models.length > 0 && !models.find(m => m.id === currentModel)) {
-          setTargetModel(models[0].id);
+          setTargetModelRef.current(models[0].id);
         }
       })
       .catch(err => {
@@ -2556,6 +2594,7 @@ function App() {
     
     setIsEnhancing(true);
     setEnhanceError(null);
+    const submittedOAuthToken = provider.credentials.oauthToken;
     
     try {
       const result = await api.enhancePrompt({
@@ -2572,6 +2611,19 @@ function App() {
         },
       });
       
+      const currentProvider = getConfiguredProviders().find(
+        current => current.providerId === selectedLlmProvider,
+      );
+      if (
+        result.oauth_token &&
+        submittedOAuthToken &&
+        getSelectedLlmSettings()?.provider === selectedLlmProvider &&
+        currentProvider?.credentials.oauthToken === submittedOAuthToken
+      ) {
+        updateSavedOAuthToken(selectedLlmProvider, result.oauth_token);
+        setConfiguredProviders(getConfiguredProviders());
+      }
+
       if (result.success) {
         // Set the enhanced prompt separately from the simple generated prompt
         setEnhancedPrompt(result.enhanced_prompt);
@@ -2653,9 +2705,10 @@ function App() {
               </optgroup>
               <optgroup label="── Video Models ──">
                 {ENUMS.target_model.filter(v => 
-                  ['sora', 'sora_2', 'veo_2', 'veo_3', 'runway_gen-3', 'runway_gen-4', 
-                   'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'cogvideox', 
-                   'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'qwen_vl'].includes(v)
+                  ['sora', 'sora_2', 'veo_2', 'veo_3', 'runway_gen-3', 'runway_gen-4',
+                   'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'ltx_2.3', 'ltx_2.5', 'cogvideox',
+                   'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
+                   'qwen_vl', 'seedance_2.0', 'seedance_2.5'].includes(v)
                 ).map((v) => (
                   <option key={v} value={v}>{TARGET_MODEL_NAMES[v] || v}</option>
                 ))}

@@ -75,6 +75,7 @@ export function CameraAngleSelector({
 
     const canvas = canvasRef.current;
     const container = containerRef.current;
+    const markers = markersRef.current;
     if (!container) return;
 
     console.log('Initializing Three.js scene...');
@@ -197,11 +198,11 @@ export function CameraAngleSelector({
       cancelAnimationFrame(animationFrameRef.current);
       controls.dispose();
       renderer.dispose();
-      markersRef.current.forEach((marker) => {
+      markers.forEach((marker) => {
         marker.geometry.dispose();
         (marker.material as THREE.Material).dispose();
       });
-      markersRef.current.clear();
+      markers.clear();
       isInitializedRef.current = false;
       sceneRef.current = null;
       cameraRef.current = null;

@@ -77,9 +77,6 @@ def check_core_files():
         "angle_library.py",
         "export_manager.py",
         "session_manager.py",
-        "comfyui_client.py",
-        "batch_generation.py",
-        "comfyui_websocket.py",
     ]
     
     all_exist = True

@@ -283,10 +283,9 @@ class WorkflowBuilder:
     ) -> None:
         """Apply image input paths to the workflow.
 
-        Note: This method sets the image filename. The images must be 
-        uploaded to ComfyUI first using ComfyUIClient.upload_image().
-        The caller should upload images and pass the returned filenames
-        as values in image_paths.
+        Note: This method sets the image filename. The images must be
+        uploaded to ComfyUI first by the caller, which should pass the
+        returned filenames as values in image_paths.
         
         Masks are embedded in the image alpha channel before upload,
         so LoadImage nodes will output both IMAGE and MASK automatically.

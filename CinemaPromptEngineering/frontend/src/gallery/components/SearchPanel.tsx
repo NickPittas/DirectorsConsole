@@ -140,12 +140,17 @@ export function SearchPanel({
     [setSearchQuery, executeSearch],
   );
 
+  // Scope changes intentionally trigger the search; query input remains debounced.
+  const searchQueryRef = useRef(searchQuery);
+  const executeSearchRef = useRef(executeSearch);
+  searchQueryRef.current = searchQuery;
+  executeSearchRef.current = executeSearch;
+
   // Re-search when scope changes (if there is already a query)
   useEffect(() => {
-    if (searchQuery.trim()) {
-      executeSearch(searchQuery);
+    if (searchQueryRef.current.trim()) {
+      executeSearchRef.current(searchQueryRef.current);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
   // --------------------------------------------------

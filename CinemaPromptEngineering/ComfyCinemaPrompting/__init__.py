@@ -1,13 +1,34 @@
 """ComfyUI Node Wrapper for Cinema Prompt Engineering."""
 
-import sys
 import os
+import sys
 from enum import Enum
+from pathlib import Path
 
-# Add current directory to sys.path to allow imports from cinema_rules package
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+
+_NODE_DIR = Path(__file__).resolve().parent
+_LOCAL_RULES_DIR = _NODE_DIR / "cinema_rules"
+_CANONICAL_RULES_DIR = _NODE_DIR.parent / "cinema_rules"
+
+
+def _is_rules_package(path: Path) -> bool:
+    """Return whether a rules directory contains a Python package."""
+    return (path / "__init__.py").is_file()
+
+
+if _is_rules_package(_CANONICAL_RULES_DIR):
+    _RULES_IMPORT_ROOT = _NODE_DIR.parent
+elif _is_rules_package(_LOCAL_RULES_DIR):
+    _RULES_IMPORT_ROOT = _NODE_DIR
+else:
+    raise ImportError(
+        "Cinema rules are missing. Use the canonical "
+        f"source at {_CANONICAL_RULES_DIR} or run "
+        "python scripts/sync_comfy_node.py before copying the standalone node."
+    )
+
+# Prefer the repository's canonical package; standalone copies use generated rules.
+sys.path.insert(0, str(_RULES_IMPORT_ROOT))
 
 class _PlaceholderEnum(Enum):
     UNAVAILABLE = "Unavailable"
@@ -20,6 +41,7 @@ RuleEngine = None
 LiveActionConfig = None
 AnimationConfig = None
 PromptGenerator = None
+get_target_model_ids = None
 
 CameraManufacturer = _PlaceholderEnum
 CameraBody = _PlaceholderEnum
@@ -59,6 +81,7 @@ VisualGrammar = None
 def _load_rules():
     global IMPORT_ERROR, _RULES_LOADED
     global RuleEngine, LiveActionConfig, AnimationConfig, PromptGenerator
+    global get_target_model_ids
     global CameraManufacturer, CameraBody, CameraConfig, SensorSize, WeightClass
     global LensManufacturer, LensFamily, LensConfig
     global MovementEquipment, MovementType, MovementTiming, MovementConfig
@@ -76,6 +99,7 @@ def _load_rules():
             RuleEngine,
             LiveActionConfig,
             AnimationConfig,
+            get_target_model_ids,
         )
         from cinema_rules.prompts import PromptGenerator
         from cinema_rules.schemas.live_action import (
@@ -180,10 +204,7 @@ class CinemaPromptLiveAction:
                 "color_tone": (enum_values(ColorTone),),
                 
                 # Target Model
-                "target_model": ([
-                    "generic", "midjourney", "flux", "sdxl", 
-                    "wan2.2", "runway", "pika", "cogvideo", "hunyuan", "mochi", "ltx"
-                ],),
+                "target_model": (get_target_model_ids(include_legacy=True),),
             },
             "optional": {
                 # Lens (optional for simpler workflows)
@@ -471,10 +492,7 @@ class CinemaPromptAnimation:
                 "color_tone": (enum_values(ColorTone),),
                 
                 # Target Model
-                "target_model": ([
-                    "generic", "midjourney", "flux", "sdxl", 
-                    "wan2.2", "runway", "pika", "cogvideo", "hunyuan"
-                ],),
+                "target_model": (get_target_model_ids(include_legacy=True),),
             },
             "optional": {
                 # Style preset
@@ -695,6 +713,13 @@ if IMPORT_ERROR is None:
         "ComfyCinemaPromptingLive": "ComfyCinemaPrompting (Live-Action)",
         "ComfyCinemaPromptingAnim": "ComfyCinemaPrompting (Animation)",
     }
+
+    # Register the same prompt/preset API used by the bundled ComfyUI frontend.
+    try:
+        from .api_routes import register_routes
+        register_routes()
+    except Exception as error:
+        print("[ComfyCinemaPrompting] API route registration failed:", repr(error))
 else:
     # If imports failed, keep ComfyUI alive and surface the error in logs.
     print("[ComfyCinemaPrompting] Import failed:", repr(IMPORT_ERROR))

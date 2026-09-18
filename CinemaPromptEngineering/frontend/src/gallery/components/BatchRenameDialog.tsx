@@ -17,6 +17,10 @@ interface BatchRenameDialogProps {
 
 type DialogPhase = 'input' | 'previewed' | 'applying' | 'done';
 
+export function canCommitPreview(controller: AbortController, currentPhase: DialogPhase): boolean {
+  return !controller.signal.aborted && currentPhase !== 'applying' && currentPhase !== 'done';
+}
+
 // ---------------------------------------------------------------------------
 // Available tokens — single source of truth for UI and validation
 // ---------------------------------------------------------------------------
@@ -299,6 +303,8 @@ export function BatchRenameDialog({
   const [startIndex, setStartIndex] = useState(1);
   const [padWidth, setPadWidth] = useState(3);
   const [phase, setPhase] = useState<DialogPhase>('input');
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [previews, setPreviews] = useState<BatchRenamePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [renamedCount, setRenamedCount] = useState(0);
@@ -366,7 +372,7 @@ export function BatchRenameDialog({
 
   // Auto-preview with debounce — fires silently in background
   useEffect(() => {
-    if (phase === 'applying' || phase === 'done') return;
+    if (phaseRef.current === 'applying' || phaseRef.current === 'done') return;
     if (!resolvedPattern.trim() || filePaths.length === 0) {
       setPreviews([]);
       return;
@@ -381,7 +387,7 @@ export function BatchRenameDialog({
     previewAbortRef.current = controller;
 
     const timer = setTimeout(async () => {
-      if (controller.signal.aborted) return;
+      if (!canCommitPreview(controller, phaseRef.current)) return;
       setError(null);
       try {
         const result = await batchRename(
@@ -393,7 +399,7 @@ export function BatchRenameDialog({
           projectPath,
           true, // dry_run
         );
-        if (controller.signal.aborted) return;
+        if (!canCommitPreview(controller, phaseRef.current)) return;
         if (!result.success) {
           setError(result.message || 'Preview failed.');
           setPreviews([]);
@@ -413,10 +419,10 @@ export function BatchRenameDialog({
       clearTimeout(timer);
       controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedPattern, startIndex, padWidth, orchestratorUrl, filePaths, projectPath]);
 
   const handleApply = useCallback(async () => {
+    previewAbortRef.current?.abort();
     setPhase('applying');
     setError(null);
     try {

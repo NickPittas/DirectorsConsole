@@ -18,6 +18,7 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 - [Screenshots](#screenshots)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Security & Deployment](#security--deployment)
 - [Storyboard Canvas](#storyboard-canvas)
   - [Canvas Overview](#canvas-overview)
   - [Panels](#panels)
@@ -41,7 +42,9 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
   - [AI-Enhanced Prompts](#ai-enhanced-prompts)
 - [AI LLM Provider Setup](#ai-llm-provider-setup)
   - [API Key Providers](#api-key-providers)
+    - [Google AI (Gemini) API key setup](#google-ai-gemini-api-key-setup)
   - [OAuth Providers](#oauth-providers)
+    - [Antigravity OAuth app configuration](#antigravity-oauth-app-configuration)
   - [Local LLM Providers](#local-llm-providers)
 - [Technical Reference](#technical-reference)
   - [Cameras](#cameras)
@@ -51,6 +54,7 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
   - [Camera Movement](#camera-movement)
   - [Shot Sizes & Composition](#shot-sizes--composition)
 - [Architecture](#architecture)
+- [Completed Maintenance Notes](#completed-maintenance-notes)
 - [Development](#development)
 - [License](#license)
 
@@ -132,30 +136,42 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 
 ### Prerequisites
 
-- **Python 3.10+** (with `pip` or `uv`)
-- **Node.js 18+** (with `npm`)
+- **Python 3.11+** (with `pip` or `uv`)
+- **Node.js 22+** (with `npm`)
 - **ComfyUI** — At least one running instance for image generation
 - **Git** (for cloning)
 
-### Setup
+### Contributor setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/NickPittas/DirectorsConsole.git
 cd DirectorsConsole
 
-# Run the automated setup
-python start.py --setup
+python -m venv .venv
+# macOS/Linux
+source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt
+
+cd CinemaPromptEngineering/frontend
+npm ci
+cd ../..
 ```
 
-The `--setup` flag will:
-1. Create isolated Python virtual environments for both the CPE backend and the Orchestrator
-2. Install all Python dependencies (FastAPI, Pydantic, httpx, loguru, Pillow, cryptography, etc.)
-3. Install frontend npm packages
-4. Verify all imports are working
-5. Report the status of each component
+`requirements-dev.txt` installs the complete Python runtime plus test tools. The
+single documented offline check is `python scripts/check.py`; see
+[docs/contributing.md](docs/contributing.md) for the commands and current
+validation status.
 
-### Manual Setup (if needed)
+For a clean workstation, `python start.py --setup` remains available to create
+the launcher's per-service environments. The primary runtime launcher is:
+
+```bash
+python start.py
+```
+
+### Legacy per-service setup
 
 **CPE Backend:**
 ```bash
@@ -212,6 +228,20 @@ python start.py --no-frontend       # Skip Frontend (API only)
 python start.py --no-browser        # Don't auto-open browser
 python start.py --setup             # Verify environment only
 ```
+
+---
+
+## Security & Deployment
+
+> **Deployment boundary:** Director's Console is not formally security-audited. It is intended for trusted, access-controlled networks, not as a hardened public service.
+
+- There is no application-wide authentication or authorization. Reachable peers can invoke exposed functions and submit malicious input.
+- Do not expose the CPE, Orchestrator, frontend, or ComfyUI endpoints to public or untrusted networks. Host and network security—including access controls, firewalls, VPNs, and segmentation—is the responsibility of the host/network administrator.
+- Network isolation reduces exposure but does not guarantee protection against malicious files, malicious workflows, or other vulnerabilities. Treat project files, workflows, and connected nodes accordingly.
+- Provider credentials are not guaranteed to exist only in encrypted backend storage: browser provider configuration may be cached in the browser profile/local data. Protect that local data as well as the backend credential store.
+- OAuth app configuration is external: set both `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET` before a new Antigravity login or token refresh. Re-login alone will not fix missing app configuration; an administrator must supply the appropriately authorized OAuth client configuration first.
+
+This project is intended for private, access-controlled networks and is not a formally audited or hardened public service. This documentation update makes no network policy change.
 
 ---
 
@@ -617,7 +647,7 @@ Beyond rule-based generation, CPE can send your structured prompt to an LLM for 
 
 ## AI LLM Provider Setup
 
-Director's Console supports 13+ LLM providers for AI-enhanced prompt generation. All credentials are stored **locally** in an encrypted database (`%APPDATA%/CinemaPromptEngineering/credentials.db`) using Fernet encryption. **No credentials are stored in the source code or environment files.**
+Director's Console supports 13+ LLM providers for AI-enhanced prompt generation. Credentials saved through the backend use the existing local encrypted credential store (`%APPDATA%/CinemaPromptEngineering/credentials.db`) using Fernet encryption, but browser provider configuration may also be cached in local storage or the browser profile. Protect both the backend data and local browser data; this project does not promise that every key exists only in encrypted backend storage. Antigravity's OAuth app configuration is supplied externally through `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET`; it is not embedded in the current source. This maintenance cleanup does not rewrite stored credentials or claim to purge repository history.
 
 ![LLM Providers](Images/CPE%20LLM%20Providers.png)
 ![LLM Provider Setup](Images/CPE%20LLM%20Providers%202.png)
@@ -630,7 +660,7 @@ These providers require an API key, which you enter directly in the Settings pan
 |----------|------------------|--------|
 | **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | GPT-4o, GPT-4 Turbo, DALL-E 3 |
 | **Anthropic** | [console.anthropic.com](https://console.anthropic.com) | Claude 3.5 Sonnet, Claude 3 Opus |
-| **Google AI** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Gemini Pro, Gemini Ultra, Imagen |
+| **Google AI (Gemini)** | [Google AI Studio API keys](https://aistudio.google.com/apikey) | Models returned by the Google AI API |
 | **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | Multi-model aggregator (100+ models) |
 | **Replicate** | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) | FLUX, SDXL, open-source models |
 | **Stability AI** | [platform.stability.ai](https://platform.stability.ai) | Stable Diffusion, SDXL |
@@ -642,25 +672,58 @@ These providers require an API key, which you enter directly in the Settings pan
 1. Open **Settings** (gear icon in the menu)
 2. Find the provider in the list
 3. Enter your API key
-4. Click **Test** to verify the connection
-5. The key is immediately encrypted and stored locally
+4. Click **Test Connection** to verify the connection
+5. Click **Save Changes**
+
+### Google AI (Gemini) API key setup
+
+This is the authoritative Google setup path. No new provider is needed: the provider ID is `google`, the Settings label is **Google AI (Gemini)**, and it uses the native Google AI API endpoint (`generativelanguage.googleapis.com/v1beta`).
+
+1. Open **Settings**.
+2. Select **Google AI (Gemini)**.
+3. Create or copy a key from [Google AI Studio API keys](https://aistudio.google.com/apikey), then paste it into the API key field.
+4. Click **Test Connection**.
+5. Fetch the available models and select one.
+6. Click **Save Changes**.
+
+This Google AI Studio API key is **not** an OAuth client secret and does not log you into **Antigravity**. Available models, quotas, billing, and service eligibility depend on the key/account and Google service; successful connection or model listing does not guarantee access to every Gemini feature. Never put a real key in this README, examples, issues, logs, or source control. The generic `google` OAuth configuration is a separate path and is not the Gemini API-key option.
+
 
 ### OAuth Providers
 
-These providers use OAuth authentication flows. You must supply your own **Client ID** (and Client Secret where required):
+These providers use OAuth authentication flows. They are separate from the Google API-key flow above. The current Antigravity client configuration is resolved from request/stored provider settings or external environment variables; missing configuration fails explicitly before an outbound OAuth request.
 
-| Provider | Flow Type | Requires Client Secret |
-|----------|-----------|----------------------|
-| **Antigravity** (Google AI) | Authorization Code + PKCE | Yes |
-| **OpenAI Codex** | Authorization Code + PKCE | No |
+| Provider | UI label | Provider ID | Flow Type | Requires Client Secret |
+|----------|----------|-------------|-----------|----------------------|
+| **Antigravity** | Antigravity (Gemini/Claude) | `antigravity` | Authorization Code + PKCE | Yes |
+| **OpenAI Codex** | OpenAI Codex (ChatGPT Plus/Pro) | `openai_codex` | Authorization Code + PKCE | No |
+
+### Antigravity OAuth app configuration
+
+Use an appropriately authorized Antigravity application configuration. Do not assume an existing client belongs to you or to Google, and do not use an arbitrary Google Cloud client expecting it to grant Cloud Code/Antigravity access; the account and client must be authorized for that service.
+
+The CPE backend reads these values from its private environment file:
+
+```text
+CinemaPromptEngineering/.env
+```
+
+`CinemaPromptEngineering/.env` is the private, gitignored backend file (on Unix, keep it mode `0600`); `.env.example` is the tracked placeholder template. Only if `.env` does **not** already exist, copy `CinemaPromptEngineering/.env.example` to it. Do not overwrite an existing configured `.env`. Fill in the placeholders locally:
+
+```text
+ANTIGRAVITY_CLIENT_ID=your-authorized-client-id
+ANTIGRAVITY_CLIENT_SECRET=your-authorized-client-secret
+```
+
+Keep `.env` private, restart the CPE backend after changing it, and never put these values in the frontend `.env`, `VITE_*` variables, Git, logs, or issue reports. A missing `.env` is harmless at startup; an Antigravity request without complete app configuration fails explicitly before outbound HTTP. Existing OAuth tokens are not deleted by this configuration cleanup; re-login alone cannot fix missing app configuration. The loader is implemented and its fresh-process environment/path/missing-file/import-order checks pass; live provider/account verification remains pending.
+
+The app uses `http://localhost:36742/oauth-callback` for Antigravity's local callback. Where the client type requires registered redirect URIs, the registration must match it. Desktop loopback-client rules differ from web-client rules, so do not create a web client merely to force these instructions to fit.
 
 **To set up an OAuth provider:**
-1. Open **Settings** → find the provider
-2. Enter the **Client ID** (required)
-3. Enter the **Client Secret** if required (Antigravity only)
-4. Click **Connect** — this opens a browser window for OAuth authorization
-5. After authorization, the access token is encrypted and stored locally
-6. Tokens auto-refresh when expired
+1. Open **Settings** → find the provider.
+2. Click **Connect** — this opens a browser window for OAuth authorization.
+3. After authorization, the access token is handled by the existing local credential workflow.
+4. Tokens may refresh when the provider supports refresh; a live provider/account check is still required.
 
 ### Local LLM Providers
 
@@ -841,7 +904,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ├───────────────────────────────────────────────────────────────┤
 │  Storage: Project files on local/NAS filesystem                │
 │  Gallery metadata: {project}/.gallery/gallery.json (JSON)      │
-│  Credentials: %APPDATA%/CinemaPromptEngineering/ (encrypted)  │
+│  Credentials: backend encrypted store + browser-local config     │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -851,6 +914,14 @@ Just start the local LLM server and Director's Console will detect it automatica
 - **Frontend → Orchestrator**: REST API for job groups, backend management, project scanning, gallery operations
 - **Gallery ↔ Storyboard**: Cross-tab CustomEvents on `window` for reference images, workflow restore, file rename sync
 - **CPE → Orchestrator → ComfyUI**: JSON manifests for distributed rendering
+
+---
+
+## Completed Maintenance Notes
+
+- [Private workstation refresh plan](docs/private-workstation-refresh-plan.md) records the completed maintenance scope, checks, and remaining live-provider/ComfyUI verification limits.
+- The [video capability matrix](CinemaPromptEngineering/Documentation/model_prompting/video_capability_matrix.md) links six verified, version-specific prompt guides: [LTX 2.3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.3.md), [LTX 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.5.md), [MiniMax H3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3.md), [MiniMax H3 Max](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3_max.md), [Seedance 2.0](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.0.md), and [Seedance 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.5.md). These are prompting guidance only, not a rendering backend or guarantee of local/API availability.
+- To refresh the standalone node's generated rules copy, run [`scripts/sync_comfy_node.py`](scripts/sync_comfy_node.py) from the repository root. Edit the canonical `CinemaPromptEngineering/cinema_rules/` package, then run the helper before distributing `ComfyCinemaPrompting/`.
 
 ---
 
@@ -872,11 +943,20 @@ cd Orchestrator
 python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ```
 
+### Contributor setup and checks
+
+See [docs/contributing.md](docs/contributing.md) for the supported Python 3.11+
+and Node.js 22+ setup. Run the complete offline regression check from the root:
+
+```bash
+python scripts/check.py
+```
+
 ### Running Tests
 
 ```bash
-# All tests
-python -m pytest tests/ -v
+# Root and Orchestrator suites without a custom PYTHONPATH
+python -m pytest -c pytest.ini tests/ Orchestrator/tests/ -v
 
 # Specific test files
 python -m pytest tests/test_cpe_api.py -v
@@ -900,7 +980,7 @@ cd CinemaPromptEngineering
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18, TypeScript, Vite 5, Zustand, TanStack Query v5 |
-| Backend | Python 3.10+, FastAPI, Pydantic v2, httpx, aiohttp |
+| Backend | Python 3.11+, FastAPI, Pydantic v2, httpx, aiohttp |
 | Rendering | ComfyUI (direct WebSocket) |
 | Storage | Local/NAS filesystem, JSON flat-file (Gallery metadata), SQLite (encrypted credentials) |
 | Logging | Loguru |

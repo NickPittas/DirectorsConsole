@@ -1,6 +1,8 @@
 """FastAPI backend for Cinema Prompt Engineering."""
 
+import logging
 import os
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,8 @@ from cinema_rules.presets.cinematography_styles import (
 )
 from api.providers.credential_storage import (
     get_credential_storage,
+    CredentialStorage,
+    CredentialStorageError,
     ProviderCredentials,
     StoredSettings,
 )
@@ -37,6 +41,8 @@ from api.providers.credential_storage import (
 from api.templates import router as templates_router
 # Import workflow storage router
 from api.workflow_storage import router as workflows_router
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -67,6 +73,16 @@ app.add_middleware(
 
 # Initialize engine
 engine = RuleEngine()
+
+
+def _read_stored_credentials(
+    storage: CredentialStorage, provider_id: str
+) -> ProviderCredentials | None:
+    """Read credentials and turn unreadable stored data into an API error."""
+    try:
+        return storage.get_credentials(provider_id)
+    except CredentialStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # =============================================================================
@@ -1095,6 +1111,8 @@ from api.providers.oauth import (
     request_device_code,
     poll_device_token,
     get_flow_type,
+    get_token_expires_at,
+    resolve_client_credentials,
 )
 
 # In-memory storage for OAuth state (would use Redis/database in production)
@@ -1160,28 +1178,35 @@ async def initiate_oauth(provider_id: str, request: OAuthInitRequest) -> dict:
     config = OAUTH_CONFIGS[provider_id]
     
     try:
-        # Resolve client_id: request > credential storage > built-in config
+        # Resolve request values, existing stored settings, and external config.
         client_id = request.client_id
-        if not client_id:
+        client_secret = None
+        if not client_id or provider_id == "antigravity":
             storage = get_credential_storage()
-            creds = storage.get_credentials(provider_id)
-            if creds and creds.oauth_client_id:
-                client_id = creds.oauth_client_id
-        
-        # Fall back to built-in client_id if provider has one
-        if not client_id and config.get("client_id"):
-            client_id = config["client_id"]
-        
+            creds = _read_stored_credentials(storage, provider_id)
+            if creds:
+                if not client_id and creds.oauth_client_id:
+                    client_id = creds.oauth_client_id
+                client_secret = creds.oauth_client_secret
+
+        try:
+            client_id, client_secret = resolve_client_credentials(
+                provider_id, client_id, client_secret
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         if not client_id:
             raise HTTPException(
                 status_code=400,
                 detail=f"No client_id configured for {provider_id}. "
                        f"Please set it in Settings > Provider > Client ID."
             )
-        
+
         auth_url, oauth_state = build_authorization_url(
             provider_id=provider_id,
             client_id=client_id,
+            client_secret=client_secret,
             redirect_uri=request.redirect_uri,
         )
         
@@ -1202,6 +1227,8 @@ async def initiate_oauth(provider_id: str, request: OAuthInitRequest) -> dict:
             "redirect_uri": actual_redirect_uri,  # Tell frontend where callback will go
             "needs_local_server": config.get("redirect_uri") is not None,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1226,7 +1253,7 @@ async def oauth_callback(provider_id: str, request: OAuthCallbackRequest) -> dic
     client_secret = request.client_secret
     if not client_id or not client_secret:
         storage = get_credential_storage()
-        creds = storage.get_credentials(provider_id)
+        creds = _read_stored_credentials(storage, provider_id)
         if creds:
             if not client_id and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
@@ -1255,6 +1282,7 @@ async def oauth_callback(provider_id: str, request: OAuthCallbackRequest) -> dic
         "token_type": token_response.get("token_type", "Bearer"),
         "expires_in": token_response.get("expires_in"),
         "refresh_token": token_response.get("refresh_token"),
+        "expires_at": get_token_expires_at(token_response),
         "scope": token_response.get("scope"),
     }
 
@@ -1334,7 +1362,7 @@ async def request_device_code_endpoint(provider_id: str, request: DeviceCodeRequ
         client_id = request.client_id
         if not client_id:
             storage = get_credential_storage()
-            creds = storage.get_credentials(provider_id)
+            creds = _read_stored_credentials(storage, provider_id)
             if creds and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
         
@@ -1378,6 +1406,8 @@ async def request_device_code_endpoint(provider_id: str, request: DeviceCodeRequ
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1413,7 +1443,7 @@ async def poll_device_token_endpoint(provider_id: str, request: DeviceCodePollRe
         client_id = request.client_id
         if not client_id:
             storage = get_credential_storage()
-            creds = storage.get_credentials(provider_id)
+            creds = _read_stored_credentials(storage, provider_id)
             if creds and creds.oauth_client_id:
                 client_id = creds.oauth_client_id
         
@@ -1442,6 +1472,8 @@ async def poll_device_token_endpoint(provider_id: str, request: DeviceCodePollRe
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1598,6 +1630,7 @@ async def poll_oauth_token(provider_id: str, state: str) -> dict:
             "refresh_token": result.refresh_token,
             "token_type": result.token_type,
             "expires_in": result.expires_in,
+            "expires_at": result.expires_at,
             "scope": result.scope,
         }
     else:
@@ -1667,6 +1700,163 @@ async def get_callback_server_status(provider_id: str, state: str) -> dict:
     }
 
 
+def _is_standard_oauth_provider(provider_id: str) -> bool:
+    """Return whether a registered provider uses the standard OAuth grant."""
+    provider = PROVIDER_REGISTRY.get(provider_id)
+    provider_type = provider.get("type") if provider else None
+    provider_type = getattr(provider_type, "value", provider_type)
+    return (
+        provider_id != "github_copilot"
+        and provider_type == "oauth"
+        and OAUTH_CONFIGS.get(provider_id, {}).get("flow_type") == "authorization_code"
+    )
+
+
+def _reauthentication_message(provider_id: str, reason: str) -> str:
+    """Build an actionable OAuth failure without changing saved credentials."""
+    return (
+        f"{reason} Please re-authenticate in Settings → {provider_id} → Connect. "
+        "Existing saved credentials were not changed."
+    )
+
+
+async def _refresh_stored_oauth_credentials(
+    provider_id: str,
+    storage: CredentialStorage,
+    creds: ProviderCredentials,
+) -> dict[str, Any]:
+    """Refresh stored OAuth credentials and persist only a complete success."""
+    if not creds.oauth_refresh_token:
+        return {
+            "success": False,
+            "error": "no_refresh_token",
+            "error_description": _reauthentication_message(
+                provider_id, f"No refresh token is stored for {provider_id}."
+            ),
+        }
+
+    try:
+        if provider_id == "github_copilot":
+            # Keep GitHub Copilot's GitHub-token-to-Copilot-JWT flow unchanged.
+            from api.providers.oauth import _get_copilot_token
+
+            config = OAUTH_CONFIGS[provider_id]
+            result = await _get_copilot_token(
+                creds.oauth_refresh_token,
+                config["copilot_token_url"],
+                config.get("headers", {}),
+            )
+            if result.get("error") or not result.get("token"):
+                return {
+                    "success": False,
+                    "error": result.get("error", "refresh_failed"),
+                    "error_description": _reauthentication_message(
+                        provider_id,
+                        result.get("error_description", "Failed to refresh Copilot token."),
+                    ),
+                }
+
+            updated = creds.model_copy(deep=True)
+            updated.oauth_token = result["token"]
+            storage.set_credentials(provider_id, updated)
+            return {
+                "success": True,
+                "oauth_token": updated.oauth_token,
+                "expires_at": result.get("expires_at"),
+            }
+
+        if not _is_standard_oauth_provider(provider_id):
+            return {
+                "success": False,
+                "error": "unsupported_oauth_refresh",
+                "error_description": _reauthentication_message(
+                    provider_id, f"Provider {provider_id} does not support standard OAuth refresh."
+                ),
+            }
+
+        from api.providers.oauth import refresh_token as do_refresh
+
+        result = await do_refresh(
+            provider_id=provider_id,
+            refresh_token=creds.oauth_refresh_token,
+            client_id=creds.oauth_client_id or "",
+            client_secret=creds.oauth_client_secret,
+        )
+        if "error" in result:
+            return {
+                "success": False,
+                "error": result.get("error", "refresh_failed"),
+                "error_description": _reauthentication_message(
+                    provider_id,
+                    result.get("error_description", "OAuth token refresh failed."),
+                ),
+            }
+
+        new_token = result.get("access_token")
+        if not new_token:
+            return {
+                "success": False,
+                "error": "refresh_failed",
+                "error_description": _reauthentication_message(
+                    provider_id, "OAuth refresh returned no access token."
+                ),
+            }
+
+        updated = creds.model_copy(deep=True)
+        updated.oauth_token = new_token
+        # Providers may omit a rotated refresh token; retain the existing one.
+        if result.get("refresh_token"):
+            updated.oauth_refresh_token = result["refresh_token"]
+        updated.oauth_expires_at = get_token_expires_at(result)
+        storage.set_credentials(provider_id, updated)
+        return {
+            "success": True,
+            "oauth_token": updated.oauth_token,
+            "expires_at": updated.oauth_expires_at,
+        }
+    except Exception as exc:
+        logger.exception("OAuth token refresh failed for %s", provider_id)
+        return {
+            "success": False,
+            "error": "refresh_failed",
+            "error_description": _reauthentication_message(provider_id, str(exc)),
+        }
+
+
+async def _refresh_expiring_saved_oauth(
+    provider_id: str,
+    requested_credentials: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    """Refresh a matching, known-expiring saved OAuth token before enhancement."""
+    if not _is_standard_oauth_provider(provider_id):
+        return requested_credentials, None
+
+    requested_token = requested_credentials.get("oauth_token")
+    if not requested_token:
+        return requested_credentials, None
+
+    storage = get_credential_storage()
+    stored = _read_stored_credentials(storage, provider_id)
+    if not stored or stored.oauth_token != requested_token:
+        # An explicitly different token is an ad-hoc account and must win.
+        return requested_credentials, None
+
+    if stored.oauth_expires_at is None or stored.oauth_expires_at > time.time() + 300:
+        # Legacy rows without expiry remain usable and are never force-refreshed.
+        return requested_credentials, None
+
+    result = await _refresh_stored_oauth_credentials(provider_id, storage, stored)
+    if not result.get("success"):
+        return requested_credentials, result.get(
+            "error_description",
+            _reauthentication_message(provider_id, "OAuth token refresh failed."),
+        )
+
+    refreshed = dict(requested_credentials)
+    refreshed["oauth_token"] = result["oauth_token"]
+    return refreshed, None
+
+
 @app.post("/settings/oauth/{provider_id}/refresh")
 async def refresh_oauth_token(provider_id: str) -> dict:
     """
@@ -1685,98 +1875,19 @@ async def refresh_oauth_token(provider_id: str) -> dict:
     """
     if provider_id not in OAUTH_CONFIGS:
         raise HTTPException(status_code=404, detail=f"OAuth provider '{provider_id}' not found")
-    
-    # Get stored credentials
+
     storage = get_credential_storage()
-    creds = storage.get_credentials(provider_id)
-    
-    if not creds or not creds.oauth_refresh_token:
+    creds = _read_stored_credentials(storage, provider_id)
+    if not creds:
         return {
             "success": False,
             "error": "no_refresh_token",
-            "error_description": f"No refresh token stored for {provider_id}. Please re-authenticate.",
+            "error_description": _reauthentication_message(
+                provider_id, f"No credentials are stored for {provider_id}."
+            ),
         }
-    
-    config = OAUTH_CONFIGS[provider_id]
-    
-    try:
-        if provider_id == "github_copilot":
-            # For GitHub Copilot, oauth_refresh_token contains the GitHub access token (gho_...)
-            # Use it to get a fresh Copilot JWT
-            from api.providers.oauth import _get_copilot_token
-            
-            copilot_result = await _get_copilot_token(
-                creds.oauth_refresh_token,  # This is the GitHub access token
-                config["copilot_token_url"],
-                config.get("headers", {}),
-            )
-            
-            if copilot_result.get("error"):
-                return {
-                    "success": False,
-                    "error": copilot_result.get("error"),
-                    "error_description": copilot_result.get("error_description", "Failed to refresh Copilot token"),
-                }
-            
-            new_token = copilot_result.get("token")
-            expires_at = copilot_result.get("expires_at")
-            
-            # Update stored credentials with new JWT
-            creds.oauth_token = new_token
-            storage.set_credentials(provider_id, creds)
-            
-            return {
-                "success": True,
-                "oauth_token": new_token,
-                "expires_at": expires_at,
-            }
-        else:
-            # For standard OAuth providers, use refresh_token grant
-            from api.providers.oauth import refresh_token as do_refresh
-            
-            # Resolve client credentials from storage
-            client_id = ""
-            client_secret = None
-            if creds.oauth_client_id:
-                client_id = creds.oauth_client_id
-            if creds.oauth_client_secret:
-                client_secret = creds.oauth_client_secret
-            
-            result = await do_refresh(
-                provider_id=provider_id,
-                refresh_token=creds.oauth_refresh_token,
-                client_id=client_id,
-                client_secret=client_secret,
-            )
-            
-            if "error" in result:
-                return {
-                    "success": False,
-                    "error": result.get("error"),
-                    "error_description": result.get("error_description", "Refresh failed"),
-                }
-            
-            new_token = result.get("access_token")
-            new_refresh = result.get("refresh_token")
-            
-            # Update stored credentials
-            creds.oauth_token = new_token
-            if new_refresh:
-                creds.oauth_refresh_token = new_refresh
-            storage.set_credentials(provider_id, creds)
-            
-            return {
-                "success": True,
-                "oauth_token": new_token,
-            }
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Token refresh failed for {provider_id}: {e}")
-        return {
-            "success": False,
-            "error": "refresh_failed",
-            "error_description": str(e),
-        }
+
+    return await _refresh_stored_oauth_credentials(provider_id, storage, creds)
 
 
 # =============================================================================
@@ -1792,6 +1903,7 @@ class CredentialUpdate(BaseModel):
     endpoint: str | None = None
     oauth_token: str | None = None
     oauth_refresh_token: str | None = None
+    oauth_expires_at: float | None = None
     oauth_client_id: str | None = None
     oauth_client_secret: str | None = None
 
@@ -1817,7 +1929,10 @@ async def get_all_credentials() -> dict[str, Any]:
     Sensitive values (tokens, keys) are masked.
     """
     storage = get_credential_storage()
-    settings = storage.get_all_settings()
+    try:
+        settings = storage.get_all_settings()
+    except CredentialStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     
     # Mask sensitive values for display
     result = {
@@ -1834,6 +1949,7 @@ async def get_all_credentials() -> dict[str, Any]:
             "has_refresh_token": bool(creds.oauth_refresh_token),
             "has_oauth_client_id": bool(creds.oauth_client_id),
             "has_oauth_client_secret": bool(creds.oauth_client_secret),
+            "oauth_expires_at": creds.oauth_expires_at,
             "endpoint": creds.endpoint,
             "updated_at": creds.updated_at,
         }
@@ -1849,7 +1965,7 @@ async def get_provider_credentials(provider_id: str) -> dict[str, Any]:
     Returns the full credentials including sensitive values.
     """
     storage = get_credential_storage()
-    creds = storage.get_credentials(provider_id)
+    creds = _read_stored_credentials(storage, provider_id)
     
     if not creds:
         return {"exists": False}
@@ -1860,6 +1976,7 @@ async def get_provider_credentials(provider_id: str) -> dict[str, Any]:
         "endpoint": creds.endpoint,
         "oauth_token": creds.oauth_token,
         "oauth_refresh_token": creds.oauth_refresh_token,
+        "oauth_expires_at": creds.oauth_expires_at,
         "oauth_client_id": creds.oauth_client_id,
         "oauth_client_secret": creds.oauth_client_secret,
         "updated_at": creds.updated_at,
@@ -1871,12 +1988,15 @@ async def update_provider_credentials(provider_id: str, update: CredentialUpdate
     """
     Update credentials for a specific provider.
     
-    Only provided fields are updated; null/missing fields are ignored.
+    Only provided fields are updated; null/missing fields are ignored except
+    an explicit null expiry, which clears the stored expiry.
     """
     storage = get_credential_storage()
     
-    # Get existing credentials or create new
-    existing = storage.get_credentials(provider_id)
+    # Get existing credentials or create new. Explicit null clears expiry;
+    # an omitted expiry preserves legacy callers and existing rows.
+    existing = _read_stored_credentials(storage, provider_id)
+    expiry_was_supplied = "oauth_expires_at" in update.model_fields_set
     if existing:
         # Merge with existing
         creds = ProviderCredentials(
@@ -1884,6 +2004,7 @@ async def update_provider_credentials(provider_id: str, update: CredentialUpdate
             endpoint=update.endpoint if update.endpoint is not None else existing.endpoint,
             oauth_token=update.oauth_token if update.oauth_token is not None else existing.oauth_token,
             oauth_refresh_token=update.oauth_refresh_token if update.oauth_refresh_token is not None else existing.oauth_refresh_token,
+            oauth_expires_at=update.oauth_expires_at if expiry_was_supplied else existing.oauth_expires_at,
             oauth_client_id=update.oauth_client_id if update.oauth_client_id is not None else existing.oauth_client_id,
             oauth_client_secret=update.oauth_client_secret if update.oauth_client_secret is not None else existing.oauth_client_secret,
         )
@@ -1893,6 +2014,7 @@ async def update_provider_credentials(provider_id: str, update: CredentialUpdate
             endpoint=update.endpoint,
             oauth_token=update.oauth_token,
             oauth_refresh_token=update.oauth_refresh_token,
+            oauth_expires_at=update.oauth_expires_at,
             oauth_client_id=update.oauth_client_id,
             oauth_client_secret=update.oauth_client_secret,
         )
@@ -1958,7 +2080,10 @@ async def import_credentials(request: ImportRequest) -> dict[str, Any]:
     }
     """
     storage = get_credential_storage()
-    storage.import_from_localstorage(request.data)
+    try:
+        storage.import_from_localstorage(request.data)
+    except CredentialStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     
     # Return what was imported
     providers = list(request.data.get("providers", {}).keys())
@@ -2117,6 +2242,7 @@ class EnhancePromptResponse(BaseModel):
     """Response with enhanced prompt."""
     success: bool
     enhanced_prompt: str = ""
+    oauth_token: str | None = None
     negative_prompt: str | None = None
     tokens_used: int = 0
     model_used: str = ""
@@ -2179,6 +2305,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
     and sends to the selected LLM to generate a professional prompt optimized for
     the target image/video generation model.
     """
+    refreshed_oauth_token: str | None = None
     try:
         # Get system prompt for target model and project type
         # Animation projects use animation-specific prompts without camera references
@@ -2208,11 +2335,25 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             request.target_model,
         )
         
-        # Create credentials object
+        # Refresh only a matching, known-expiring saved standard OAuth token.
+        # Explicitly supplied ad-hoc credentials remain untouched.
+        request_credentials, refresh_error = await _refresh_expiring_saved_oauth(
+            request.llm_provider,
+            request.credentials,
+        )
+        refreshed_oauth_token = (
+            request_credentials.get("oauth_token")
+            if request_credentials.get("oauth_token") != request.credentials.get("oauth_token")
+            else None
+        )
+        if refresh_error:
+            return EnhancePromptResponse(success=False, error=refresh_error)
+
+        # Create credentials object immediately before the provider call.
         creds = LLMCredentials(
-            api_key=request.credentials.get("api_key"),
-            endpoint=request.credentials.get("endpoint"),
-            oauth_token=request.credentials.get("oauth_token"),
+            api_key=request_credentials.get("api_key"),
+            endpoint=request_credentials.get("endpoint"),
+            oauth_token=request_credentials.get("oauth_token"),
         )
         
         # Call LLM service
@@ -2231,6 +2372,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             return EnhancePromptResponse(
                 success=True,
                 enhanced_prompt=enhanced,
+                oauth_token=refreshed_oauth_token,
                 tokens_used=result.tokens_used,
                 model_used=result.model_used,
                 warnings=warnings,
@@ -2238,11 +2380,13 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
         else:
             return EnhancePromptResponse(
                 success=False,
+                oauth_token=refreshed_oauth_token,
                 error=result.error,
             )
     except Exception as e:
         return EnhancePromptResponse(
             success=False,
+            oauth_token=refreshed_oauth_token,
             error=f"Enhancement failed: {str(e)}",
         )
 

@@ -22,6 +22,13 @@ from cinema_rules.schemas.live_action import (
 from cinema_rules.schemas.animation import AnimationConfig
 from cinema_rules.schemas.common import ProjectConfig, ValidationResult
 from cinema_rules.rules.engine import RuleEngine
+from cinema_rules.target_models import (
+    TARGET_MODELS,
+    MODEL_ID_ALIASES,
+    get_target_model_ids,
+    get_target_models,
+    normalize_target_model,
+)
 
 __all__ = [
     # Configs
@@ -30,6 +37,12 @@ __all__ = [
     "ProjectConfig",
     "ValidationResult",
     "RuleEngine",
+    # Shared target model catalog
+    "TARGET_MODELS",
+    "MODEL_ID_ALIASES",
+    "get_target_model_ids",
+    "get_target_models",
+    "normalize_target_model",
     # Camera System
     "CameraType",
     "CameraManufacturer",

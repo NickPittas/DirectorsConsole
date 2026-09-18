@@ -5,14 +5,16 @@ This module verifies that:
 2. Movie frame images directory exists with 35+ thumbnail images
 """
 
-import os
 from pathlib import Path
+
+from PIL import Image
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
 CINEMA_DIR = BASE_DIR / "CinemaPromptEngineering"
 PRESETS_DIR = CINEMA_DIR / "cinema_rules" / "presets"
 IMAGES_DIR = CINEMA_DIR / "frontend" / "public" / "movie-frames"
+SUPPORTED_MEDIA_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "AVIF"})
 
 
 class TestFilmPresets:
@@ -84,19 +86,27 @@ class TestFilmPresets:
         
         assert image_count >= 35, f"Expected 35+ images, found {image_count}"
 
-    def test_images_are_valid_jpg(self):
-        """Verify image files are valid JPEGs (start with JPEG magic bytes)."""
+    def test_images_are_valid_browser_images(self):
+        """Verify image files decode to a supported media format."""
         assert IMAGES_DIR.exists(), "Images directory not found"
-        
+
         image_files = list(IMAGES_DIR.glob("*.jpg"))
         assert len(image_files) > 0, "No .jpg files found"
-        
-        # Check first few images for valid JPEG header
-        jpeg_magic = b"\xff\xd8\xff"
-        for img_path in image_files[:10]:  # Check first 10
-            with open(img_path, "rb") as f:
-                header = f.read(3)
-                assert header == jpeg_magic, f"{img_path.name} is not a valid JPEG"
+
+        for img_path in image_files:
+            try:
+                with Image.open(img_path) as image:
+                    actual_format = image.format
+                    image.verify()
+                # verify() checks headers; load() decodes the pixel data.
+                with Image.open(img_path) as image:
+                    image.load()
+            except Exception as exc:
+                raise AssertionError(f"{img_path.name} is not a decodable image") from exc
+
+            assert actual_format in SUPPORTED_MEDIA_FORMATS, (
+                f"{img_path.name} has unsupported media format: {actual_format}"
+            )
 
     def test_preset_images_match_presets(self):
         """Verify that preset IDs have corresponding images (for key presets)."""

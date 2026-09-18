@@ -227,7 +227,7 @@ class HealthMonitor:
             if "gpu_memory_used" in metrics_agent_data:
                 gpu_memory_used = metrics_agent_data["gpu_memory_used"]
 
-        # Extract queue depth - count pending + running items
+        # Keep actual running/pending counts separate from ComfyUI's aggregate.
         queue_running_raw = queue_status.get("queue_running", [])
         queue_pending_raw = queue_status.get("queue_pending", [])
         queue_running = (
@@ -240,7 +240,19 @@ class HealthMonitor:
             if isinstance(queue_pending_raw, list)
             else int(queue_pending_raw or 0)
         )
-        queue_depth = queue_running + queue_pending
+
+        # Prefer ComfyUI's queue_remaining when available; zero is meaningful.
+        exec_info = queue_status.get("exec_info", {})
+        queue_remaining = (
+            exec_info.get("queue_remaining")
+            if isinstance(exec_info, dict)
+            else None
+        )
+        queue_depth = (
+            int(queue_remaining)
+            if queue_remaining is not None
+            else queue_running + queue_pending
+        )
 
         return BackendStatus(
             backend_id=backend_id,

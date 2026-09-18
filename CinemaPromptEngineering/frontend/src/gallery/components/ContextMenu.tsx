@@ -84,7 +84,7 @@ export function ContextMenu({
     if (adjustedX !== position.left || adjustedY !== position.top) {
       setPosition({ left: adjustedX, top: adjustedY });
     }
-  }, [x, y]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [x, y, position.left, position.top]);
 
   // Close on outside click
   const handleOutsideClick = useCallback(

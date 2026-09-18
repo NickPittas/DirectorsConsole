@@ -8,6 +8,17 @@ from cinema_rules.schemas.live_action import (
 )
 from cinema_rules.schemas.animation import AnimationConfig
 from cinema_rules.presets import LIVE_ACTION_PRESETS
+from cinema_rules.target_models import normalize_target_model
+
+
+NEW_VIDEO_TARGET_IDS = {
+    "ltx_2.3",
+    "ltx_2.5",
+    "minimax_h3",
+    "minimax_h3_max",
+    "seedance_2.0",
+    "seedance_2.5",
+}
 
 
 class PromptGenerator:
@@ -234,6 +245,11 @@ class PromptGenerator:
     def get_negative_prompt(self) -> str | None:
         """Get the negative prompt for the target model, if applicable."""
         
+        # These new video guides do not verify a negative-prompt field. Keep
+        # the response contract but leave the field empty for those targets.
+        if normalize_target_model(self.target_model) in NEW_VIDEO_TARGET_IDS:
+            return None
+
         # Models that don't support/need negative prompts
         no_negative = {"flux", "flux2", "wan", "wan2", "wan2.2"}
         if self.target_model in no_negative:

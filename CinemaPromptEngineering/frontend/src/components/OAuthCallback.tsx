@@ -141,6 +141,7 @@ export default function OAuthCallback() {
               refresh_token: tokenResponse.refresh_token,
               token_type: tokenResponse.token_type,
               expires_in: tokenResponse.expires_in,
+              expires_at: tokenResponse.expires_at,
               scope: tokenResponse.scope,
             }, window.location.origin);
 

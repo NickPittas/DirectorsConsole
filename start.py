@@ -233,6 +233,7 @@ class EnvironmentManager:
                     "httpx",
                     "loguru",
                     "PIL",
+                    "cv2",
                 ],
                 prefix_color=Colors.CYAN,
             )

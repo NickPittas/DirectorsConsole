@@ -52,7 +52,6 @@ async function encodeRGBAtoPNGDataURL(
     // Collect compressed chunks
     const chunks: Uint8Array[] = [];
     let totalLen = 0;
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;

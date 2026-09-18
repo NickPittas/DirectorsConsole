@@ -75,6 +75,82 @@ export function FileBrowserDialog({
   }, [state.currentPath]);
 
   // -------------------------------------------------------------------------
+  // Handlers
+  // -------------------------------------------------------------------------
+
+  const handleTreeSelect = useCallback(
+    async (path: string) => {
+      await navigateTo(path);
+    },
+    [navigateTo]
+  );
+
+  const handleItemSelect = useCallback(
+    (item: FolderItem) => {
+      selectItem(item);
+
+      // For save mode, update filename when selecting a project/file
+      if (mode === 'save' && (item.type === 'project' || item.type === 'file')) {
+        // Extract project name from file (remove _project.json / .json suffix)
+        const name = item.name
+          .replace(/_project\.json$/i, '')
+          .replace(/\.json$/i, '');
+        setSaveFileName(name);
+      }
+    },
+    [selectItem, mode]
+  );
+
+  const handleItemOpen = useCallback(
+    (item: FolderItem) => {
+      if (item.type === 'folder' || item.type === 'drive') {
+        navigateTo(item.path);
+      } else if ((item.type === 'project' || item.type === 'file') && mode === 'open') {
+        onOpenProject(item.path);
+      }
+    },
+    [navigateTo, onOpenProject, mode]
+  );
+
+  const handlePrimaryAction = useCallback(() => {
+    if (mode === 'select-folder') {
+      // Select the currently selected folder item, or the current path
+      const folderPath = (state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
+        ? state.selectedItem.path
+        : state.currentPath;
+      if (!folderPath) {
+        setError('Please select a folder');
+        return;
+      }
+      if (onSelectFolder) {
+        onSelectFolder(folderPath);
+      }
+      onClose();
+    } else if (mode === 'open') {
+      if (state.selectedItem?.type === 'project' || state.selectedItem?.type === 'file') {
+        onOpenProject(state.selectedItem.path);
+      } else if (state.selectedItem?.type === 'folder') {
+        // If folder selected in open mode, navigate into it
+        navigateTo(state.selectedItem.path);
+      } else {
+        setError('Please select a project file (.json) to open');
+      }
+    } else if (mode === 'save') {
+      if (!saveFileName.trim()) {
+        setError('Please enter a project name');
+        return;
+      }
+      if (!state.currentPath) {
+        setError('Please select a folder to save in');
+        return;
+      }
+      if (onSaveProject) {
+        onSaveProject(state.currentPath, saveFileName.trim());
+      }
+    }
+  }, [mode, state.selectedItem, state.currentPath, onSelectFolder, onClose, onOpenProject, navigateTo, saveFileName, onSaveProject]);
+
+  // -------------------------------------------------------------------------
   // Keyboard shortcuts
   // -------------------------------------------------------------------------
   useEffect(() => {
@@ -113,83 +189,7 @@ export function FileBrowserDialog({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, mode, state.selectedItem, saveFileName, onClose, goToParent]);
-
-  // -------------------------------------------------------------------------
-  // Handlers
-  // -------------------------------------------------------------------------
-
-  const handleTreeSelect = useCallback(
-    async (path: string) => {
-      await navigateTo(path);
-    },
-    [navigateTo]
-  );
-
-  const handleItemSelect = useCallback(
-    (item: FolderItem) => {
-      selectItem(item);
-
-      // For save mode, update filename when selecting a project/file
-      if (mode === 'save' && (item.type === 'project' || item.type === 'file')) {
-        // Extract project name from file (remove _project.json / .json suffix)
-        const name = item.name
-          .replace(/_project\.json$/i, '')
-          .replace(/\.json$/i, '');
-        setSaveFileName(name);
-      }
-    },
-    [selectItem, mode]
-  );
-
-  const handleItemOpen = useCallback(
-    (item: FolderItem) => {
-      if (item.type === 'folder' || item.type === 'drive') {
-        navigateTo(item.path);
-      } else if ((item.type === 'project' || item.type === 'file') && mode === 'open') {
-        onOpenProject(item.path);
-      }
-    },
-    [navigateTo, onOpenProject, mode]
-  );
-
-  const handlePrimaryAction = () => {
-    if (mode === 'select-folder') {
-      // Select the currently selected folder item, or the current path
-      const folderPath = (state.selectedItem?.type === 'folder' || state.selectedItem?.type === 'drive')
-        ? state.selectedItem.path
-        : state.currentPath;
-      if (!folderPath) {
-        setError('Please select a folder');
-        return;
-      }
-      if (onSelectFolder) {
-        onSelectFolder(folderPath);
-      }
-      onClose();
-    } else if (mode === 'open') {
-      if (state.selectedItem?.type === 'project' || state.selectedItem?.type === 'file') {
-        onOpenProject(state.selectedItem.path);
-      } else if (state.selectedItem?.type === 'folder') {
-        // If folder selected in open mode, navigate into it
-        navigateTo(state.selectedItem.path);
-      } else {
-        setError('Please select a project file (.json) to open');
-      }
-    } else if (mode === 'save') {
-      if (!saveFileName.trim()) {
-        setError('Please enter a project name');
-        return;
-      }
-      if (!state.currentPath) {
-        setError('Please select a folder to save in');
-        return;
-      }
-      if (onSaveProject) {
-        onSaveProject(state.currentPath, saveFileName.trim());
-      }
-    }
-  };
+  }, [isOpen, mode, state.currentPath, state.selectedItem, saveFileName, onClose, goToParent, handlePrimaryAction]);
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;

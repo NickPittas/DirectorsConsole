@@ -1,0 +1,5 @@
+# Complete runtime installation plus the tools used by the Python test suite
+-r requirements.txt
+
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

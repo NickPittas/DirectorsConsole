@@ -24,7 +24,7 @@ export interface ProgressData {
 }
 
 export interface ExecutionStatus {
-  type: 'executing' | 'executed' | 'execution_start' | 'execution_cached' | 'progress' | 'status' | 'kaytool.resources';
+  type: 'executing' | 'executed' | 'execution_start' | 'execution_cached' | 'execution_error' | 'execution_interrupted' | 'progress' | 'status' | 'kaytool.resources';
   data: any;
 }
 
@@ -68,6 +68,15 @@ export interface WorkflowProgressInfo {
   nodeTypes: Record<string, string>;
 }
 
+type CancellationOutcome = 'cancelled' | 'completed' | 'unconfirmed';
+
+type CancellationEvent = {
+  completed?: boolean;
+  outputs?: any;
+  interrupted?: boolean;
+  error?: string;
+};
+
 interface PendingPrompt {
   promptId: string;
   panelId: number;
@@ -99,7 +108,7 @@ export class ComfyUIWebSocket {
   private baseUrl: string;
   private clientId: string;
   private pendingPrompts: Map<string, PendingPrompt> = new Map();
-  private reconnectTimeout: number | null = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private statusCallback: StatusCallback | null = null;
   private kayToolMetricsCallback: KayToolMetricsCallback | null = null;
   private isConnected: boolean = false;
@@ -111,6 +120,21 @@ export class ComfyUIWebSocket {
   private readonly minReconnectDelay: number = 1000; // 1 second
   private readonly maxReconnectDelay: number = 30000; // 30 seconds
   private isIntentionallyClosed: boolean = false;
+  private connectPromise: Promise<void> | null = null;
+  private connectReject: ((reason?: unknown) => void) | null = null;
+  private connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private socketGeneration = 0;
+  private reconciliationTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private reconciliationInFlight: Set<string> = new Set();
+  private reconciliationState: Map<string, { missingChecks: number; failedRequests: number }> = new Map();
+  private cancellationInFlight: Set<string> = new Set();
+  private cancellationOperations: Map<string, Promise<boolean>> = new Map();
+  private cancellationEvents: Map<string, CancellationEvent> = new Map();
+  private awaitingHistoryCompletion: Set<string> = new Set();
+  private readonly reconciliationIntervalMs = 1000;
+  private readonly requestTimeoutMs = 2500;
+  private readonly maxMissingChecks = 3;
+  private readonly maxFailedRequests = 3;
   
   constructor(baseUrl: string, clientId: string = 'storyboard-ui') {
     // Convert http(s) to ws(s)
@@ -120,77 +144,130 @@ export class ComfyUIWebSocket {
   }
   
   connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        resolve();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    // Clear any pending reconnect when manually connecting.
+    this.cancelReconnect();
+    this.isIntentionallyClosed = false;
+    const socketGeneration = ++this.socketGeneration;
+    let socket: WebSocket;
+    let settled = false;
+
+    const promise = new Promise<void>((resolve, reject) => {
+      const fail = (reason: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (this.connectTimeout !== null) clearTimeout(this.connectTimeout);
+        this.connectTimeout = null;
+        this.connectPromise = null;
+        this.connectReject = null;
+        reject(reason);
+      };
+      this.connectReject = fail;
+
+      try {
+        socket = new WebSocket(this.url);
+        this.ws = socket;
+      } catch (error) {
+        fail(error);
         return;
       }
-      
-      // Clear any pending reconnect when manually connecting
-      this.cancelReconnect();
-      this.isIntentionallyClosed = false;
-      
-      try {
-        this.ws = new WebSocket(this.url);
-        
-        this.ws.onopen = () => {
-          console.log('[ComfyUI WS] Connected');
-          this.isConnected = true;
-          this.reconnectAttempts = 0; // Reset attempts on successful connection
-          resolve();
-        };
-        
-        this.ws.onclose = (event) => {
-          console.log(`[ComfyUI WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
-          this.isConnected = false;
-          
-          // Only auto-reconnect if not intentionally closed
-          if (!this.isIntentionallyClosed) {
-            this.scheduleReconnect();
-          }
-        };
-        
-        this.ws.onerror = (error) => {
-          console.error('[ComfyUI WS] Error:', error);
-          this.isConnected = false;
-          reject(error);
-        };
-        
-        this.ws.onmessage = (event) => {
-          // ComfyUI sends both JSON text messages and binary Blob data (preview images)
-          if (event.data instanceof Blob) {
-            // Binary data (preview image) - ignore for now
-            // Could be used for real-time preview in the future
-            return;
-          }
-          
-          try {
-            const message = JSON.parse(event.data);
-            this.handleMessage(message);
-          } catch (e) {
-            console.error('[ComfyUI WS] Failed to parse message:', e);
-          }
-        };
-      } catch (error) {
-        reject(error);
-      }
+
+      const isCurrentSocket = () => this.ws === socket && this.socketGeneration === socketGeneration;
+      this.connectTimeout = setTimeout(() => {
+        if (!isCurrentSocket()) return;
+        fail(new Error('ComfyUI WebSocket connection timed out; using HTTP recovery'));
+        socket.close();
+      }, 10000);
+
+      socket.onopen = () => {
+        if (!isCurrentSocket() || settled) return;
+        settled = true;
+        if (this.connectTimeout !== null) clearTimeout(this.connectTimeout);
+        this.connectTimeout = null;
+        this.connectPromise = null;
+        this.connectReject = null;
+        console.log('[ComfyUI WS] Connected');
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
+        this.reconcileAllPrompts();
+        resolve();
+      };
+
+      socket.onclose = (event) => {
+        if (!isCurrentSocket()) return;
+        console.log(`[ComfyUI WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
+        this.isConnected = false;
+        this.ws = null;
+        if (!settled) {
+          fail(new Error(`ComfyUI WebSocket closed before connecting (code: ${event.code})`));
+        }
+
+        // Keep HTTP reconciliation alive while an unexpected socket failure is recovering.
+        if (!this.isIntentionallyClosed) {
+          this.reconcileAllPrompts();
+          this.scheduleReconnect();
+        }
+      };
+
+      socket.onerror = (error) => {
+        if (!isCurrentSocket()) return;
+        console.error('[ComfyUI WS] Error:', error);
+        this.isConnected = false;
+        if (!settled) fail(error);
+      };
+
+      socket.onmessage = (event) => {
+        if (!isCurrentSocket()) return;
+        // ComfyUI sends both JSON text messages and binary Blob data (preview images).
+        if (typeof Blob !== 'undefined' && event.data instanceof Blob) return;
+
+        try {
+          const message = JSON.parse(event.data);
+          this.handleMessage(message);
+        } catch (error) {
+          console.error('[ComfyUI WS] Failed to parse message:', error);
+        }
+      };
     });
+
+    if (!settled) this.connectPromise = promise;
+    return promise;
   }
   
   disconnect() {
     this.isIntentionallyClosed = true;
     this.cancelReconnect();
-    
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    this.socketGeneration++;
+
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      socket.onopen = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      socket.onmessage = null;
+      socket.close();
     }
+    if (this.connectReject) {
+      const reject = this.connectReject;
+      this.connectReject = null;
+      this.connectPromise = null;
+      reject(new Error('ComfyUI WebSocket disconnected'));
+    }
+    this.clearAllReconciliationTimers();
+    for (const promptId of this.pendingPrompts.keys()) this.clearPromptTracking(promptId);
     this.isConnected = false;
     this.reconnectAttempts = 0;
   }
   
   private cancelReconnect() {
-    if (this.reconnectTimeout) {
+    if (this.reconnectTimeout !== null) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
@@ -214,23 +291,24 @@ export class ComfyUIWebSocket {
   }
   
   private scheduleReconnect() {
-    // Don't reconnect if already reconnecting or max attempts reached
-    if (this.reconnectTimeout) return;
+    // Don't reconnect if already reconnecting or max attempts reached.
+    if (this.reconnectTimeout !== null || this.connectPromise) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn(`[ComfyUI WS] Max reconnect attempts (${this.maxReconnectAttempts}) reached. Giving up.`);
+      console.warn(`[ComfyUI WS] Max reconnect attempts (${this.maxReconnectAttempts}) reached.`);
+      // HTTP reconciliation remains authoritative for reachable long renders;
+      // only prompts whose recovery requests are already failing are terminal.
+      this.failUnreachablePrompts();
       return;
     }
-    
+
     const delay = this.calculateReconnectDelay();
     this.reconnectAttempts++;
-    
     console.log(`[ComfyUI WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-    
-    this.reconnectTimeout = window.setTimeout(() => {
+
+    this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
       this.connect().catch((error) => {
         console.error('[ComfyUI WS] Reconnection failed:', error);
-        // scheduleReconnect will be called by onclose handler
       });
     }, delay);
   }
@@ -246,8 +324,11 @@ export class ComfyUIWebSocket {
   private handleMessage(message: any) {
     const { type, data } = message;
     
-    // Notify status callback (but not for high-frequency monitoring events)
-    if (this.statusCallback && !this.isMonitoringEvent(type)) {
+    // Notify status callback (but not for high-frequency monitoring events).
+    // Cancellation owns this prompt until its HTTP result is known.
+    const promptId = this.getPromptId(data);
+    if (this.statusCallback && !this.isMonitoringEvent(type) &&
+        !(promptId && this.cancellationInFlight.has(promptId))) {
       this.statusCallback({ type, data });
     }
     
@@ -266,6 +347,10 @@ export class ComfyUIWebSocket {
         
       case 'execution_error':
         this.handleError(data);
+        break;
+
+      case 'execution_interrupted':
+        this.handleInterrupted(data);
         break;
         
       case 'execution_start':
@@ -309,9 +394,10 @@ export class ComfyUIWebSocket {
   
   private handleProgress(data: any) {
     const { value, max, prompt_id, node } = data;
-    
+
+    if (this.cancellationInFlight.has(prompt_id)) return;
     console.log('[ComfyUI WS] Progress:', prompt_id, value, '/', max, 'node:', node);
-    
+
     const pending = this.pendingPrompts.get(prompt_id);
     if (!pending) {
       console.warn('[ComfyUI WS] No pending prompt found for:', prompt_id);
@@ -373,21 +459,22 @@ export class ComfyUIWebSocket {
   
   private handleExecuting(data: any) {
     const { prompt_id, node } = data;
-    
+
+    if (this.cancellationInFlight.has(prompt_id)) {
+      if (node === null) this.bufferCancellationEvent(prompt_id, { completed: true });
+      return;
+    }
     console.log('[ComfyUI WS] Executing:', prompt_id, 'node:', node);
-    
-    // When node is null, execution is complete - this is the ONLY place we should trigger completion
+
+    // When node is null, execution is complete. Cancellation and interruption are
+    // handled first so a late null event cannot turn a cancelled render into success.
     if (node === null) {
       console.log('[ComfyUI WS] Execution complete for:', prompt_id);
-      // Trigger completion callback
-      const pending = this.pendingPrompts.get(prompt_id);
-      if (pending) {
-        console.log('[ComfyUI WS] Calling onCompleted callback');
-        pending.onCompleted(prompt_id, null);
-        this.pendingPrompts.delete(prompt_id);
-      } else {
-        console.warn('[ComfyUI WS] No pending prompt found for completion:', prompt_id);
-      }
+      // Confirm history before reporting success. A late null can follow an
+      // interruption/error event that was lost on the socket.
+      if (!this.pendingPrompts.has(prompt_id)) return;
+      this.awaitingHistoryCompletion.add(prompt_id);
+      this.reconcilePromptImmediately(prompt_id);
     } else {
       // Track that this node started executing
       const pending = this.pendingPrompts.get(prompt_id);
@@ -422,22 +509,279 @@ export class ComfyUIWebSocket {
   
   private handleExecuted(data: any) {
     const { prompt_id, output, node } = data;
-    
-    // 'executed' fires for EACH node that produces output (e.g., SaveImage, Image Comparer)
-    // We should NOT trigger completion here - wait for 'executing' with node=null
+
+    // 'executed' fires for EACH node that produces output. Completion remains
+    // owned by executing(null) or HTTP history reconciliation.
+    if (this.cancellationInFlight.has(prompt_id)) return;
     console.log('[ComfyUI WS] Executed node:', node, 'for prompt:', prompt_id, 'output:', output);
-    
-    // Just log, don't trigger completion - that's handled by handleExecuting with node=null
   }
   
   private handleError(data: any) {
     const { prompt_id, exception_message, exception_type } = data;
-    
-    const pending = this.pendingPrompts.get(prompt_id);
-    if (pending) {
-      pending.onError(prompt_id, `${exception_type}: ${exception_message}`);
-      this.pendingPrompts.delete(prompt_id);
+    const error = `${exception_type}: ${exception_message}`;
+
+    if (this.cancellationInFlight.has(prompt_id)) {
+      this.bufferCancellationEvent(prompt_id, { error });
+      return;
     }
+    this.finishError(prompt_id, error);
+  }
+
+  private handleInterrupted(data: any) {
+    const promptId = this.getPromptId(data);
+    if (!promptId) return;
+    if (this.cancellationInFlight.has(promptId)) {
+      this.bufferCancellationEvent(promptId, { interrupted: true });
+      return;
+    }
+    this.finishError(promptId, 'Generation cancelled');
+  }
+
+  private getPromptId(data: any): string | undefined {
+    const promptId = data?.prompt_id ?? data?.promptId;
+    return typeof promptId === 'string' ? promptId : undefined;
+  }
+
+  private bufferCancellationEvent(
+    promptId: string,
+    event: CancellationEvent
+  ) {
+    this.cancellationEvents.set(promptId, {
+      ...this.cancellationEvents.get(promptId),
+      ...event,
+    });
+  }
+
+  private finishCompleted(promptId: string, outputs: any) {
+    const pending = this.pendingPrompts.get(promptId);
+    if (!pending) return;
+    this.clearPromptTracking(promptId);
+    pending.onCompleted(promptId, outputs);
+  }
+
+  private finishError(promptId: string, error: string) {
+    const pending = this.pendingPrompts.get(promptId);
+    if (!pending) return;
+    this.clearPromptTracking(promptId);
+    pending.onError(promptId, error);
+  }
+
+  private clearPromptTracking(promptId: string) {
+    this.pendingPrompts.delete(promptId);
+    this.cancellationInFlight.delete(promptId);
+    this.cancellationEvents.delete(promptId);
+    this.awaitingHistoryCompletion.delete(promptId);
+    this.reconciliationState.delete(promptId);
+    const timer = this.reconciliationTimers.get(promptId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.reconciliationTimers.delete(promptId);
+    }
+  }
+
+  private clearAllReconciliationTimers() {
+    for (const timer of this.reconciliationTimers.values()) clearTimeout(timer);
+    this.reconciliationTimers.clear();
+  }
+
+  private failUnreachablePrompts() {
+    for (const promptId of Array.from(this.pendingPrompts.keys())) {
+      const state = this.reconciliationState.get(promptId);
+      if (state && state.failedRequests >= this.maxFailedRequests) {
+        this.finishError(promptId, `Unable to reconnect to ComfyUI while recovering prompt ${promptId}; check its queue/history.`);
+      }
+    }
+  }
+
+  private reconcileAllPrompts() {
+    if (this.isIntentionallyClosed) return;
+    for (const promptId of this.pendingPrompts.keys()) {
+      const timer = this.reconciliationTimers.get(promptId);
+      if (timer !== undefined) clearTimeout(timer);
+      this.reconciliationTimers.delete(promptId);
+      this.reconciliationState.set(promptId, { missingChecks: 0, failedRequests: 0 });
+      this.schedulePromptReconciliation(promptId, 0);
+    }
+  }
+
+  private schedulePromptReconciliation(promptId: string, delay = this.reconciliationIntervalMs) {
+    if (this.isIntentionallyClosed || !this.pendingPrompts.has(promptId) ||
+        this.cancellationInFlight.has(promptId) || this.reconciliationTimers.has(promptId)) return;
+
+    this.reconciliationTimers.set(promptId, setTimeout(() => {
+      this.reconciliationTimers.delete(promptId);
+      void this.reconcilePrompt(promptId);
+    }, delay));
+  }
+
+  private reconcilePromptImmediately(promptId: string) {
+    const timer = this.reconciliationTimers.get(promptId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.reconciliationTimers.delete(promptId);
+    void this.reconcilePrompt(promptId);
+  }
+
+  private async reconcilePrompt(promptId: string): Promise<void> {
+    if (!this.pendingPrompts.has(promptId) || this.cancellationInFlight.has(promptId) ||
+        this.isIntentionallyClosed) return;
+    if (this.reconciliationInFlight.has(promptId)) {
+      this.schedulePromptReconciliation(promptId);
+      return;
+    }
+
+    this.reconciliationInFlight.add(promptId);
+    try {
+      const [history, queue] = await Promise.all([
+        this.readHistory(promptId),
+        this.readQueue(),
+      ]);
+      if (this.isIntentionallyClosed || !this.pendingPrompts.has(promptId) || this.cancellationInFlight.has(promptId)) return;
+
+      const terminal = history.entry ? this.getHistoryTerminal(history.entry) : null;
+      if (terminal?.kind === 'completed') {
+        this.finishCompleted(promptId, history.entry.outputs ?? null);
+        return;
+      }
+      if (terminal?.kind === 'interrupted') {
+        this.finishError(promptId, 'Generation cancelled');
+        return;
+      }
+      if (terminal?.kind === 'error') {
+        this.finishError(promptId, terminal.error);
+        return;
+      }
+
+      const state = this.reconciliationState.get(promptId) || { missingChecks: 0, failedRequests: 0 };
+      this.reconciliationState.set(promptId, state);
+      if (!history.reachable && !queue.reachable) {
+        state.failedRequests++;
+        if (state.failedRequests >= this.maxFailedRequests) {
+          this.finishError(promptId, `Unable to reach ComfyUI while recovering prompt ${promptId} after ${state.failedRequests} attempts.`);
+        } else {
+          this.schedulePromptReconciliation(promptId);
+        }
+        return;
+      }
+
+      const queueStatus = queue.reachable ? this.getQueueStatus(queue.data, promptId) : 'absent';
+      if (!history.reachable || !queue.reachable) {
+        // A nonterminal history record is useful evidence that a render still
+        // exists, even if the other endpoint is temporarily unavailable.
+        if (history.entry || (queue.reachable && queueStatus !== 'absent')) {
+          state.failedRequests = 0;
+          this.schedulePromptReconciliation(promptId);
+        } else {
+          state.failedRequests++;
+          if (state.failedRequests >= this.maxFailedRequests) {
+            this.finishError(promptId, `Unable to reach ComfyUI while recovering prompt ${promptId} after ${state.failedRequests} attempts.`);
+          } else {
+            this.schedulePromptReconciliation(promptId);
+          }
+        }
+        return;
+      }
+
+      state.failedRequests = 0;
+      if (!history.entry && queueStatus === 'absent') {
+        state.missingChecks++;
+        if (state.missingChecks >= this.maxMissingChecks) {
+          this.finishError(promptId, `Prompt ${promptId} is missing from ComfyUI history and queue after ${state.missingChecks} checks; verify that it was submitted to this node.`);
+        } else {
+          this.schedulePromptReconciliation(promptId);
+        }
+        return;
+      }
+
+      state.missingChecks = 0;
+      // A successful queue check is enough while the socket is live. When it is
+      // down, retain polling so a lost socket cannot leave a prompt hanging.
+      if (queue.reachable && queueStatus !== 'absent' && this.isConnected &&
+          !this.awaitingHistoryCompletion.has(promptId)) {
+        return;
+      }
+      this.schedulePromptReconciliation(promptId);
+    } finally {
+      this.reconciliationInFlight.delete(promptId);
+    }
+  }
+
+  private async readHistory(promptId: string): Promise<{ reachable: boolean; entry: any | null }> {
+    try {
+      const response = await this.fetchBounded(`${this.baseUrl}/history/${encodeURIComponent(promptId)}`);
+      if (response.status === 404) return { reachable: true, entry: null };
+      if (!response.ok) return { reachable: false, entry: null };
+      const data = await response.json();
+      const entry = data?.[promptId] ?? (data?.status ? data : null);
+      return { reachable: true, entry: entry || null };
+    } catch (error) {
+      console.warn(`[ComfyUI WS] History reconciliation failed for ${promptId}:`, error);
+      return { reachable: false, entry: null };
+    }
+  }
+
+  private async readQueue(): Promise<{ reachable: boolean; data: any | null }> {
+    try {
+      const response = await this.fetchBounded(`${this.baseUrl}/queue`);
+      if (!response.ok) return { reachable: false, data: null };
+      return { reachable: true, data: await response.json() };
+    } catch (error) {
+      console.warn('[ComfyUI WS] Queue reconciliation failed:', error);
+      return { reachable: false, data: null };
+    }
+  }
+
+  private getHistoryTerminal(
+    entry: any
+  ): { kind: 'completed' } | { kind: 'interrupted' } | { kind: 'error'; error: string } | null {
+    const status = entry?.status;
+    if (!status) return null;
+    const statusString = String(status.status_str || '').toLowerCase();
+    if (Array.isArray(status.messages) && status.messages.some((message: any) =>
+      Array.isArray(message) && message[0] === 'execution_interrupted')) {
+      // Some ComfyUI versions leave completed=true on an interrupted record.
+      return { kind: 'interrupted' };
+    }
+    // Error status must win over a stale completed flag.
+    if (statusString === 'error' || statusString === 'failed' || statusString === 'failure' ||
+        statusString === 'exception' || statusString === 'execution_error') {
+      return { kind: 'error', error: this.historyError(status) };
+    }
+    if (status.completed === true || statusString === 'success' || statusString === 'completed') {
+      return { kind: 'completed' };
+    }
+    return null;
+  }
+
+  private historyError(status: any): string {
+    const messages = Array.isArray(status?.messages) ? status.messages : [];
+    for (const message of messages) {
+      const details = Array.isArray(message) ? message[1] : message;
+      if (details?.exception_message) {
+        return `${details.exception_type ? `${details.exception_type}: ` : ''}${details.exception_message}`;
+      }
+      if (typeof details === 'string' && details) return details;
+    }
+    return `ComfyUI reported an execution error (${status?.status_str || 'unknown'}).`;
+  }
+
+  private getQueueStatus(queue: any, promptId: string): 'running' | 'pending' | 'absent' {
+    if (this.queueIncludes(queue?.queue_running, promptId)) return 'running';
+    if (this.queueIncludes(queue?.queue_pending, promptId)) return 'pending';
+    return 'absent';
+  }
+
+  private queueIncludes(entries: any, promptId: string): boolean {
+    if (!Array.isArray(entries)) return false;
+    return entries.some((entry: any) => {
+      if (typeof entry === 'string') return entry === promptId;
+      if (Array.isArray(entry)) return entry[1] === promptId;
+      return entry?.prompt_id === promptId || entry?.promptId === promptId || entry?.id === promptId;
+    });
+  }
+
+  private async fetchBounded(url: string, init: RequestInit = {}): Promise<Response> {
+    // Keep the timeout active while callers consume the response body, too.
+    return fetch(url, { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) });
   }
   
   /**
@@ -452,8 +796,9 @@ export class ComfyUIWebSocket {
     workflowInfo?: WorkflowProgressInfo
   ) {
     console.log('[ComfyUI WS] Tracking prompt:', promptId, 'for panel:', panelId, 'clientId:', this.clientId);
+    if (this.pendingPrompts.has(promptId)) this.clearPromptTracking(promptId);
     if (workflowInfo) {
-      console.log('[ComfyUI WS] Workflow info:', workflowInfo.totalNodes, 'nodes,', 
+      console.log('[ComfyUI WS] Workflow info:', workflowInfo.totalNodes, 'nodes,',
         workflowInfo.samplerNodeIds.length, 'sampler phases:', workflowInfo.samplerNodeIds);
     }
     this.pendingPrompts.set(promptId, {
@@ -472,6 +817,9 @@ export class ComfyUIWebSocket {
         currentPhaseMax: 0,
       },
     });
+    this.reconciliationState.set(promptId, { missingChecks: 0, failedRequests: 0 });
+    // Tracking is deliberately independent of socket connection state.
+    this.schedulePromptReconciliation(promptId, 0);
     console.log('[ComfyUI WS] Pending prompts after add:', Array.from(this.pendingPrompts.keys()));
   }
   
@@ -479,28 +827,202 @@ export class ComfyUIWebSocket {
    * Stop tracking a prompt
    */
   untrackPrompt(promptId: string) {
-    this.pendingPrompts.delete(promptId);
+    this.clearPromptTracking(promptId);
   }
   
-  /**
-   * Cancel/interrupt the current generation
-   * Sends POST to /interrupt endpoint
-   */
-  async cancelGeneration(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.baseUrl}/interrupt`, {
-        method: 'POST',
-      });
-      if (response.ok) {
-        console.log('[ComfyUI WS] Generation interrupted');
-        return true;
+  private async reconcileCancellation(
+    promptId: string,
+    allowQueuedRemoval: boolean,
+    interruptIfRunning = false
+  ): Promise<CancellationOutcome> {
+    let sawRemovedQueueEntry = false;
+    let sawActiveQueueEntry = false;
+    for (let attempt = 0; attempt < this.maxMissingChecks; attempt++) {
+      const [history, queue] = await Promise.all([
+        this.readHistory(promptId),
+        this.readQueue(),
+      ]);
+      const terminal = history.entry ? this.getHistoryTerminal(history.entry) : null;
+      if (terminal?.kind === 'completed') {
+        this.bufferCancellationEvent(promptId, {
+          completed: true,
+          outputs: history.entry.outputs ?? null,
+        });
+        return 'completed';
       }
-      console.error('[ComfyUI WS] Failed to interrupt:', response.statusText);
-      return false;
-    } catch (error) {
-      console.error('[ComfyUI WS] Error interrupting generation:', error);
-      return false;
+      if (terminal?.kind === 'interrupted') {
+        this.bufferCancellationEvent(promptId, { interrupted: true });
+        return 'cancelled';
+      }
+      if (terminal?.kind === 'error') {
+        this.bufferCancellationEvent(promptId, { error: terminal.error });
+        return 'unconfirmed';
+      }
+      if (!history.reachable || !queue.reachable) continue;
+
+      const queueStatus = this.getQueueStatus(queue.data, promptId);
+      if (queueStatus === 'running' && interruptIfRunning) {
+        try {
+          const interrupt = await this.fetchBounded(`${this.baseUrl}/interrupt`, { method: 'POST' });
+          if (!interrupt.ok) return 'unconfirmed';
+          return this.reconcileCancellation(promptId, false);
+        } catch (error) {
+          console.error('[ComfyUI WS] Error interrupting promoted prompt:', error);
+          return 'unconfirmed';
+        }
+      }
+      if (queueStatus === 'absent' && !history.entry && !sawActiveQueueEntry) {
+        sawRemovedQueueEntry = true;
+      }
+      if (queueStatus !== 'absent') {
+        sawActiveQueueEntry = true;
+        sawRemovedQueueEntry = false;
+      }
     }
+
+    // An empty queue proves removal only for a prompt that was known to be
+    // queued. It cannot prove that a running prompt was interrupted.
+    const hint = this.cancellationEvents.get(promptId);
+    if (allowQueuedRemoval && sawRemovedQueueEntry && !sawActiveQueueEntry &&
+        !hint?.completed && !hint?.interrupted) {
+      return 'cancelled';
+    }
+    return 'unconfirmed';
+  }
+
+  private async performCancellation(promptId: string): Promise<CancellationOutcome> {
+    // First establish that the prompt exists. Without this check a successful
+    // /queue delete on an already-finished prompt would be reported as stopped.
+    const before = await this.readQueue();
+    if (!before.reachable) return 'unconfirmed';
+    const stateBeforeDelete = this.getQueueStatus(before.data, promptId);
+    if (stateBeforeDelete === 'absent') return 'unconfirmed';
+
+    let response: Response;
+    try {
+      response = await this.fetchBounded(`${this.baseUrl}/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delete: [promptId] }),
+      });
+    } catch (error) {
+      console.error('[ComfyUI WS] Error removing prompt from queue:', error);
+      return 'unconfirmed';
+    }
+    if (!response.ok) {
+      console.error('[ComfyUI WS] Failed to remove prompt from queue:', response.statusText);
+      return 'unconfirmed';
+    }
+
+    const after = await this.readQueue();
+    if (!after.reachable) return 'unconfirmed';
+    const stateAfterDelete = this.getQueueStatus(after.data, promptId);
+    if (stateAfterDelete === 'pending') return 'unconfirmed';
+    if (stateAfterDelete === 'absent') {
+      // A prompt that was already running may have completed or been
+      // interrupted while /queue was in flight. Empty queue alone is not proof.
+      return this.reconcileCancellation(
+        promptId,
+        stateBeforeDelete === 'pending',
+        stateBeforeDelete === 'pending'
+      );
+    }
+
+    // /interrupt is a legacy node-wide endpoint. Only call it after this exact
+    // prompt was observed in queue_running. Legacy servers still have a race:
+    // a different prompt can start between this inspection and the interrupt.
+    const historyBeforeInterrupt = await this.readHistory(promptId);
+    const terminalBeforeInterrupt = historyBeforeInterrupt.entry
+      ? this.getHistoryTerminal(historyBeforeInterrupt.entry)
+      : null;
+    if (terminalBeforeInterrupt?.kind === 'completed') {
+      this.bufferCancellationEvent(promptId, {
+        completed: true,
+        outputs: historyBeforeInterrupt.entry.outputs ?? null,
+      });
+      return 'completed';
+    }
+    if (terminalBeforeInterrupt?.kind === 'interrupted') {
+      this.bufferCancellationEvent(promptId, { interrupted: true });
+      return 'cancelled';
+    }
+    if (terminalBeforeInterrupt?.kind === 'error') {
+      this.bufferCancellationEvent(promptId, { error: terminalBeforeInterrupt.error });
+      return 'unconfirmed';
+    }
+
+    try {
+      const interrupt = await this.fetchBounded(`${this.baseUrl}/interrupt`, { method: 'POST' });
+      if (!interrupt.ok) {
+        console.error('[ComfyUI WS] Failed to interrupt running prompt:', interrupt.statusText);
+        return 'unconfirmed';
+      }
+      // A 200 only acknowledges receipt. History must confirm interruption;
+      // execution events are hints used to avoid treating an empty queue as proof.
+      return this.reconcileCancellation(promptId, false);
+    } catch (error) {
+      console.error('[ComfyUI WS] Error interrupting running prompt:', error);
+      return 'unconfirmed';
+    }
+  }
+
+  private resumeAfterCancellationFailure(promptId: string) {
+    const pending = this.pendingPrompts.get(promptId);
+    const event = this.cancellationEvents.get(promptId);
+    this.cancellationEvents.delete(promptId);
+    if (!pending) return;
+
+    // These are only consumed after performCancellation verified the terminal
+    // history record. Buffered execution events by themselves are hints.
+    if (event?.completed && Object.prototype.hasOwnProperty.call(event, 'outputs')) {
+      this.finishCompleted(promptId, event.outputs);
+      return;
+    }
+    if (event?.error) {
+      this.finishError(promptId, event.error);
+      return;
+    }
+
+    this.reconciliationState.set(promptId, { missingChecks: 0, failedRequests: 0 });
+    this.schedulePromptReconciliation(promptId, 0);
+  }
+
+  /**
+   * Cancel one prompt. Queued prompts are removed from /queue; running prompts
+   * use ComfyUI's legacy node-wide /interrupt only after an exact queue match.
+   */
+  async cancelGeneration(promptId: string): Promise<boolean> {
+    const existing = this.cancellationOperations.get(promptId);
+    if (existing) return existing;
+
+    this.cancellationInFlight.add(promptId);
+    const operation = (async () => {
+      let outcome: CancellationOutcome = 'unconfirmed';
+      try {
+        outcome = await this.performCancellation(promptId);
+      } catch (error) {
+        console.error('[ComfyUI WS] Error cancelling generation:', error);
+      }
+
+      this.cancellationInFlight.delete(promptId);
+      if (outcome === 'cancelled') {
+        // Delete tracking before invoking the callback so late WS events cannot
+        // deliver a second terminal result.
+        this.finishError(promptId, 'Generation cancelled');
+      } else {
+        // Completion/error outcomes are resumed from verified history. Unknown
+        // outcomes retain tracking and continue normal reconciliation.
+        this.resumeAfterCancellationFailure(promptId);
+      }
+      return outcome === 'cancelled';
+    })();
+    this.cancellationOperations.set(promptId, operation);
+    operation.finally(() => {
+      if (this.cancellationOperations.get(promptId) === operation) {
+        this.cancellationOperations.delete(promptId);
+      }
+    });
+    return operation;
   }
   
   /**

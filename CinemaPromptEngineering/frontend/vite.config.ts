@@ -13,6 +13,9 @@ export default defineConfig({
     },
   },
   base: './', // Important for relative paths in both modes
+  define: {
+    'import.meta.env.VITE_BUILD_MODE': JSON.stringify(BUILD_MODE),
+  },
   build: {
     // Output to different directories based on build mode
     outDir: BUILD_MODE === 'standalone' 

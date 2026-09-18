@@ -1,17 +1,19 @@
 # LLM Provider Testing Guide
 
-This guide explains how to test the LLM provider connectivity for GitHub Copilot, Antigravity, and OpenAI Codex.
+This guide explains how to test LLM provider connectivity. For the user-facing Google AI (Gemini) API-key steps and Antigravity private OAuth app configuration, use the [authoritative README provider setup](../../README.md#ai-llm-provider-setup).
+
+Provider checks can make live requests. Use only credentials you are authorized to use on a private workstation; never commit `credentials.json`, API keys, OAuth tokens, or copied browser storage, and never paste them into logs, issues, or documentation. The maintenance validation reported below used mocks and did not make provider, credential, or ComfyUI calls.
 
 ## Prerequisites
 
 1. **Backend running**: The FastAPI backend must be running on `http://localhost:9800`
-2. **Authenticated in frontend**: You must have connected to the providers in the Settings panel
+2. **Provider configured locally**: Connect or enter credentials in the Settings panel; Google uses the API-key flow documented in the README, while Antigravity uses its backend OAuth app configuration.
 
 ## Test Methods
 
 ### Method 1: Using test_providers.py (Recommended)
 
-This comprehensive test checks model fetching and prompt enhancement.
+This comprehensive test checks model fetching and prompt enhancement. The export below is a legacy local-test convenience and copies sensitive browser data; prefer the Settings workflow where possible. Keep the file outside version control and delete it after testing.
 
 **Step 1: Export credentials from browser**
 
@@ -38,18 +40,18 @@ python test_providers.py --provider openai_codex
 
 ### Method 2: Using Environment Variables
 
-Set the token directly:
+For a one-off local test, set an already-authorized token directly in the shell. Replace the placeholders locally; do not save them in scripts or documentation:
 
 ```bash
 # Windows PowerShell
-$env:GITHUB_COPILOT_TOKEN = "eyJ..."
-$env:ANTIGRAVITY_TOKEN = "ya29..."
-$env:OPENAI_CODEX_TOKEN = "eyJ..."
+$env:GITHUB_COPILOT_TOKEN = "YOUR_LOCAL_TOKEN"
+$env:ANTIGRAVITY_TOKEN = "YOUR_LOCAL_TOKEN"
+$env:OPENAI_CODEX_TOKEN = "YOUR_LOCAL_TOKEN"
 
 # Linux/Mac
-export GITHUB_COPILOT_TOKEN="eyJ..."
-export ANTIGRAVITY_TOKEN="ya29..."
-export OPENAI_CODEX_TOKEN="eyJ..."
+export GITHUB_COPILOT_TOKEN="YOUR_LOCAL_TOKEN"
+export ANTIGRAVITY_TOKEN="YOUR_LOCAL_TOKEN"
+export OPENAI_CODEX_TOKEN="YOUR_LOCAL_TOKEN"
 
 # Then run
 python test_providers.py
@@ -59,17 +61,13 @@ python test_providers.py
 
 For quick single-provider tests with token directly:
 
-**Get token from browser:**
-```javascript
-// In browser console:
-JSON.parse(localStorage.getItem('cinema-ai-provider-settings')).providers.github_copilot.oauthToken
-```
+**Get a locally authorized token using the existing application workflow.** Do not copy it into a tracked file, shell history, logs, issues, or this guide.
 
 **Run test:**
 ```bash
-python quick_test.py github_copilot "eyJ..."
-python quick_test.py antigravity "ya29..."
-python quick_test.py openai_codex "eyJ..."
+python quick_test.py github_copilot "YOUR_LOCAL_TOKEN"
+python quick_test.py antigravity "YOUR_LOCAL_TOKEN"
+python quick_test.py openai_codex "YOUR_LOCAL_TOKEN"
 ```
 
 ### Method 4: Using curl (API endpoint)
@@ -89,17 +87,20 @@ curl -X POST http://localhost:9800/test-provider \
 ## Expected Results
 
 ### GitHub Copilot
-- **Token format**: JWT starting with `eyJ...`
-- **Warning**: If token starts with `gho_...`, it's a GitHub OAuth token, not Copilot JWT - re-authenticate
-- **Models**: gpt-4o, gpt-4-turbo, gpt-4, gpt-3.5-turbo
+- Use the token produced by the existing GitHub Copilot authentication workflow.
+- Models are fetched dynamically from the provider.
 
-### Antigravity (Google)
-- **Token format**: Google OAuth token
-- **Models**: gemini-2.0-flash-exp, claude-3-5-sonnet, etc.
+### Google AI (Gemini)
+- Use a Google AI Studio API key through the `google` API-key provider; follow the [README setup](../../README.md#google-ai-gemini-api-key-setup).
+- Models, quotas, billing, and eligibility are account/service dependent and fetched dynamically.
+
+### Antigravity (Gemini/Claude)
+- Use the existing Antigravity OAuth workflow and authorized app configuration; do not substitute the Google AI Studio API key.
+- Models are fetched dynamically from the provider.
 
 ### OpenAI Codex
-- **Token format**: JWT from ChatGPT
-- **Models**: gpt-4o, gpt-5.2, gpt-5.1-codex-max, etc.
+- Use the existing ChatGPT OAuth workflow.
+- Models are fetched dynamically from the provider.
 
 ## Troubleshooting
 
@@ -130,3 +131,5 @@ The tests also check that generated prompts don't contain equipment violations:
 - "An HMI lights from behind"
 
 If violations are detected, the test will report them.
+
+Live provider/account verification is not implied by this guide or the offline maintenance checks; it remains pending unless separately reported.

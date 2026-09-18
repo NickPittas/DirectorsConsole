@@ -138,6 +138,32 @@ def test_metrics_collector_handles_missing_metrics_agent() -> None:
     assert snapshot.cpu_utilization == 0.0
 
 
+def test_metrics_collector_handles_failing_metrics_agent() -> None:
+    """A metrics-agent failure should preserve basic backend statistics."""
+    config = BackendConfig(id="b1", name="PC1", host="127.0.0.1")
+
+    class FailingMetricsAgentClient(MockClient):
+        async def get_metrics_agent(self) -> dict[str, Any] | None:
+            raise RuntimeError("metrics agent unavailable")
+
+    def client_factory(config: BackendConfig) -> FailingMetricsAgentClient:
+        return FailingMetricsAgentClient(queue_remaining=4)
+
+    collector = MetricsCollector(
+        backends=[config],
+        client_factory=client_factory,
+    )
+
+    snapshots = asyncio.run(collector.collect_once())
+
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot.gpu_memory_total == 8192
+    assert snapshot.gpu_memory_used == 2048
+    assert snapshot.queue_depth == 4
+    assert snapshot.cpu_utilization == 0.0
+
+
 def test_metrics_collector_handles_offline_backend() -> None:
     """collect_once should skip offline backends gracefully."""
     configs = [
@@ -259,6 +285,39 @@ def test_health_monitor_updates_status_with_metrics() -> None:
     assert status.gpu_utilization == 75.0
     assert status.cpu_utilization == 30.0
     assert status.queue_depth == 3
+
+
+def test_health_monitor_queue_depth_prefers_remaining_and_falls_back() -> None:
+    """Aggregate queue depth must not replace actual running/pending counts."""
+    manager = BackendManager()
+    monitor = HealthMonitor(manager=manager, client_factory=MagicMock())
+
+    list_status = monitor._build_status(
+        "b1",
+        {},
+        None,
+        {
+            "queue_running": ["running"],
+            "queue_pending": ["pending-1", "pending-2"],
+        },
+    )
+    assert list_status.queue_depth == 3
+    assert list_status.queue_running == 1
+    assert list_status.queue_pending == 2
+
+    remaining_status = monitor._build_status(
+        "b1",
+        {},
+        None,
+        {
+            "exec_info": {"queue_remaining": 0},
+            "queue_running": ["running"],
+            "queue_pending": ["pending-1", "pending-2"],
+        },
+    )
+    assert remaining_status.queue_depth == 0
+    assert remaining_status.queue_running == 1
+    assert remaining_status.queue_pending == 2
 
 
 def test_health_monitor_offline_resets_metrics() -> None:

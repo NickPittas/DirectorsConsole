@@ -30,6 +30,7 @@ class CallbackResult:
     refresh_token: Optional[str] = None
     token_type: Optional[str] = None
     expires_in: Optional[int] = None
+    expires_at: Optional[int] = None
     scope: Optional[str] = None
     error: Optional[str] = None
     error_description: Optional[str] = None
@@ -157,7 +158,7 @@ async def _handle_callback(request: web.Request) -> web.Response:
     
     # Exchange code for token
     try:
-        from .oauth import exchange_code_for_token, OAUTH_CONFIGS
+        from .oauth import exchange_code_for_token, get_token_expires_at, OAUTH_CONFIGS
         from .credential_storage import get_credential_storage
         
         config = OAUTH_CONFIGS[server_state.provider_id]
@@ -193,6 +194,7 @@ async def _handle_callback(request: web.Request) -> web.Response:
                 refresh_token=token_response.get("refresh_token"),
                 token_type=token_response.get("token_type", "Bearer"),
                 expires_in=token_response.get("expires_in"),
+                expires_at=get_token_expires_at(token_response),
                 scope=token_response.get("scope"),
             )
         

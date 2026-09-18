@@ -8,72 +8,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+
+from cinema_rules.target_models import (
+    MODEL_CATEGORY_BY_ID,
+    MODEL_ID_ALIASES,
+    TARGET_MODELS,
+    normalize_target_model,
+)
 
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# AVAILABLE TARGET MODELS (for dropdown population)
-# =============================================================================
-
-TARGET_MODELS: List[Dict[str, str]] = [
-    # Generic
-    {"id": "generic", "name": "Generic", "category": "General"},
-
-    # Image Generation Models
-    {"id": "midjourney", "name": "Midjourney", "category": "Image"},
-    {"id": "flux.1", "name": "FLUX.1", "category": "Image"},
-    {"id": "flux.1_pro", "name": "FLUX.1 Pro", "category": "Image"},
-    {"id": "flux_kontext", "name": "Flux Kontext", "category": "Image"},
-    {"id": "flux_krea", "name": "Flux Krea", "category": "Image"},
-    {"id": "dall-e_3", "name": "DALL-E 3", "category": "Image"},
-    {"id": "gpt-image", "name": "GPT-Image (4o)", "category": "Image"},
-    {"id": "ideogram_2.0", "name": "Ideogram 2.0", "category": "Image"},
-    {"id": "leonardo_ai", "name": "Leonardo AI", "category": "Image"},
-    {"id": "sdxl", "name": "Stable Diffusion XL", "category": "Image"},
-    {"id": "stable_diffusion_3", "name": "Stable Diffusion 3", "category": "Image"},
-    {"id": "z-image_turbo", "name": "Z-Image Turbo", "category": "Image"},
-    {"id": "qwen_image", "name": "Qwen-Image", "category": "Image"},
-
-    # Video Generation Models
-    {"id": "sora", "name": "Sora", "category": "Video"},
-    {"id": "sora_2", "name": "Sora 2", "category": "Video"},
-    {"id": "veo_2", "name": "Veo 2", "category": "Video"},
-    {"id": "veo_3", "name": "Veo 3", "category": "Video"},
-    {"id": "runway_gen-3", "name": "Runway Gen-3", "category": "Video"},
-    {"id": "runway_gen-4", "name": "Runway Gen-4", "category": "Video"},
-    {"id": "kling_1.6", "name": "Kling 1.6", "category": "Video"},
-    {"id": "pika_2.0", "name": "Pika 2.0", "category": "Video"},
-    {"id": "luma_dream_machine", "name": "Luma Dream Machine", "category": "Video"},
-    {"id": "ltx_2", "name": "LTX-2", "category": "Video"},
-    {"id": "cogvideox", "name": "CogVideoX", "category": "Video"},
-    {"id": "hunyuan", "name": "Hunyuan Video", "category": "Video"},
-    {"id": "wan_2.1", "name": "Wan 2.1", "category": "Video"},
-    {"id": "wan_2.2", "name": "Wan 2.2", "category": "Video"},
-    {"id": "minimax_video", "name": "Minimax Video", "category": "Video"},
-    {"id": "qwen_vl", "name": "Qwen VL", "category": "Video"},
-]
-
-MODEL_CATEGORY_BY_ID: dict[str, str] = {
-    entry["id"]: entry["category"] for entry in TARGET_MODELS
-}
-
-
-# =============================================================================
-# TARGET MODEL ALIASES
-# =============================================================================
-
-MODEL_ID_ALIASES: dict[str, str] = {
-    "flux": "flux.1",
-    "wan2.1": "wan_2.1",
-    "wan2.2": "wan_2.2",
-    "runway": "runway_gen-4",
-    "pika": "pika_2.0",
-    "cogvideo": "cogvideox",
-    "ltx": "ltx_2",
-}
 
 
 PROMPTS_DIR = Path(__file__).parent / "system_prompts"
@@ -81,15 +25,14 @@ MODEL_PROMPTS_DIR = PROMPTS_DIR / "model_prompts"
 GENERAL_PROMPT_PATH = PROMPTS_DIR / "general.md"
 
 
-def get_target_models() -> List[Dict[str, str]]:
+def get_target_models() -> list[dict[str, str]]:
     """Get list of available target models for dropdown population."""
     return TARGET_MODELS
 
 
 def _normalize_target_model(target_model: str) -> str:
     """Normalize target model IDs to match known prompt files."""
-    model_key = target_model.lower().strip()
-    return MODEL_ID_ALIASES.get(model_key, model_key)
+    return normalize_target_model(target_model)
 
 
 def _read_prompt_file(path: Path) -> str:

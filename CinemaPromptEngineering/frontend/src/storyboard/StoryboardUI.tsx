@@ -44,7 +44,7 @@ import { PrintDialog } from './components/PrintDialog';
 import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
-import { getSelectedLlmSettings, getConfiguredProviders } from '../components/Settings';
+import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
 import { api } from '../api/client';
 import {
   loadImageDimensions as _loadImageDimensions,
@@ -90,6 +90,31 @@ function extractFilename(pathOrUrl: string): string {
 const PANEL_WIDTH = 300;
 const PANEL_GAP = 20;
 const PANELS_PER_ROW = 3;
+
+type GenerationRun = {
+  id: string;
+  panelId: number;
+  submissionFinished: boolean;
+  jobs: Set<string>;
+  settledJobs: Set<string>;
+};
+
+type ActiveGeneration = {
+  runId: string;
+  panelId: number;
+  nodeId?: string;
+  promptId: string;
+  ws: ComfyUIWebSocket;
+  finishing?: boolean;
+};
+
+type GenerationSnapshot = {
+  workflowId: string;
+  workflowName: string;
+  workflow: Record<string, unknown>;
+  selectedOutputNodeIds: string[];
+  parameters: Record<string, unknown>;
+};
 
 function calculateNewPanelX(panelId: number, _existingCount: number): number {
   const col = (panelId - 1) % PANELS_PER_ROW;
@@ -356,8 +381,12 @@ export function StoryboardUI() {
   // State - Workflows
   // ---------------------------------------------------------------------------
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const workflowsRef = useRef(workflows);
+  workflowsRef.current = workflows;
   const workflowsLoadedRef = useRef(false); // Tracks whether initial load from localStorage is done
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const selectedWorkflowIdRef = useRef(selectedWorkflowId);
+  selectedWorkflowIdRef.current = selectedWorkflowId;
   const [showWorkflowEditor, setShowWorkflowEditor] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null);
   const [showCategoriesModal, setShowCategoriesModal] = useState(false);
@@ -434,11 +463,79 @@ export function StoryboardUI() {
   const [showNodeManager, setShowNodeManager] = useState(false);
   const [isRestartingNodes, setIsRestartingNodes] = useState(false);
   const renderNodes = useRenderNodes();
-  const wsRef = useRef<ComfyUIWebSocket | null>(null);
+  // One entry per submitted prompt, independent of the currently selected panel/node.
+  const activeGenerationsRef = useRef(new Map<string, ActiveGeneration>());
+  const generationRunsRef = useRef(new Map<number, GenerationRun>());
+  const generationRunCounterRef = useRef(0);
+
+  const claimGenerationRun = useCallback((panelId: number): GenerationRun | null => {
+    if (generationRunsRef.current.has(panelId)) {
+      showWarning(`Panel ${panelId} is already generating. Wait for it to finish before generating again.`);
+      return null;
+    }
+    const run: GenerationRun = {
+      id: `${panelId}-${Date.now()}-${generationRunCounterRef.current++}`,
+      panelId,
+      submissionFinished: false,
+      jobs: new Set(),
+      settledJobs: new Set(),
+    };
+    generationRunsRef.current.set(panelId, run);
+    return run;
+  }, [showWarning]);
+
+  const isCurrentGenerationRun = useCallback((panelId: number, runId: string): boolean => {
+    return generationRunsRef.current.get(panelId)?.id === runId;
+  }, []);
+
+  const maybeReleaseGenerationRun = useCallback((run: GenerationRun) => {
+    if (!run.submissionFinished || run.jobs.size !== run.settledJobs.size) return;
+    if (generationRunsRef.current.get(run.panelId)?.id === run.id) {
+      generationRunsRef.current.delete(run.panelId);
+    }
+  }, []);
+
+  const finishGenerationSubmission = useCallback((runId: string) => {
+    for (const run of generationRunsRef.current.values()) {
+      if (run.id === runId) {
+        run.submissionFinished = true;
+        maybeReleaseGenerationRun(run);
+        return;
+      }
+    }
+  }, [maybeReleaseGenerationRun]);
+
+  const registerGenerationJob = useCallback((
+    runId: string,
+    jobKey: string,
+    job: Omit<ActiveGeneration, 'runId'>,
+  ): boolean => {
+    const run = generationRunsRef.current.get(job.panelId);
+    if (!run || run.id !== runId) return false;
+    run.jobs.add(jobKey);
+    activeGenerationsRef.current.set(jobKey, { ...job, runId });
+    return true;
+  }, []);
+
+  const settleGenerationJob = useCallback((runId: string, jobKey: string) => {
+    const activeJob = activeGenerationsRef.current.get(jobKey);
+    if (activeJob?.runId === runId) activeGenerationsRef.current.delete(jobKey);
+    for (const run of generationRunsRef.current.values()) {
+      if (run.id === runId) {
+        run.settledJobs.add(jobKey);
+        maybeReleaseGenerationRun(run);
+        return;
+      }
+    }
+  }, [maybeReleaseGenerationRun]);
+
+  const markGenerationJobFinishing = useCallback((runId: string, jobKey: string) => {
+    const activeJob = activeGenerationsRef.current.get(jobKey);
+    if (activeJob?.runId === runId) activeJob.finishing = true;
+  }, []);
   const batchSaveTriggeredRef = useRef<Set<string>>(new Set()); // Track which panels have triggered batch save
   const savedJobsRef = useRef<Set<string>>(new Set()); // Track which parallel jobs have been saved to prevent duplicates
   const nextVersionRef = useRef<Map<number, number>>(new Map()); // Atomic version counter per panel to prevent race conditions
-  const activePollsRef = useRef<Set<string>>(new Set()); // Track active polling loops to prevent accumulation
   const logIdCounter = useRef(0);
   
   // Refs to always have access to latest state values in callbacks (avoids stale closures)
@@ -862,7 +959,11 @@ export function StoryboardUI() {
   // Effect - Cleanup all WebSockets and polling on unmount / page unload
   // ---------------------------------------------------------------------------
   useEffect(() => {
+    const activeGenerations = activeGenerationsRef.current;
+    const generationRuns = generationRunsRef.current;
     const handleBeforeUnload = () => {
+      activeGenerations.clear();
+      generationRuns.clear();
       disconnectAllWebSockets();
       orchestratorManager.stopPolling();
     };
@@ -872,6 +973,8 @@ export function StoryboardUI() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       // Also cleanup on React component unmount (HMR, navigation)
+      activeGenerations.clear();
+      generationRuns.clear();
       disconnectAllWebSockets();
       orchestratorManager.stopPolling();
     };
@@ -954,7 +1057,7 @@ export function StoryboardUI() {
     };
     
     checkEndpoints();
-  }, [projectSettings.orchestratorUrl]);
+  }, [projectSettings.orchestratorUrl, showWarning]);
   
   // State - File Browser Dialog (Load/Save)
   const [fileBrowserMode, setFileBrowserMode] = useState<'open' | 'save' | null>(null);
@@ -1100,7 +1203,7 @@ export function StoryboardUI() {
               console.warn('[Workflows] Failed to persist video type migration:', e)
             );
           }
-          if (!selectedWorkflowId) {
+          if (!selectedWorkflowIdRef.current) {
             setSelectedWorkflowId((result.workflows[0] as { id: string }).id);
           }
           console.log(`[Workflows] Loaded ${result.count} workflows from ${result.storage_path}`);
@@ -1113,7 +1216,7 @@ export function StoryboardUI() {
               if (Array.isArray(parsed) && parsed.length > 0) {
                 console.log(`[Workflows] Migrating ${parsed.length} workflows from localStorage to backend...`);
                 setWorkflows(parsed);
-                if (!selectedWorkflowId) {
+                if (!selectedWorkflowIdRef.current) {
                   setSelectedWorkflowId(parsed[0].id);
                 }
                 // Migrate to backend
@@ -1135,7 +1238,7 @@ export function StoryboardUI() {
           try {
             const parsed = JSON.parse(savedWorkflows);
             setWorkflows(parsed);
-            if (parsed.length > 0 && !selectedWorkflowId) {
+            if (parsed.length > 0 && !selectedWorkflowIdRef.current) {
               setSelectedWorkflowId(parsed[0].id);
             }
           } catch (e) {
@@ -1202,7 +1305,7 @@ export function StoryboardUI() {
       console.log('[Effect] Skipping parameter reset (skipParameterReset was true)');
       return;
     }
-    const workflow = workflows.find(w => w.id === selectedWorkflowId);
+    const workflow = workflowsRef.current.find(w => w.id === selectedWorkflowId);
     if (workflow) {
       console.log('[Effect] Workflow change detected, resetting parameters to defaults for workflow:', selectedWorkflowId);
       
@@ -1228,7 +1331,6 @@ export function StoryboardUI() {
       parameterValuesRef.current = newValues;
       setParameterValues(newValues);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflowId]); // Only re-run when workflow selection changes, not workflows array
 
   // ---------------------------------------------------------------------------
@@ -1961,7 +2063,7 @@ export function StoryboardUI() {
     
     // Reset input
     event.target.value = '';
-  }, [workflows, setWorkflows, addLog, showInfo, showError, activeTab, activeSubTab, setSelectedWorkflowId, setEditingWorkflow, setShowWorkflowEditor]);
+  }, [setWorkflows, addLog, showInfo, showError, showWarning, activeTab, activeSubTab, setSelectedWorkflowId, setEditingWorkflow, setShowWorkflowEditor]);
 
   // ---------------------------------------------------------------------------
   // Functions - Canvas Operations
@@ -2125,6 +2227,39 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   // Functions - Generation
   // ---------------------------------------------------------------------------
+
+  // These callbacks are declared later in this component; refs avoid a temporal
+  // dead zone while keeping generation handlers current without dependency loops.
+  const finishParallelJobRef = useRef<(
+    runId: string,
+    panelId: number,
+    nodeId: string,
+    status: 'error' | 'cancelled',
+    promptId?: string,
+  ) => void>(() => {});
+  const trackParallelJobWithWebSocketRef = useRef<(
+    promptId: string,
+    panelId: number,
+    nodeId: string,
+    targetUrl: string,
+    ws: ComfyUIWebSocket,
+    runId: string,
+    nodeName: string,
+    seed: number,
+    generationSnapshot: GenerationSnapshot,
+    clientId?: string,
+    workflowInfo?: WorkflowProgressInfo,
+  ) => void>(() => {});
+  const trackWithWebSocketRef = useRef<(
+    promptId: string,
+    panelId: number,
+    targetUrl: string,
+    websocket: ComfyUIWebSocket,
+    runId: string,
+    generationSnapshot: GenerationSnapshot,
+    clientId?: string,
+    workflowInfo?: WorkflowProgressInfo,
+  ) => void>(() => {});
   
   /**
    * Generate images in parallel across multiple render nodes
@@ -2151,6 +2286,9 @@ export function StoryboardUI() {
       return;
     }
 
+    const generationRun = claimGenerationRun(panelId);
+    if (!generationRun) return;
+
     try {
       addLog('comfyui', `Starting parallel generation on ${backendIds.length} nodes for panel ${panelId}...`);
       
@@ -2162,7 +2300,9 @@ export function StoryboardUI() {
       const paramsToUse = currentParameterValues;
       
       const parser = getWorkflowParser();
-      const processedParams = { ...paramsToUse };
+      // Keep original UI media references separate from transport-only filenames.
+      const restorableParameters = JSON.parse(JSON.stringify(paramsToUse));
+      const processedParams = JSON.parse(JSON.stringify(paramsToUse));
       const imageInputs: Record<string, string> = {};
       
       console.log('[Parallel] Processing parameter values:', Object.keys(paramsToUse));
@@ -2345,6 +2485,7 @@ export function StoryboardUI() {
         for (const key of Object.keys(processedParams)) {
           if (key.toLowerCase().includes('prompt') || key === 'text' || key === 'positive') {
             processedParams[key] = globalPromptOverride;
+            restorableParameters[key] = globalPromptOverride;
           }
         }
       }
@@ -2361,11 +2502,16 @@ export function StoryboardUI() {
       for (const [key, value] of Object.entries(processedParams)) {
         if (loraParamNames.has(key)) {
           if (typeof value === 'object' && value !== null) {
+            const loraValue = value as {
+              strength?: number;
+              bypassed?: boolean;
+              lora_name?: string;
+            };
             loraValues[key] = {
-              strength: value.strength ?? 1.0,
-              bypassed: value.bypassed ?? false,
-              lora_name: value.lora_name,
-              enabled: !value.bypassed
+              strength: loraValue.strength ?? 1.0,
+              bypassed: loraValue.bypassed ?? false,
+              lora_name: loraValue.lora_name,
+              enabled: !loraValue.bypassed
             };
           } else if (typeof value === 'number') {
             loraValues[key] = {
@@ -2395,6 +2541,15 @@ export function StoryboardUI() {
       if (parallelWfProgressInfo.samplerNodeIds.length > 1) {
         addLog('info', `Multi-sampler workflow: ${parallelWfProgressInfo.samplerNodeIds.length} sampler phases detected`);
       }
+
+      // Snapshot provenance once before any submitted job can finish.
+      const generationSnapshot: GenerationSnapshot = {
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        workflow: JSON.parse(JSON.stringify(workflow.workflow)),
+        selectedOutputNodeIds: workflow.parsed.outputs.filter(output => output.selected).map(output => output.node_id),
+        parameters: restorableParameters,
+      };
       
       // ====================================================================================
       // STEP 2: FOR EACH NODE, CLONE WORKFLOW AND CHANGE ONLY THE SEED
@@ -2479,16 +2634,7 @@ export function StoryboardUI() {
         
         if (!node || node.status !== 'online') {
           addLog('warning', `Skipping offline node: ${node?.name || backendId}`);
-          // Update parallel job status to error
-          setPanels(prev => prev.map(p => {
-            if (p.id !== panelId || !p.parallelJobs) return p;
-            return {
-              ...p,
-              parallelJobs: p.parallelJobs.map(j =>
-                j.nodeId === backendId ? { ...j, status: 'error' as const } : j
-              )
-            };
-          }));
+          finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
           continue;
         }
         
@@ -2507,10 +2653,10 @@ export function StoryboardUI() {
         console.log(`[Parallel] Submitting to node ${node.name} (OS: ${node.os}) with seed ${seed}`);
         addLog('comfyui', `Submitting variation ${i + 1}/${backendIds.length} to ${node.name} (seed: ${seed})`);
         
+        const clientId = `storyboard-parallel-${panelId}-${i}-${Date.now()}`;
+        const nodeWs = getComfyUIWebSocket(node.url, clientId);
         try {
           // Create WebSocket connection for this node
-          const clientId = `storyboard-parallel-${panelId}-${i}-${Date.now()}`;
-          const nodeWs = getComfyUIWebSocket(node.url, clientId);
           
           try {
             await nodeWs.connect();
@@ -2545,6 +2691,9 @@ export function StoryboardUI() {
           }
           
           const data = await response.json();
+          if (typeof data.prompt_id !== 'string' || !data.prompt_id) {
+            throw new Error('ComfyUI did not return a prompt ID');
+          }
           addLog('comfyui', `Queued on ${node.name}: ${data.prompt_id}`);
           
           // Update parallel job with prompt ID and seed
@@ -2566,27 +2715,15 @@ export function StoryboardUI() {
             seed: seed
           });
           
-          // Track progress via WebSocket if connected, otherwise poll
-          if (nodeWs.connected) {
-            trackParallelJobWithWebSocket(data.prompt_id, panelId, backendId, node.url, nodeWs, clientId, parallelWfProgressInfo);
-          } else {
-            trackParallelJobWithPolling(data.prompt_id, panelId, backendId, node.url);
-          }
+          // The connection tracker also reconciles history while WebSocket is unavailable.
+          trackParallelJobWithWebSocketRef.current(data.prompt_id, panelId, backendId, node.url, nodeWs, generationRun.id, node.name, seed, generationSnapshot, clientId, parallelWfProgressInfo);
           
         } catch (error) {
+          disconnectWebSocket(node.url, clientId);
           const errorMsg = `Failed to submit to ${node.name}: ${error}`;
           addLog('error', errorMsg);
           showError(errorMsg);
-          // Update parallel job status to error
-          setPanels(prev => prev.map(p => {
-            if (p.id !== panelId || !p.parallelJobs) return p;
-            return {
-              ...p,
-              parallelJobs: p.parallelJobs.map(j =>
-                j.nodeId === backendId ? { ...j, status: 'error' as const } : j
-              )
-            };
-          }));
+          finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
         }
       }
       
@@ -2607,8 +2744,10 @@ export function StoryboardUI() {
       setPanels(prev => prev.map(p =>
         p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
       ));
+    } finally {
+      finishGenerationSubmission(generationRun.id);
     }
-  }, [panels, workflows, selectedWorkflowId, parameterValues, useGlobalPrompt, globalPromptOverride, renderNodes, addLog, showError, showInfo, selectedPanelId]);
+  }, [panels, workflows, selectedWorkflowId, useGlobalPrompt, globalPromptOverride, renderNodes, addLog, showError, showInfo, claimGenerationRun, finishGenerationSubmission]);
   
   const generatePanel = useCallback(async (panelId: number) => {
     // Fix #2: Check if user explicitly selected multiple nodes for parallel generation
@@ -2616,9 +2755,13 @@ export function StoryboardUI() {
       await generateParallel(panelId, selectedBackendIds);
       return;
     }
-    
-    // Single-node generation (original logic)
-    const panel = panels.find(p => p.id === panelId);
+
+    const generationRun = claimGenerationRun(panelId);
+    if (!generationRun) return;
+
+    try {
+      // Single-node generation (original logic)
+      const panel = panels.find(p => p.id === panelId);
     
     // Determine which node to use - prioritize explicit selection, then panel-specific, then auto-select
     let targetUrl = '';
@@ -2729,7 +2872,9 @@ export function StoryboardUI() {
     
     // Upload any images in paramsToUse that are data URLs
     // Use the panel-specific paramsToUse, not the global parameterValues
-    const processedParams = { ...paramsToUse };
+    // Keep original UI media references separate from transport-only filenames.
+    const restorableParameters = JSON.parse(JSON.stringify(paramsToUse));
+    const processedParams = JSON.parse(JSON.stringify(paramsToUse));
     const imageInputs: Record<string, string> = {};
     
     console.log('[Generation] Processing parameter values for panel:', panelId, Object.keys(paramsToUse));
@@ -2879,6 +3024,7 @@ export function StoryboardUI() {
         // Check if this is a prompt parameter (positive_prompt, prompt, text, etc.)
         if (key.toLowerCase().includes('prompt') || key === 'text' || key === 'positive') {
           processedParams[key] = globalPromptOverride;
+          restorableParameters[key] = globalPromptOverride;
           addLog('info', `Applied global prompt override to: ${key}`);
         }
       }
@@ -2902,11 +3048,16 @@ export function StoryboardUI() {
         // This is a LoRA parameter
         if (typeof value === 'object' && value !== null) {
           // Complex format: { lora_name, strength, bypassed }
+          const loraValue = value as {
+            strength?: number;
+            bypassed?: boolean;
+            lora_name?: string;
+          };
           loraValues[key] = {
-            strength: value.strength ?? 1.0,
-            bypassed: value.bypassed ?? false,
-            lora_name: value.lora_name,
-            enabled: !value.bypassed // For backwards compatibility
+            strength: loraValue.strength ?? 1.0,
+            bypassed: loraValue.bypassed ?? false,
+            lora_name: loraValue.lora_name,
+            enabled: !loraValue.bypassed // For backwards compatibility
           };
         } else if (typeof value === 'number') {
           // Simple format: just strength value
@@ -2937,16 +3088,24 @@ export function StoryboardUI() {
     
     // Normalize path separators for the target node's OS
     normalizeWorkflowPaths(builtWorkflow, targetOS);
+
+    // Snapshot provenance once before any submitted job can finish.
+    const generationSnapshot: GenerationSnapshot = {
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      workflow: JSON.parse(JSON.stringify(workflow.workflow)),
+      selectedOutputNodeIds: workflow.parsed.outputs.filter(output => output.selected).map(output => output.node_id),
+      parameters: restorableParameters,
+    };
     
     // Debug: Log the workflow being sent
     console.log('Workflow being sent to ComfyUI:', JSON.stringify(builtWorkflow, null, 2));
     addLog('info', `Workflow nodes: ${Object.keys(builtWorkflow).length}, target OS: ${targetOS}`);
     
+    const clientId = `storyboard-panel-${panelId}-${Date.now()}`;
+    const nodeWs = getComfyUIWebSocket(targetUrl, clientId);
     try {
-      // Create WebSocket connection FIRST with unique client ID for this panel
-      // This ensures we receive progress updates for this specific job
-      const clientId = `storyboard-panel-${panelId}-${Date.now()}`;
-      const nodeWs = getComfyUIWebSocket(targetUrl, clientId);
+      // Connect before submission so live events use the same client ID.
       
       try {
         await nodeWs.connect();
@@ -2986,6 +3145,9 @@ export function StoryboardUI() {
       }
       
       const data = await response.json();
+      if (typeof data.prompt_id !== 'string' || !data.prompt_id) {
+        throw new Error('ComfyUI did not return a prompt ID');
+      }
       addLog('comfyui', `Queued prompt: ${data.prompt_id} on ${nodeName}`);
       
       // Build workflow progress info for multi-phase tracking (e.g., 2 KSamplers in video workflows)
@@ -2994,14 +3156,10 @@ export function StoryboardUI() {
         addLog('info', `Multi-sampler workflow detected: ${wfProgressInfo.samplerNodeIds.length} sampler phases`);
       }
       
-      // Track progress via WebSocket if connected, otherwise poll
-      if (nodeWs.connected) {
-        trackWithWebSocket(data.prompt_id, panelId, targetUrl, nodeWs, clientId, wfProgressInfo);
-      } else {
-        addLog('warning', `WebSocket not connected, falling back to polling`);
-        pollForResult(data.prompt_id, panelId, targetUrl);
-      }
+      // Use the same callbacks for live events and history reconciliation.
+      trackWithWebSocketRef.current(data.prompt_id, panelId, targetUrl, nodeWs, generationRun.id, generationSnapshot, clientId, wfProgressInfo);
     } catch (error) {
+      disconnectWebSocket(targetUrl, clientId);
       const errorMsg = `Failed to queue generation: ${error}`;
       addLog('error', errorMsg);
       showError(errorMsg);
@@ -3009,245 +3167,49 @@ export function StoryboardUI() {
         p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
       ));
     }
-  }, [connectionStatus, workflows, selectedWorkflowId, parameterValues, comfyUrl, addLog, showError, panels, renderNodes, selectedPanelId]);
-  
-  const pollForResult = useCallback(async (promptId: string, panelId: number, targetUrl: string) => {
-    const pollKey = `${panelId}-${promptId}`;
-    
-    // Cancel any existing poll for this panel to prevent accumulation
-    activePollsRef.current.forEach(key => {
-      if (key.startsWith(`${panelId}-`)) {
-        activePollsRef.current.delete(key);
-      }
-    });
-    
-    // Register this poll
-    activePollsRef.current.add(pollKey);
-    
-    const maxAttempts = 600; // 10 minutes at 1 second intervals
-    let attempts = 0;
-    
-    const checkStatus = async () => {
-      // Exit if this poll has been cancelled
-      if (!activePollsRef.current.has(pollKey)) {
-        return;
-      }
-      
-      if (attempts >= maxAttempts) {
-        addLog('error', `Generation timeout for panel ${panelId}`);
-        setPanels(prev => prev.map(p => 
-          p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
-        ));
-        activePollsRef.current.delete(pollKey);
-        return;
-      }
-      
-      attempts++;
-      
-      try {
-        // Check history for completed prompt
-        const historyResponse = await fetch(`${targetUrl}/history/${promptId}`);
-        if (historyResponse.ok) {
-          const history = await historyResponse.json();
-          
-          if (history[promptId]) {
-            const outputs = history[promptId].outputs;
-            
-            // Collect ALL output media (images + videos) matching WebSocket path behavior
-            const allImages: string[] = [];
-            for (const nodeId in outputs) {
-              const nodeOutput = outputs[nodeId];
-              const mediaOutputs = extractMediaOutputs(nodeOutput, targetUrl);
-              for (const media of mediaOutputs) {
-                allImages.push(media.url);
-              }
-            }
-            
-            if (allImages.length > 0) {
-              addLog('comfyui', `Generation complete for panel ${panelId} (polling): ${allImages.length} output(s)`);
-              activePollsRef.current.delete(pollKey);
-              
-              // Auto-save if enabled - read from singleton to avoid stale closure
-              const currentSettings = projectManager.getProject();
-              if (currentSettings.autoSave && currentSettings.path) {
-                addLog('info', `Auto-saving ${allImages.length} image(s) to ${currentSettings.path}...`);
-                
-                const startTime = generationStartTimes.current.get(panelId);
-                const generationTime = startTime ? (Date.now() - startTime) / 1000 : undefined;
-                
-                (async () => {
-                  try {
-                    // Get panel info from current state
-                    const panelName = await new Promise<string>(resolve => {
-                      setPanels(prev => {
-                        const p = prev.find(p => p.id === panelId);
-                        resolve(p?.name || `Panel_${String(panelId).padStart(2, '0')}`);
-                        return prev; // No mutation
-                      });
-                    });
-                    
-                    const nextVersion = await projectManager.getNextVersion(panelName, []);
-                    addLog('info', `Starting from version ${nextVersion}`);
-                    
-                    for (let idx = 0; idx < allImages.length; idx++) {
-                      const url = allImages[idx];
-                      const version = nextVersion + idx;
-                      
-                      // Get panel workflow info for metadata (avoid stale closure — read from panels state)
-                      const panelWorkflowId = await new Promise<string>(resolve => {
-                        setPanels(prev => {
-                          const p = prev.find(p => p.id === panelId);
-                          resolve(p?.workflowId || '');
-                          return prev;
-                        });
-                      });
-                      const panelParams = await new Promise<Record<string, unknown>>(resolve => {
-                        setPanels(prev => {
-                          const p = prev.find(p => p.id === panelId);
-                          resolve((p?.parameterValues || {}) as Record<string, unknown>);
-                          return prev;
-                        });
-                      });
-                      
-                      const entry = projectManager.createHistoryEntry(
-                        url, panelId, version, panelWorkflowId, panelWorkflowId || 'Unknown', {}, panelParams, generationTime
-                      );
-                      
-                      addLog('info', `Saving v${version} from URL: ${url}`);
-                      const result = await projectManager.saveToProjectFolder(
-                        url, panelId, version, entry.metadata, panelName
-                      );
-                      
-                      if (result.success) {
-                        addLog('info', `Saved: ${result.savedPath}`);
-                        // Match by URL since entry.id differs between auto-save and UI state entries
-                        setPanels(prev => prev.map(p => {
-                          if (p.id !== panelId) return p;
-                          const updatedHistory = p.imageHistory.map(h =>
-                            h.url === url && !h.metadata.savedPath
-                              ? { ...h, metadata: { ...h.metadata, savedPath: result.savedPath } }
-                              : h
-                          );
-                          return { ...p, imageHistory: updatedHistory };
-                        }));
-                      } else {
-                        addLog('error', `Auto-save failed for v${version}: ${result.error}`);
-                      }
-                    }
-                  } catch (err) {
-                    addLog('error', `Auto-save exception: ${err}`);
-                  }
-                })();
-              } else if (currentSettings.autoSave && !currentSettings.path) {
-                addLog('warning', 'Auto-save enabled but no project folder configured');
-              } else if (!currentSettings.autoSave) {
-                addLog('info', 'Auto-save is disabled. Enable it in Project Settings to save images automatically.');
-              }
-              
-              // Calculate generation time
-              const genStartTime = generationStartTimes.current.get(panelId);
-              const genTime = genStartTime ? (Date.now() - genStartTime) / 1000 : undefined;
-              generationStartTimes.current.delete(panelId);
-              
-              // Update state with history entries
-              setPanels(prevPanels => {
-                const currentPanel = prevPanels.find(p => p.id === panelId);
-                const currentHistoryLength = currentPanel?.imageHistory?.length || 0;
-                
-                const historyEntries = allImages.map((url: string, idx: number) => 
-                  projectManager.createHistoryEntry(
-                    url, panelId, currentHistoryLength + idx + 1,
-                    currentPanel?.workflowId || '', 'Unknown', {}, 
-                    currentPanel?.parameterValues || {}, genTime
-                  )
-                );
-                
-                return prevPanels.map(p => {
-                  if (p.id !== panelId) return p;
-                  const newHistory = [...p.imageHistory, ...historyEntries];
-                  return {
-                    ...p,
-                    status: 'complete' as const,
-                    progress: 100,
-                    image: allImages[allImages.length - 1],
-                    images: allImages,
-                    currentImageIndex: 0,
-                    imageHistory: newHistory,
-                    historyIndex: newHistory.length - 1,
-                  };
-                });
-              });
-              return;
-            } else if (Object.keys(outputs).length > 0) {
-              // Outputs exist but no media was extracted — log for debugging
-              const outputKeys = Object.keys(outputs).map(nodeId => {
-                const nodeOutput = outputs[nodeId];
-                return `${nodeId}: [${Object.keys(nodeOutput).join(', ')}]`;
-              });
-              addLog('warning', `Generation completed but no media found in outputs. Node output keys: ${outputKeys.join('; ')}`);
-            }
-          }
-        }
-        
-        // Check queue status for progress
-        const queueResponse = await fetch(`${targetUrl}/queue`);
-        if (queueResponse.ok) {
-          const queueData = await queueResponse.json();
-          
-          // Check if our prompt is still running
-          const running = queueData.queue_running?.find((item: any) => 
-            item[1] === promptId
-          );
-          
-          if (running) {
-            // Still running, update progress
-            setPanels(prev => prev.map(p => 
-              p.id === panelId ? { 
-                ...p, 
-                progress: Math.min((attempts / 100) * 100, 90)
-              } : p
-            ));
-          }
-        }
-        
-        // Only continue polling if still active
-        if (activePollsRef.current.has(pollKey)) {
-          setTimeout(checkStatus, 1000);
-        }
-      } catch (error) {
-        addLog('error', `Error polling for result: ${error}`);
-        // Only retry if still active
-        if (activePollsRef.current.has(pollKey)) {
-          setTimeout(checkStatus, 1000);
-        }
-      }
-    };
-    
-    checkStatus();
-  }, [addLog]);
+    } finally {
+      finishGenerationSubmission(generationRun.id);
+    }
+  }, [connectionStatus, workflows, selectedWorkflowId, comfyUrl, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
   
   // Track generation progress via WebSocket (real-time)
-  const trackWithWebSocket = useCallback((promptId: string, panelId: number, targetUrl: string, ws?: ComfyUIWebSocket, clientId?: string, workflowInfo?: WorkflowProgressInfo) => {
-    const websocket = ws || wsRef.current;
-    if (!websocket) {
-      // Fallback to polling
-      pollForResult(promptId, panelId, targetUrl);
-      return;
+  const trackWithWebSocket = useCallback((
+    promptId: string,
+    panelId: number,
+    targetUrl: string,
+    websocket: ComfyUIWebSocket,
+    runId: string,
+    generationSnapshot: GenerationSnapshot,
+    clientId?: string,
+    workflowInfo?: WorkflowProgressInfo,
+  ) => {
+    const jobKey = `${targetUrl}:${promptId}`;
+    if (!registerGenerationJob(runId, jobKey, { panelId, promptId, ws: websocket })) {
+      throw new Error('Generation run is no longer active');
     }
-    
-    // Helper to disconnect the per-generation WebSocket after completion
+    const hasOtherActiveJobs = () => [...activeGenerationsRef.current.entries()].some(([key, job]) =>
+      key !== jobKey && job.panelId === panelId && job.runId === runId && !job.finishing
+    );
+
+    // Keep the prompt entry until result/error handling, including output fetch/save, settles.
     const cleanupWs = () => {
+      const activeJob = activeGenerationsRef.current.get(jobKey);
+      if (activeJob?.runId === runId) activeGenerationsRef.current.delete(jobKey);
       if (clientId) {
         // Disconnect and remove this per-generation WebSocket instance
         disconnectWebSocket(targetUrl, clientId);
       }
     };
     
-    websocket.trackPrompt(
-      promptId,
-      panelId,
+    try {
+      websocket.trackPrompt(
+        promptId,
+        panelId,
       // Progress callback
       (progress) => {
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (!activeJob || activeJob.runId !== runId || activeJob.finishing || !isCurrentGenerationRun(panelId, runId)
+          || progress.promptId !== promptId) return;
         // Use overall percent when available (accounts for multi-sampler workflows)
         const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
         
@@ -3281,6 +3243,14 @@ export function StoryboardUI() {
       },
       // Completed callback
       async (_promptId, _outputs) => {
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        markGenerationJobFinishing(runId, jobKey);
+        if (!isCurrentGenerationRun(panelId, runId)) {
+          settleGenerationJob(runId, jobKey);
+          cleanupWs();
+          return;
+        }
         addLog('comfyui', `Generation complete for panel ${panelId}`);
         
         // CRITICAL FIX: Read project settings directly from the singleton to avoid
@@ -3296,21 +3266,24 @@ export function StoryboardUI() {
         const panelNow = panelsRef.current.find(p => p.id === panelId);
         if (panelNow?.parallelJobs && panelNow.parallelJobs.length > 0) {
           addLog('comfyui', `Skipping single-node save - panel has parallel jobs, handled by parallel tracker`);
+          settleGenerationJob(runId, jobKey);
+          cleanupWs();
           return;
         }
         
         // Fetch result from history to get image URL
         try {
-          const historyResponse = await fetch(`${targetUrl}/history/${promptId}`);
-          if (historyResponse.ok) {
-            const historyData = await historyResponse.json();
-            const promptData = historyData[promptId];
+          let promptData = _outputs ? { outputs: _outputs } : undefined;
+          if (!promptData) {
+            const response = await fetch(`${targetUrl}/history/${promptId}`, { signal: AbortSignal.timeout(15000) });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            promptData = (await response.json())[promptId];
+          }
+          if (promptData) {
             
             if (promptData?.outputs) {
-              // Get the list of selected output node IDs
-              const selectedOutputNodeIds = selectedWorkflow?.parsed.outputs
-                ?.filter(o => o.selected)
-                .map(o => o.node_id) || [];
+              // Use the output selection captured when this prompt was submitted.
+              const selectedOutputNodeIds = generationSnapshot.selectedOutputNodeIds;
               
               // If no outputs are explicitly selected, use all of them (backwards compatibility)
               const useAllOutputs = selectedOutputNodeIds.length === 0;
@@ -3352,7 +3325,7 @@ export function StoryboardUI() {
                    // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
                    // Use panelsRef.current to avoid stale closure from WebSocket callback
                    const panelsSnapshot = [...panelsRef.current];
-                   (async () => {
+                   await (async () => {
                      try {
                         // Get the panel to determine its current history
                         const currentPanel = panelsSnapshot.find(p => p.id === panelId);
@@ -3372,10 +3345,10 @@ export function StoryboardUI() {
                           url,
                           panelId,
                           version,
-                          selectedWorkflowId || '',
-                          selectedWorkflow?.name || 'Unknown',
-                          selectedWorkflow?.workflow || {},
-                          parameterValues,
+                          generationSnapshot.workflowId,
+                          generationSnapshot.workflowName,
+                          generationSnapshot.workflow,
+                          generationSnapshot.parameters,
                           generationTime
                         );
                         
@@ -3417,7 +3390,7 @@ export function StoryboardUI() {
                 // Calculate generation time BEFORE setPanels (refs shouldn't be read inside setState)
                 const genStartTime = generationStartTimes.current.get(panelId);
                 const genTime = genStartTime ? (Date.now() - genStartTime) / 1000 : undefined;
-                generationStartTimes.current.delete(panelId);
+                if (!hasOtherActiveJobs()) generationStartTimes.current.delete(panelId);
                 console.log('[Generation] Panel', panelId, 'took', genTime?.toFixed(1), 'seconds');
                 
                 // Update state with history entries (use memory-based version for UI)
@@ -3430,10 +3403,10 @@ export function StoryboardUI() {
                       url,
                       panelId,
                       currentHistoryLength + idx + 1,
-                      currentPanel?.workflowId || selectedWorkflowId || '',
-                      selectedWorkflow?.name || 'Unknown',
-                      selectedWorkflow?.workflow || {},
-                      currentPanel?.parameterValues || parameterValues,  // FIX: Use panel's saved params
+                      generationSnapshot.workflowId,
+                      generationSnapshot.workflowName,
+                      generationSnapshot.workflow,
+                      generationSnapshot.parameters,
                       genTime  // Use the pre-calculated generation time
                     )
                   );
@@ -3444,8 +3417,8 @@ export function StoryboardUI() {
                     const newHistory = [...p.imageHistory, ...historyEntriesForState];
                     return {
                       ...p,
-                      status: 'complete' as const,
-                      progress: 100,
+                      status: hasOtherActiveJobs() ? 'generating' as const : 'complete' as const,
+                      progress: hasOtherActiveJobs() ? p.progress : 100,
                       image: allImages[allImages.length - 1],
                       images: allImages,
                       currentImageIndex: 0,
@@ -3454,6 +3427,7 @@ export function StoryboardUI() {
                     };
                   });
                 });
+                settleGenerationJob(runId, jobKey);
                 cleanupWs();
                 return;
               }
@@ -3463,26 +3437,45 @@ export function StoryboardUI() {
           addLog('error', `Error fetching result: ${error}`);
         }
         
-        // No image found
-        setPanels(prev => prev.map(p => 
-          p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
-        ));
+        // No image found; other prompts for this panel may still be running.
+        settleGenerationJob(runId, jobKey);
         cleanupWs();
+        setPanels(prev => prev.map(p =>
+          p.id === panelId && !hasOtherActiveJobs() ? { ...p, status: 'error', progress: 0 } : p
+        ));
       },
       // Error callback
       (_promptId, error) => {
-        const errorMsg = `Generation failed: ${error}`;
-        addLog('error', errorMsg);
-        showError(errorMsg);
-        setPanels(prev => prev.map(p => 
-          p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
-        ));
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        markGenerationJobFinishing(runId, jobKey);
+        if (!isCurrentGenerationRun(panelId, runId)) {
+          settleGenerationJob(runId, jobKey);
+          cleanupWs();
+          return;
+        }
+        const cancelled = error === 'Generation cancelled';
+        const errorMsg = cancelled ? error : `Generation failed: ${error}`;
+        addLog(cancelled ? 'info' : 'error', errorMsg);
+        if (!cancelled) showError(errorMsg);
+        settleGenerationJob(runId, jobKey);
         cleanupWs();
+        setPanels(prev => prev.map(p =>
+          p.id === panelId && !hasOtherActiveJobs()
+            ? { ...p, status: cancelled ? (p.image ? 'complete' : 'empty') : 'error', progress: 0 } : p
+        ));
+        if (!hasOtherActiveJobs()) generationStartTimes.current.delete(panelId);
       },
-      // Workflow info for multi-phase progress tracking
-      workflowInfo
-    );
-  }, [addLog, showError, pollForResult, panels]);
+        // Workflow info for multi-phase progress tracking
+        workflowInfo
+      );
+    } catch (error) {
+      settleGenerationJob(runId, jobKey);
+      cleanupWs();
+      throw error;
+    }
+  }, [addLog, showError, registerGenerationJob, markGenerationJobFinishing, settleGenerationJob, isCurrentGenerationRun]);
+  trackWithWebSocketRef.current = trackWithWebSocket;
   
   // ---------------------------------------------------------------------------
   // Functions - Parallel Job Tracking (fixes race condition)
@@ -3494,7 +3487,8 @@ export function StoryboardUI() {
    */
   const saveIndividualParallelResult = useCallback(async (
     panelId: number,
-    job: { nodeId: string; nodeName: string; resultUrl: string; seed: number }
+    job: { nodeId: string; nodeName: string; resultUrl: string; seed: number; promptId?: string },
+    generationSnapshot: GenerationSnapshot,
   ) => {
     // CRITICAL: Use panelsRef.current to avoid stale closure issues
     // The panels captured in this closure go stale as parallel jobs complete and update state
@@ -3502,7 +3496,7 @@ export function StoryboardUI() {
     if (!panel || !job.resultUrl) return;
 
     // Prevent duplicate saves for the same job
-    const jobKey = `${panelId}-${job.nodeId}-${job.seed}`;
+    const jobKey = `${panelId}-${job.nodeId}-${job.promptId || job.seed}`;
     if (savedJobsRef.current.has(jobKey)) {
       console.log(`[Parallel] Job ${jobKey} already saved, skipping duplicate`);
       return;
@@ -3515,16 +3509,13 @@ export function StoryboardUI() {
     addLog('info', `Saving result from ${job.nodeName}...`);
 
     try {
-      // Get current workflow
-      const currentWorkflow = workflows.find(w => w.id === (panel.workflowId || selectedWorkflowId));
-
       // Calculate generation time (if available)
       const startTime = generationStartTimes.current.get(panelId);
       const generationTime = startTime ? (Date.now() - startTime) / 1000 : undefined;
 
       // Create parameter object with the specific seed for this variation
       const paramsWithSeed = {
-        ...(panel.parameterValues || parameterValues),
+        ...generationSnapshot.parameters,
         seed: job.seed,
       };
 
@@ -3540,9 +3531,9 @@ export function StoryboardUI() {
         job.resultUrl,
         panelId,
         nextVersion,
-        panel.workflowId || selectedWorkflowId || '',
-        currentWorkflow?.name || 'Unknown',
-        currentWorkflow?.workflow || {},
+        generationSnapshot.workflowId,
+        generationSnapshot.workflowName,
+        generationSnapshot.workflow,
         paramsWithSeed,
         generationTime
       );
@@ -3557,8 +3548,10 @@ export function StoryboardUI() {
         const newHistory = [...(p.imageHistory || []), entry];
         
         // Check if ALL parallel jobs are done (complete, error, or cancelled)
-        const updatedJobs = p.parallelJobs?.map(j => 
-          j.nodeId === job.nodeId ? { ...j, status: 'complete' as const, progress: 100 } : j
+        const updatedJobs = p.parallelJobs?.map(j =>
+          j.nodeId === job.nodeId && (!job.promptId || j.promptId === job.promptId)
+            ? { ...j, status: 'complete' as const, progress: 100 }
+            : j
         ) || [];
         const allDone = updatedJobs.every(j => 
           j.status === 'complete' || j.status === 'error' || j.status === 'cancelled'
@@ -3616,7 +3609,25 @@ export function StoryboardUI() {
       addLog('error', `Failed to save result from ${job.nodeName}: ${err}`);
       // Don't throw - let other jobs continue
     }
-  }, [workflows, selectedWorkflowId, parameterValues, addLog, projectManager]);
+  }, [addLog]);
+
+  const finishParallelJob = useCallback((runId: string, panelId: number, nodeId: string, status: 'error' | 'cancelled', promptId?: string) => {
+    if (!isCurrentGenerationRun(panelId, runId)) return;
+    setPanels(prev => prev.map(p => {
+      if (p.id !== panelId || !p.parallelJobs) return p;
+      const parallelJobs = p.parallelJobs.map(j =>
+        j.nodeId === nodeId && (!promptId || j.promptId === promptId) ? { ...j, status } : j
+      );
+      const allDone = parallelJobs.every(j => ['complete', 'error', 'cancelled'].includes(j.status));
+      return {
+        ...p,
+        parallelJobs,
+        status: !allDone ? 'generating' : parallelJobs.some(j => j.status === 'error') ? 'error'
+          : parallelJobs.some(j => j.status === 'complete') || p.image ? 'complete' : 'empty',
+      };
+    }));
+  }, [isCurrentGenerationRun]);
+  finishParallelJobRef.current = finishParallelJob;
 
   /**
    * Track a parallel job via WebSocket - updates individual job progress
@@ -3629,21 +3640,36 @@ export function StoryboardUI() {
     nodeId: string,
     targetUrl: string,
     ws: ComfyUIWebSocket,
+    runId: string,
+    nodeName: string,
+    seed: number,
+    generationSnapshot: GenerationSnapshot,
     clientId?: string,
     workflowInfo?: WorkflowProgressInfo
   ) => {
-    // Helper to disconnect the per-generation WebSocket after completion
+    const jobKey = `${targetUrl}:${promptId}`;
+    if (!registerGenerationJob(runId, jobKey, { panelId, nodeId, promptId, ws })) {
+      throw new Error('Generation run is no longer active');
+    }
+
+    // Keep the prompt entry until result/error handling, including output fetch/save, settles.
     const cleanupWs = () => {
+      const activeJob = activeGenerationsRef.current.get(jobKey);
+      if (activeJob?.runId === runId) activeGenerationsRef.current.delete(jobKey);
       if (clientId) {
         disconnectWebSocket(targetUrl, clientId);
       }
     };
     
-    ws.trackPrompt(
-      promptId,
-      panelId,
+    try {
+      ws.trackPrompt(
+        promptId,
+        panelId,
       // Progress callback - update this specific job's progress
       (progress) => {
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (!activeJob || activeJob.runId !== runId || activeJob.finishing || !isCurrentGenerationRun(panelId, runId)
+          || progress.promptId !== promptId) return;
         // Use overall percent when available (accounts for multi-sampler workflows)
         const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
         
@@ -3655,7 +3681,7 @@ export function StoryboardUI() {
         setPanels(prev => prev.map(p => {
           if (p.id !== panelId || !p.parallelJobs) return p;
           const updatedJobs = p.parallelJobs.map(j =>
-            j.nodeId === nodeId ? {
+            j.nodeId === nodeId && j.promptId === promptId ? {
               ...j,
               progress: pct,
               currentNodeName: progress.currentNodeName || j.currentNodeName,
@@ -3673,20 +3699,31 @@ export function StoryboardUI() {
       },
       // Completed callback - store result URL and check if all jobs done
       async (_promptId, _outputs) => {
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        markGenerationJobFinishing(runId, jobKey);
+        if (!isCurrentGenerationRun(panelId, runId)) {
+          settleGenerationJob(runId, jobKey);
+          cleanupWs();
+          return;
+        }
         addLog('comfyui', `Parallel job complete on node ${nodeId} for panel ${panelId}`);
         
         // Fetch result from history
         try {
-          const historyResponse = await fetch(`${targetUrl}/history/${promptId}`);
-          if (!historyResponse.ok) throw new Error(`HTTP ${historyResponse.status}`);
-          
-          const historyData = await historyResponse.json();
-          const promptData = historyData[promptId];
+          let promptData = _outputs ? { outputs: _outputs } : undefined;
+          if (!promptData) {
+            const response = await fetch(`${targetUrl}/history/${promptId}`, { signal: AbortSignal.timeout(15000) });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            promptData = (await response.json())[promptId];
+          }
           
           if (promptData?.outputs) {
-            // Collect media URL from first output (images, gifs, or videos)
+            // Use the output selection captured when this prompt was submitted.
+            const useAllOutputs = generationSnapshot.selectedOutputNodeIds.length === 0;
             let resultUrl: string | undefined;
             for (const nodeIdKey of Object.keys(promptData.outputs)) {
+              if (!useAllOutputs && !generationSnapshot.selectedOutputNodeIds.includes(nodeIdKey)) continue;
               const output = promptData.outputs[nodeIdKey];
               const mediaOutputs = extractMediaOutputs(output, targetUrl);
               if (mediaOutputs.length > 0) {
@@ -3696,200 +3733,78 @@ export function StoryboardUI() {
             }
             
             if (resultUrl) {
-              // Update this job's result URL and status
+              // Update this job's result URL and status, matching the prompt identity.
               setPanels(prev => prev.map(p => {
                 if (p.id !== panelId || !p.parallelJobs) return p;
                 const updatedJobs = p.parallelJobs.map(j =>
-                  j.nodeId === nodeId ? { ...j, status: 'complete' as const, progress: 100, resultUrl } : j
+                  j.nodeId === nodeId && j.promptId === promptId
+                    ? { ...j, status: 'complete' as const, progress: 100, resultUrl }
+                    : j
                 );
-                
-                // NEW: Save this individual result immediately (don't wait for all)
-                // Find the updated job to pass to save function
-                const completedJob = updatedJobs.find(j => j.nodeId === nodeId);
-                if (completedJob && completedJob.resultUrl) {
-                  // Use setTimeout to avoid state update conflicts
-                  setTimeout(() => {
-                    saveIndividualParallelResult(panelId, {
-                      nodeId: completedJob.nodeId,
-                      nodeName: completedJob.nodeName,
-                      resultUrl: completedJob.resultUrl!,
-                      seed: completedJob.seed
-                    });
-                  }, 0);
-                }
-                
+
                 // Check if ALL jobs are in terminal state (for cleanup/logging only, not batch save)
                 const allTerminal = updatedJobs.every(j =>
                   j.status === 'complete' || j.status === 'error' || j.status === 'cancelled'
                 );
-                
+
                 if (allTerminal) {
-                  // All jobs done - just log completion (images already saved individually)
                   const completeCount = updatedJobs.filter(j => j.status === 'complete').length;
                   addLog('info', `All parallel jobs finished! ${completeCount} successful, ${updatedJobs.length - completeCount} failed`);
-                  
-                  // Clear parallel jobs state
-                  return { 
-                    ...p, 
-                    parallelJobs: updatedJobs, 
+                  return {
+                    ...p,
+                    parallelJobs: updatedJobs,
                     status: completeCount > 0 ? 'complete' : 'error',
                     batchSaveTriggered: true
                   };
                 }
-                
+
                 return { ...p, parallelJobs: updatedJobs };
               }));
-              cleanupWs();
+              await saveIndividualParallelResult(panelId, {
+                nodeId,
+                nodeName,
+                resultUrl,
+                seed,
+                promptId,
+              }, generationSnapshot);
+              return;
             }
           }
+          throw new Error('Generation completed without media output');
         } catch (error) {
           addLog('error', `Error fetching parallel result: ${error}`);
-          setPanels(prev => prev.map(p => {
-            if (p.id !== panelId || !p.parallelJobs) return p;
-            return {
-              ...p,
-              parallelJobs: p.parallelJobs.map(j =>
-                j.nodeId === nodeId ? { ...j, status: 'error' as const } : j
-              )
-            };
-          }));
+          finishParallelJob(runId, panelId, nodeId, 'error', promptId);
+        } finally {
+          settleGenerationJob(runId, jobKey);
           cleanupWs();
         }
       },
       // Error callback
       (_promptId, error) => {
-        addLog('error', `Parallel job failed on node ${nodeId}: ${error}`);
-        setPanels(prev => prev.map(p => {
-          if (p.id !== panelId || !p.parallelJobs) return p;
-          return {
-            ...p,
-            parallelJobs: p.parallelJobs.map(j =>
-              j.nodeId === nodeId ? { ...j, status: 'error' as const } : j
-            )
-          };
-        }));
+        const activeJob = activeGenerationsRef.current.get(jobKey);
+        if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        markGenerationJobFinishing(runId, jobKey);
+        if (!isCurrentGenerationRun(panelId, runId)) {
+          settleGenerationJob(runId, jobKey);
+          cleanupWs();
+          return;
+        }
+        const cancelled = error === 'Generation cancelled';
+        addLog(cancelled ? 'info' : 'error', `Parallel job on node ${nodeId}: ${error}`);
+        finishParallelJob(runId, panelId, nodeId, cancelled ? 'cancelled' : 'error', promptId);
+        settleGenerationJob(runId, jobKey);
         cleanupWs();
       },
-      // Workflow info for multi-phase progress tracking
-      workflowInfo
-    );
-  }, [addLog, saveIndividualParallelResult]);
-  
-  /**
-   * Track a parallel job via polling (fallback when WebSocket fails)
-   */
-  const trackParallelJobWithPolling = useCallback(async (
-    promptId: string,
-    panelId: number,
-    nodeId: string,
-    targetUrl: string
-  ) => {
-    const maxAttempts = 600;
-    let attempts = 0;
-    
-    const checkStatus = async () => {
-      if (attempts >= maxAttempts) {
-        addLog('error', `Parallel job timeout on node ${nodeId}`);
-        setPanels(prev => prev.map(p => {
-          if (p.id !== panelId || !p.parallelJobs) return p;
-          return {
-            ...p,
-            parallelJobs: p.parallelJobs.map(j =>
-              j.nodeId === nodeId ? { ...j, status: 'error' as const } : j
-            )
-          };
-        }));
-        return;
-      }
-      
-      attempts++;
-      
-      try {
-        const historyResponse = await fetch(`${targetUrl}/history/${promptId}`);
-        if (historyResponse.ok) {
-          const history = await historyResponse.json();
-          
-          if (history[promptId]?.outputs) {
-            // Job complete - extract result (images, gifs, or videos)
-            let resultUrl: string | undefined;
-            for (const nodeIdKey of Object.keys(history[promptId].outputs)) {
-              const output = history[promptId].outputs[nodeIdKey];
-              const mediaOutputs = extractMediaOutputs(output, targetUrl);
-              if (mediaOutputs.length > 0) {
-                resultUrl = mediaOutputs[0].url;
-                break;
-              }
-            }
-            
-            if (resultUrl) {
-              setPanels(prev => prev.map(p => {
-                if (p.id !== panelId || !p.parallelJobs) return p;
-                const updatedJobs = p.parallelJobs.map(j =>
-                  j.nodeId === nodeId ? { ...j, status: 'complete' as const, progress: 100, resultUrl } : j
-                );
-                
-                // NEW: Save this individual result immediately (don't wait for all)
-                // Find the updated job to pass to save function
-                const completedJob = updatedJobs.find(j => j.nodeId === nodeId);
-                if (completedJob && completedJob.resultUrl) {
-                  // Use setTimeout to avoid state update conflicts
-                  setTimeout(() => {
-                    saveIndividualParallelResult(panelId, {
-                      nodeId: completedJob.nodeId,
-                      nodeName: completedJob.nodeName,
-                      resultUrl: completedJob.resultUrl!,
-                      seed: completedJob.seed
-                    });
-                  }, 0);
-                }
-                
-                // Check if ALL jobs are in terminal state (for cleanup/logging only, not batch save)
-                const allTerminal = updatedJobs.every(j =>
-                  j.status === 'complete' || j.status === 'error' || j.status === 'cancelled'
-                );
-                
-                if (allTerminal) {
-                  // All jobs done - just log completion (images already saved individually)
-                  const completeCount = updatedJobs.filter(j => j.status === 'complete').length;
-                  addLog('info', `All parallel jobs finished! ${completeCount} successful, ${updatedJobs.length - completeCount} failed`);
-                  
-                  // Clear parallel jobs state
-                  return { 
-                    ...p, 
-                    parallelJobs: updatedJobs, 
-                    status: completeCount > 0 ? 'complete' : 'error',
-                    batchSaveTriggered: true
-                  };
-                }
-                
-                return { ...p, parallelJobs: updatedJobs };
-              }));
-              return;
-            }
-          }
-        }
-        
-        // Update progress estimate
-        const progress = Math.min((attempts / 100) * 100, 90);
-        setPanels(prev => prev.map(p => {
-          if (p.id !== panelId || !p.parallelJobs) return p;
-          return {
-            ...p,
-            parallelJobs: p.parallelJobs.map(j =>
-              j.nodeId === nodeId ? { ...j, progress } : j
-            )
-          };
-        }));
-        
-        setTimeout(checkStatus, 1000);
-      } catch (error) {
-        addLog('error', `Error polling parallel result: ${error}`);
-        setTimeout(checkStatus, 1000);
-      }
-    };
-    
-    checkStatus();
-  }, [addLog, saveIndividualParallelResult]);
+        // Workflow info for multi-phase progress tracking
+        workflowInfo
+      );
+    } catch (error) {
+      settleGenerationJob(runId, jobKey);
+      cleanupWs();
+      throw error;
+    }
+  }, [addLog, saveIndividualParallelResult, finishParallelJob, registerGenerationJob, markGenerationJobFinishing, settleGenerationJob, isCurrentGenerationRun]);
+  trackParallelJobWithWebSocketRef.current = trackParallelJobWithWebSocket;
   
   // Note: Individual job cancel/retry functions and batchSaveParallelResults removed
   // Functionality now handled through streaming individual saves via saveIndividualParallelResult
@@ -3945,7 +3860,8 @@ export function StoryboardUI() {
     if (!provider) {
       throw new Error('Selected provider not found. Please configure in Settings.');
     }
-    
+
+    const submittedOAuthToken = provider.credentials.oauthToken;
     try {
       const result = await api.enhancePrompt({
         userPrompt: prompt.trim(),
@@ -3961,6 +3877,18 @@ export function StoryboardUI() {
         },
       });
       
+      const currentProvider = getConfiguredProviders().find(
+        current => current.providerId === llmProvider,
+      );
+      if (
+        result.oauth_token &&
+        submittedOAuthToken &&
+        getSelectedLlmSettings()?.provider === llmProvider &&
+        currentProvider?.credentials.oauthToken === submittedOAuthToken
+      ) {
+        updateSavedOAuthToken(llmProvider, result.oauth_token);
+      }
+
       if (result.success) {
         showInfo('Prompt enhanced successfully');
         return result.enhanced_prompt;
@@ -4002,7 +3930,7 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   
   // Save project handler
-  const handleSaveProject = async () => {
+  const handleSaveProject = useCallback(async () => {
     const result = await projectManager.saveProjectState(
       panels,
       undefined, // Workflows are NOT saved in projects — they belong to the application
@@ -4023,17 +3951,17 @@ export function StoryboardUI() {
     } else {
       showError(`Failed to save project: ${result.error}`);
     }
-  };
+  }, [panels, parameterValues, selectedWorkflowId, renderNodes, comfyUrl, cameraAngles, projectSettings.name, showInfo, showError]);
 
   // Save project as handler - opens file browser dialog for new location/name
-  const handleSaveProjectAs = () => {
+  const handleSaveProjectAs = useCallback(() => {
     setFileBrowserMode('save');
-  };
+  }, []);
   
   // Load project handler - opens file browser dialog to select project
-  const handleLoadProject = () => {
+  const handleLoadProject = useCallback(() => {
     setFileBrowserMode('open');
-  };
+  }, []);
 
   // Load a recent project directly by its saved path
   const handleLoadRecentProject = (projectFilePath: string) => {
@@ -4741,40 +4669,29 @@ export function StoryboardUI() {
     }
   };
 
-  // Handle cancelling all running generations
-  const handleCancelGenerations = async () => {
-    const hasBusyNodes = renderNodes.some(n => n.status === 'busy');
-    const hasGeneratingPanels = panels.some(p => p.status === 'generating');
-    
-    if (!hasBusyNodes && !hasGeneratingPanels) {
-      showInfo('No generations are currently running');
+  // Cancel only prompts submitted by this canvas, not other users' work on busy nodes.
+  const cancelGenerations = async (panelId?: number, nodeId?: string) => {
+    const jobs = [...activeGenerationsRef.current.values()].filter(job =>
+      !job.finishing &&
+      (panelId === undefined || job.panelId === panelId) &&
+      (nodeId === undefined || job.nodeId === nodeId)
+    );
+    if (!jobs.length) {
+      showInfo('No submitted prompts to cancel. If submission is still in progress, try again once queued.');
       return;
     }
-
-    showInfo('Cancelling all running generations...');
-
-    try {
-      const results = await orchestratorManager.cancelAllGenerations();
-      
-      const successCount = results.filter(r => r.success).length;
-      
-      if (successCount > 0) {
-        showInfo(`Cancelled ${successCount} generation(s)`);
-      } else {
-        showError('Failed to cancel generations');
-      }
-
-      // Update panels to reflect cancellation
-      setPanels(prev => prev.map(p => 
-        p.status === 'generating' 
-          ? { ...p, status: 'error', error: 'Cancelled by user' }
-          : p
-      ));
-    } catch (err) {
-      showError(`Error cancelling generations: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      console.error('[Cancel] Error:', err);
+    let cancelled = 0;
+    // Sequential requests avoid competing interrupts on a shared render node.
+    for (const job of jobs) {
+      if (await job.ws.cancelGeneration(job.promptId)) cancelled++;
+    }
+    if (cancelled) showWarning(`Cancelled ${cancelled} generation(s)`);
+    if (cancelled < jobs.length) {
+      showInfo(`${jobs.length - cancelled} prompt(s) already finished or could not be cancelled; tracking remains active.`);
     }
   };
+
+  const handleCancelGenerations = () => cancelGenerations();
 
   // New project handler
   const handleNewProject = useCallback(async () => {
@@ -4835,7 +4752,7 @@ export function StoryboardUI() {
     // 5. Open project settings modal for user to configure
     setShowProjectSettings(true);
     
-  }, [panels, handleSaveProject, projectSettings.orchestratorUrl]);
+  }, [panels, handleSaveProject, projectSettings.orchestratorUrl, setProjectSettings]);
 
   // ---------------------------------------------------------------------------
   // Effects - Global keyboard shortcuts
@@ -6124,30 +6041,8 @@ export function StoryboardUI() {
           {/* Generation Progress — shows when any panel is generating */}
           <GenerationProgress
             panels={panels}
-            onCancelSingle={async (panelId) => {
-              if (wsRef.current) {
-                const success = await wsRef.current.cancelGeneration();
-                if (success) {
-                  setPanels(prev => prev.map(p =>
-                    p.id === panelId ? { ...p, status: 'empty', progress: 0, parallelJobs: undefined } : p
-                  ));
-                  showWarning('Generation cancelled');
-                } else {
-                  showError('Failed to cancel generation');
-                }
-              }
-            }}
-            onCancelParallelJob={async (_panelId, nodeId) => {
-              const node = renderNodes.find(n => n.id === nodeId);
-              if (node) {
-                try {
-                  await fetch(`${node.url}/interrupt`, { method: 'POST' });
-                  showWarning(`Cancelled generation on ${node.name}`);
-                } catch (err) {
-                  showError(`Failed to cancel on ${node.name}: ${err}`);
-                }
-              }
-            }}
+            onCancelSingle={(panelId) => cancelGenerations(panelId)}
+            onCancelParallelJob={(panelId, nodeId) => cancelGenerations(panelId, nodeId)}
           />
           
           {/* Multi-Node Selector */}

@@ -243,7 +243,7 @@ function findMatchingModel(searchPath: string | undefined, options: string[]): s
 }
 
 export function EnumWidget({ parameter, value, onChange, disabled }: ParameterWidgetProps) {
-  const options = parameter.constraints?.options || [];
+  const options = useMemo(() => parameter.constraints?.options || [], [parameter.constraints?.options]);
   const isModel = options.length > 0 && options.every(isModelPath);
   
   const [localValue, setLocalValue] = useState(() => {
@@ -632,16 +632,13 @@ export function LoRAWidget({
   // or just number for strength-only parameters
   const isComplex = typeof value === 'object' && value !== null;
   
-  // Normalize path separators for consistent comparison
-  const normalizePath = (path: string) => path.replace(/\\/g, '/');
-  
   // Find matching lora from available list, handling path separator differences
-  const findMatchingLora = (searchPath: string) => {
+  const findMatchingLora = useCallback((searchPath: string) => {
     if (!searchPath || availableLoras.length === 0) return '';
-    const normalized = normalizePath(searchPath);
-    const match = availableLoras.find(lora => normalizePath(lora) === normalized);
+    const normalized = searchPath.replace(/\\/g, '/');
+    const match = availableLoras.find(lora => lora.replace(/\\/g, '/') === normalized);
     return match || '';
-  };
+  }, [availableLoras]);
   
   const [localLoraName, setLocalLoraName] = useState(
     findMatchingLora(isComplex ? value.lora_name : parameter.constraints?.lora_name || '')
@@ -662,7 +659,7 @@ export function LoRAWidget({
     } else if (typeof value === 'number') {
       setLocalStrength(value);
     }
-  }, [value, availableLoras]);
+  }, [value, findMatchingLora]);
   
   // Sync bypassed state from props
   useEffect(() => {
@@ -755,7 +752,7 @@ export function LoRAWidget({
                   const rootLoras: string[] = [];
                   
                   availableLoras.forEach(lora => {
-                    const normalized = normalizePath(lora);
+                    const normalized = lora.replace(/\\/g, '/');
                     const parts = normalized.split('/');
                     if (parts.length > 1) {
                       const folder = parts.slice(0, -1).join('/');

@@ -41,8 +41,9 @@ export function ErrorNotification({
 
       return () => clearInterval(timer);
     }
+    // Intentional mount-duration semantics: changing onClose must not reset the countdown.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [duration]); // onClose intentionally omitted to prevent timer reset
+  }, [duration]);
 
   const handleClose = () => {
     setIsVisible(false);

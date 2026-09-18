@@ -5,11 +5,14 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+CancellationStatus = Literal["cancelled", "completed", "unconfirmed"]
+_CANCEL_RECONCILIATION_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -161,8 +164,163 @@ class ComfyUIClient:
         return str(name)
 
     async def interrupt(self) -> None:
+        """Interrupt the current execution on this backend.
+
+        This is a legacy node-wide operation. Prefer :meth:`cancel_prompt`
+        when a prompt ID is available because an unconditional interrupt can
+        stop unrelated work.
+        """
         response = await self._client.post("/interrupt")
         response.raise_for_status()
+
+    async def cancel_prompt(self, prompt_id: str) -> CancellationStatus:
+        """Cancel one prompt and verify the resulting terminal state.
+
+        ComfyUI exposes queued prompts through ``GET /queue``. Pending prompts
+        can be removed specifically with ``POST /queue``; running prompts can
+        only use the legacy node-wide ``/interrupt`` endpoint. There is an
+        unavoidable check/interrupt race on older nodes: another prompt can
+        start between those two requests. The post-operation history/queue
+        checks therefore treat an HTTP acknowledgement as unconfirmed.
+
+        Args:
+            prompt_id: The ComfyUI prompt ID to cancel.
+
+        Returns:
+            ``cancelled`` for a confirmed removal/interruption, ``completed``
+            when history proves that the prompt finished successfully, or
+            ``unconfirmed`` when the request was accepted but its outcome is
+            still ambiguous.
+        """
+        response = await self._client.get("/queue")
+        response.raise_for_status()
+        queue = response.json()
+        initial_status = _queue_status(queue, prompt_id)
+
+        if initial_status == "pending":
+            response = await self._client.post(
+                "/queue",
+                json={"delete": [prompt_id]},
+            )
+            response.raise_for_status()
+            status = await self._reconcile_cancellation(
+                prompt_id,
+                allow_absent=True,
+                interrupt_if_running=True,
+            )
+            logger.info("Prompt %s queued cancellation result: %s", prompt_id, status)
+            return status
+
+        if initial_status == "running":
+            logger.warning(
+                "Cancelling running prompt %s with legacy node-wide /interrupt; "
+                "another prompt could start between queue inspection and interrupt",
+                prompt_id,
+            )
+            await self.interrupt()
+            status = await self._reconcile_cancellation(
+                prompt_id,
+                allow_absent=False,
+                interrupt_if_running=False,
+            )
+            logger.info("Prompt %s running cancellation result: %s", prompt_id, status)
+            return status
+
+        # It may have completed just before the initial queue inspection. Do
+        # not call /interrupt, and distinguish that from an unconfirmed miss.
+        status = await self._reconcile_cancellation(
+            prompt_id,
+            allow_absent=False,
+            interrupt_if_running=False,
+        )
+        logger.info("Prompt %s was not queued; cancellation result: %s", prompt_id, status)
+        return status
+
+    async def _reconcile_cancellation(
+        self,
+        prompt_id: str,
+        *,
+        allow_absent: bool,
+        interrupt_if_running: bool,
+    ) -> CancellationStatus:
+        """Bound history/queue races after a delete or interrupt operation."""
+        saw_absent = False
+        saw_reappearance = False
+        saw_history_entry = False
+        for _attempt in range(_CANCEL_RECONCILIATION_ATTEMPTS):
+            history_status, history = await self._history_cancellation_status(prompt_id)
+            if history is not None:
+                saw_history_entry = True
+            if history_status is not None:
+                return history_status
+
+            response = await self._client.get("/queue")
+            response.raise_for_status()
+            queue = response.json()
+            status = _queue_status(queue, prompt_id)
+            if status == "running":
+                # A later authoritative presence check invalidates an earlier
+                # absent observation; the queued removal is unconfirmed.
+                saw_reappearance |= saw_absent
+                saw_absent = False
+                if interrupt_if_running:
+                    # Only interrupt after this exact prompt was observed in
+                    # queue_running; never infer it from an empty queue.
+                    logger.warning(
+                        "Queued prompt %s started during cancellation; "
+                        "using legacy node-wide /interrupt",
+                        prompt_id,
+                    )
+                    await self.interrupt()
+                    return await self._reconcile_cancellation(
+                        prompt_id,
+                        allow_absent=False,
+                        interrupt_if_running=False,
+                    )
+                continue
+            if status == "pending":
+                # The prompt reappeared after removal, so it was not cancelled.
+                saw_reappearance |= saw_absent
+                saw_absent = False
+                continue
+
+            saw_absent = True
+
+        # Empty queue plus no history is enough only for a prompt that was
+        # explicitly removed from queue. For a running prompt it is ambiguous:
+        # it may have completed, been interrupted, or simply disappeared.
+        if allow_absent and saw_absent and not saw_reappearance and not saw_history_entry:
+            return "cancelled"
+        return "unconfirmed"
+
+    async def _history_cancellation_status(
+        self,
+        prompt_id: str,
+    ) -> tuple[CancellationStatus | None, dict[str, Any] | None]:
+        """Return a verified terminal result, or ``None`` while it is pending."""
+        response = await self._client.get(f"/history/{prompt_id}")
+        if response.status_code == 404:
+            return None, None
+        response.raise_for_status()
+        payload = response.json()
+        history = payload.get(prompt_id)
+        if not isinstance(history, dict):
+            return None, None
+
+        status = history.get("status") or {}
+        messages = status.get("messages") or []
+        for message in messages:
+            message_type = message[0] if isinstance(message, list) and message else None
+            if message_type == "execution_interrupted":
+                # Interruption wins over a stale completed flag.
+                return "cancelled", history
+
+        status_string = str(status.get("status_str") or "").lower()
+        if status_string in {"error", "failed", "failure", "exception", "execution_error"}:
+            return None, history
+        if status.get("completed") is True or status_string in {"success", "completed"}:
+            return "completed", history
+        return None, history
 
     async def free_memory(self) -> None:
         response = await self._client.post(
@@ -310,6 +468,8 @@ class ComfyUIClient:
                 node_id=_maybe_string(node_id),
                 status="executing",
             )
+        if message_type == "execution_interrupted":
+            raise RuntimeError("ComfyUI execution interrupted")
         if message_type == "execution_error":
             node_id = _maybe_string(message_data.get("node_id"))
             error = message_data.get("exception_message", "Execution error")
@@ -366,6 +526,34 @@ class ComfyUIClient:
                 if message_type is None:
                     continue
                 yield message_type, message_data
+
+
+def _queue_status(queue: Any, prompt_id: str) -> Literal["running", "pending", "absent"]:
+    """Return the exact queue state for one prompt."""
+    if not isinstance(queue, dict):
+        return "absent"
+    if _queue_contains_prompt(queue.get("queue_running", []), prompt_id):
+        return "running"
+    if _queue_contains_prompt(queue.get("queue_pending", []), prompt_id):
+        return "pending"
+    return "absent"
+
+
+def _queue_contains_prompt(entries: Any, prompt_id: str) -> bool:
+    """Return whether ComfyUI queue entries contain a prompt ID."""
+    if not isinstance(entries, list):
+        return False
+
+    for entry in entries:
+        if isinstance(entry, dict):
+            entry_prompt_id = entry.get("prompt_id")
+        elif isinstance(entry, (list, tuple)) and len(entry) > 1:
+            entry_prompt_id = entry[1]
+        else:
+            continue
+        if entry_prompt_id is not None and str(entry_prompt_id) == prompt_id:
+            return True
+    return False
 
 
 def _maybe_string(value: Any) -> str | None:

@@ -500,8 +500,7 @@ export function useFileBrowser(
     };
 
     loadInitialDrives();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orchestratorUrl, isOpen, initialPath]);
+  }, [orchestratorUrl, isOpen, initialPath, navigateTo]);
 
   return {
     state,

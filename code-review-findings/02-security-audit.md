@@ -8,13 +8,21 @@
 
 This security audit identified **46+ critical and high-severity security vulnerabilities** across multiple categories including authentication, input validation, path traversal, CORS misconfiguration, secrets management, and dependency security.
 
+## Current status and scope note
+
+This is a historical review, not a current formal security audit. The original observations below remain labeled by their original review date; they are not a claim that every current line or recommendation was reverified.
+
+- Current Antigravity application-credential literals have been removed from the checkout. Older published history contains application credential material and has not been purged or rewritten.
+- Public desktop-application OAuth client IDs (including the OpenAI Codex client ID) are not private access secrets. They must be distinguished from confidential web-client secrets and personal access or refresh tokens. Ownership and client type remain qualified where unknown.
+- A bounded local pattern scan found no likely personal keys or tokens in the examined tracked files/history. Databases were excluded; this is not proof of safety and is not a formal audit.
+
 ## Verification Status (Feb 4, 2026)
 
-**Verified:**
+**Verified at the time of the historical review:**
 - `/api/read-image` reads user-provided paths directly without allowlisting.
 - `/api/delete-file` uses raw filename/subfolder in URL construction.
 - Orchestrator CORS uses `allow_origins=["*"]`.
-- Hardcoded OAuth client secret present in `api/providers/oauth.py`.
+- OAuth application credential material was present in the reviewed source/configuration at that time; current Antigravity literals are removed, but older published history was not purged.
 
 **Incorrect:**
 - XSS claim via `dangerouslySetInnerHTML` is not supported (no matches in frontend).
@@ -190,60 +198,28 @@ redis_client.setex(
 
 ---
 
-### 1.3 Client Secrets Hardcoded in Source Code
+### 1.3 Historical application credential material in source/history
 
-**Severity:** CRITICAL
-**File:** `CinemaPromptEngineering/api/providers/oauth.py`
+**Original severity:** CRITICAL
+**Original file:** `CinemaPromptEngineering/api/providers/oauth.py`
 
-**Vulnerability:** OAuth client secrets hardcoded in source code.
+**Historical finding:** The original review identified Antigravity application credential material in the then-reviewed source/configuration. The current checkout no longer contains literal Antigravity app values: the client ID and client secret are resolved from existing provider settings or external environment configuration, and missing configuration fails before an outbound request. This is a remediation status note, not a claim that the material never existed.
 
+Older published history contains application credential material and has not been purged. Do not treat that history as safe merely because the current checkout is clean. Also distinguish credential classes: a public desktop-application client ID (including OpenAI's public desktop client ID) is not a confidential web-client secret and neither is a personal access or refresh token. Where ownership or client type is unknown, keep it qualified rather than attributing it to the user or Google.
+
+**Current handling:**
 ```python
-# Lines 106-110: Antigravity credentials exposed
+# Illustrative placeholders only; no credential values are included here.
 "antigravity": {
-    "client_id": "<REDACTED - moved to environment variable>",
-    "client_secret": "<REDACTED - moved to environment variable>",
+    "client_id": os.environ.get("ANTIGRAVITY_CLIENT_ID"),
+    "client_secret": os.environ.get("ANTIGRAVITY_CLIENT_SECRET"),
     "redirect_uri": "http://localhost:36742/oauth-callback",
-    ...
-},
-
-# Lines 152-156: OpenAI Codex credentials exposed
-"openai_codex": {
-    "client_id": "<REDACTED - moved to environment variable>",
-    "redirect_uri": "http://localhost:1455/auth/callback",
-    ...
 },
 ```
 
-**Attack Vectors:**
-- Anyone with source code access can steal OAuth credentials
-- Secrets exposed in version control history
-- API access to Google/OpenAI services compromised
+The private CPE `CinemaPromptEngineering/.env` contains operator-supplied values and is not the frontend `.env`/`VITE_*` configuration. The tracked `.env.example` contains placeholders only. Existing stored tokens are not deleted by this cleanup, and re-login alone does not supply missing app configuration.
 
-**Impact:** Complete OAuth provider compromise - attacker can authenticate as application
-
-**Recommendation:**
-```python
-import os
-from dotenv import load_dotenv
-load_dotenv()
-
-OAUTH_CONFIGS = {
-    "antigravity": {
-        "client_id": os.getenv("ANTIGRAVITY_CLIENT_ID"),
-        "client_secret": os.getenv("ANTIGRAVITY_CLIENT_SECRET"),
-        "redirect_uri": os.getenv("ANTIGRAVITY_REDIRECT_URI"),
-    },
-    "openai_codex": {
-        "client_id": os.getenv("OPENAI_CODEX_CLIENT_ID"),
-        "redirect_uri": os.getenv("OPENAI_CODEX_REDIRECT_URI"),
-    },
-}
-
-# Create .env file (NOT committed to git):
-# ANTIGRAVITY_CLIENT_ID=1071006060591-...
-# ANTIGRAVITY_CLIENT_SECRET=GOCSPX-...
-# OPENAI_CODEX_CLIENT_ID=app_...
-```
+A bounded local pattern scan found no likely personal keys or tokens in the examined tracked files/history, with databases excluded. That result is not proof of safety and no formal security audit was performed.
 
 ---
 
@@ -910,7 +886,7 @@ npm audit --audit-level=moderate
 
 1. **Add authentication to all endpoints** - Prevent unauthorized access
 2. **Fix path traversal vulnerabilities** - Prevent arbitrary file access
-3. **Remove hardcoded OAuth secrets** - Move to environment variables
+3. **Verify confidential OAuth app configuration** - Current Antigravity literals are externalized; older published history contains application credential material and was not purged
 4. **Restrict CORS origins** - Prevent cross-site attacks
 
 ### High Priority (Within 1 week)

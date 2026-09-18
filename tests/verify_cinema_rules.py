@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Quick test script to verify cinema_rules module works."""
 
-import sys
-sys.path.insert(0, r'Z:\python\DirectorsConsole\CinemaPromptEngineering')
-
 def test_imports():
     """Test that all cinema_rules modules can be imported."""
     print("Testing cinema_rules imports...")
