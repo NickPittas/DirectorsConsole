@@ -15,6 +15,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -62,6 +63,26 @@ PROVIDER_ENDPOINTS: Dict[str, str] = {
     # OpenAI Codex uses ChatGPT backend Codex Responses API
     "openai_codex": "https://chatgpt.com/backend-api/codex/responses",
 }
+
+
+def _local_endpoint_url(endpoint: str, provider: str, resource: str) -> str:
+    """Build a local-provider route without duplicating its API path."""
+    parsed = urlsplit(endpoint)
+    path = parsed.path.rstrip("/")
+
+    if provider == "ollama":
+        api_suffix = "/api"
+        known_suffixes = ("/api/chat", "/api/tags", "/api")
+    else:
+        api_suffix = "/v1"
+        known_suffixes = ("/v1/chat/completions", "/v1/models", "/v1")
+
+    for suffix in known_suffixes:
+        if path == suffix or path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+
+    return urlunsplit(parsed._replace(path=f"{path}{api_suffix}/{resource}"))
 
 
 # =============================================================================
@@ -381,22 +402,13 @@ class LLMService:
     ) -> LLMResponse:
         """Call local LLM providers (Ollama or LM Studio)."""
         default_endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["ollama"])
-        endpoint = credentials.endpoint or default_endpoint
-
-        # Normalize endpoint - strip trailing slash
-        endpoint = endpoint.rstrip("/")
-
-        # For LM Studio, handle both "http://host:port" and "http://host:port/v1" formats
-        if provider == "lmstudio":
-            if not endpoint.endswith("/v1"):
-                endpoint = f"{endpoint}/v1"
-            endpoint = f"{endpoint}/chat/completions"
+        endpoint = _local_endpoint_url(
+            credentials.endpoint or default_endpoint,
+            provider,
+            "chat" if provider == "ollama" else "chat/completions",
+        )
 
         if provider == "ollama":
-            # Ollama uses /api/chat endpoint
-            if not endpoint.endswith("/api/chat"):
-                endpoint = f"{endpoint}/api/chat"
-
             # Strip provider prefix if present (e.g., "ollama:llama3" -> "llama3")
             if model.startswith("ollama:"):
                 model = model.split(":", 1)[1]
@@ -1518,20 +1530,14 @@ class LLMService:
 
     async def _fetch_local_models(self, credentials: LLMCredentials, provider: str) -> dict:
         """Fetch available models from local providers (Ollama, LM Studio)."""
-        if provider == "ollama":
-            endpoint = credentials.endpoint or "http://localhost:11434"
-            # Strip trailing slash
-            endpoint = endpoint.rstrip("/")
-            models_url = f"{endpoint}/api/tags"
-        else:  # lmstudio
-            endpoint = credentials.endpoint or "http://localhost:1234"
-            # Strip trailing slash
-            endpoint = endpoint.rstrip("/")
-            # Handle both "http://host:port" and "http://host:port/v1" formats
-            if endpoint.endswith("/v1"):
-                models_url = f"{endpoint}/models"
-            else:
-                models_url = f"{endpoint}/v1/models"
+        endpoint = credentials.endpoint or PROVIDER_ENDPOINTS.get(
+            provider, PROVIDER_ENDPOINTS["ollama"]
+        )
+        models_url = _local_endpoint_url(
+            endpoint,
+            provider,
+            "tags" if provider == "ollama" else "models",
+        )
 
         async with aiohttp.ClientSession() as session:
             try:
