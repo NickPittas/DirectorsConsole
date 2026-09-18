@@ -153,6 +153,15 @@ export function GalleryGrid({ orchestratorUrl, onContextMenu, onDoubleClick }: G
     overscan: 3,
   });
 
+  // Clear cached row estimates when the grid geometry changes. Actual row
+  // heights are supplied by measureElement below.
+  useEffect(() => {
+    virtualizer.measure();
+    parentRef.current?.querySelectorAll<HTMLElement>('[data-index]').forEach((element) => {
+      virtualizer.measureElement(element);
+    });
+  }, [columnCount, containerWidth, thumbnailSize, visibleFiles.length, virtualizer]);
+
   // ---------------------------------------------------------------------------
   // Selection handlers
   // ---------------------------------------------------------------------------
@@ -193,65 +202,66 @@ export function GalleryGrid({ orchestratorUrl, onContextMenu, onDoubleClick }: G
   // Render
   // ---------------------------------------------------------------------------
 
-  if (visibleFiles.length === 0) {
-    return (
-      <div className="gallery-grid-empty">
-        {currentFiles.length === 0
-          ? 'No files in this folder'
-          : 'No files match the current filters'}
-      </div>
-    );
-  }
-
   return (
     <div
       ref={parentRef}
       className="gallery-grid-virtual-scroll"
-      style={{ overflow: 'auto', flex: 1 }}
+      style={{ overflow: 'auto', flex: 1, minWidth: 0, minHeight: 0 }}
     >
-      <div
-        style={{
-          height: `${virtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
-        }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const startIndex = virtualRow.index * columnCount;
-          const rowFiles = visibleFiles.slice(startIndex, startIndex + columnCount);
-          return (
-            <div
-              key={virtualRow.key}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: `${virtualRow.size}px`,
-                transform: `translateY(${virtualRow.start}px)`,
-                display: 'grid',
-                gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
-                gap: '8px',
-                padding: '0 4px',
-              }}
-            >
-              {rowFiles.map((file) => (
-                <GalleryThumbnail
-                  key={file.path}
-                  file={file}
-                  thumbnailSize={thumbnailSize}
-                  isSelected={selectedFiles.has(file.path)}
-                  orchestratorUrl={orchestratorUrl}
-                  rating={ratings[file.path] ?? file.rating ?? 0}
-                  onClick={(e) => handleFileClick(file, e)}
-                  onDoubleClick={() => handleFileDoubleClick(file)}
-                  onContextMenu={onContextMenu ? (e) => onContextMenu(e, file) : undefined}
-                />
-              ))}
-            </div>
-          );
-        })}
-      </div>
+      {visibleFiles.length === 0 ? (
+        <div className="gallery-grid-empty">
+          {currentFiles.length === 0
+            ? 'No files in this folder'
+            : 'No files match the current filters'}
+        </div>
+      ) : (
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            flexShrink: 0,
+            width: '100%',
+            minWidth: 0,
+            position: 'relative',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const startIndex = virtualRow.index * columnCount;
+            const rowFiles = visibleFiles.slice(startIndex, startIndex + columnCount);
+            return (
+              <div
+                key={virtualRow.key}
+                ref={virtualizer.measureElement}
+                data-index={virtualRow.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
+                  display: 'grid',
+                  gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+                  gap: '8px',
+                  padding: '0 4px',
+                }}
+              >
+                {rowFiles.map((file) => (
+                  <GalleryThumbnail
+                    key={file.path}
+                    file={file}
+                    thumbnailSize={thumbnailSize}
+                    isSelected={selectedFiles.has(file.path)}
+                    orchestratorUrl={orchestratorUrl}
+                    rating={ratings[file.path] ?? file.rating ?? 0}
+                    onClick={(e) => handleFileClick(file, e)}
+                    onDoubleClick={() => handleFileDoubleClick(file)}
+                    onContextMenu={onContextMenu ? (e) => onContextMenu(e, file) : undefined}
+                  />
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

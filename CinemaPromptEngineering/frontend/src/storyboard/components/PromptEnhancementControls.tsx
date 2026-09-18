@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { effectiveEnhancementAssets, resolveEnhancementTask } from '../services/prompt-enhancement';
+import './PromptEnhancementControls.css';
 import type {
   EnhancementAssetCandidate,
   EnhancementPreferences,
@@ -7,15 +8,25 @@ import type {
   EnhancementTask,
 } from '../services/prompt-enhancement';
 
+export interface TargetModelOption {
+  id: string;
+  name: string;
+  category: string;
+}
+
 interface PromptEnhancementControlsProps {
   profiles: EnhancementProfile[];
+  targetModels?: TargetModelOption[];
   assets: EnhancementAssetCandidate[];
   preferences: EnhancementPreferences;
   onChange: (preferences: EnhancementPreferences) => void;
   durationSeconds?: number;
   profilesLoading?: boolean;
   profilesError?: string | null;
+  targetModelsLoading?: boolean;
+  targetModelsError?: string | null;
   onRetryProfiles?: () => void;
+  onRetryTargetModels?: () => void;
   disabled?: boolean;
 }
 
@@ -27,16 +38,33 @@ const taskLabels: Record<EnhancementTask, string> = {
 
 export function PromptEnhancementControls({
   profiles,
+  targetModels = [],
   assets,
   preferences,
   onChange,
   durationSeconds,
   profilesLoading = false,
   profilesError,
+  targetModelsLoading = false,
+  targetModelsError,
   onRetryProfiles,
+  onRetryTargetModels,
   disabled = false,
 }: PromptEnhancementControlsProps) {
+  const targetOptions = useMemo(() => {
+    const options = new Map<string, TargetModelOption>();
+    targetModels.forEach(item => options.set(item.id, item));
+    profiles.forEach(item => {
+      if (!options.has(item.target_model)) {
+        options.set(item.target_model, { id: item.target_model, name: item.label, category: 'Video' });
+      }
+    });
+    return Array.from(options.values());
+  }, [profiles, targetModels]);
+  const selectedTarget = targetOptions.find(item => item.id === preferences.targetModel);
   const profile = profiles.find(item => item.target_model === preferences.targetModel);
+  const isVideoTarget = selectedTarget?.category === 'Video' || Boolean(profile);
+  const showVideoCatalogState = isVideoTarget || !preferences.targetModel || (!selectedTarget && targetOptions.length === 0);
   const dialect = profile?.dialects.find(item => item.id === preferences.referenceDialect);
   const effectiveAssets = effectiveEnhancementAssets(assets, preferences);
   const resolvedTask = resolveEnhancementTask(preferences.taskMode, preferences.task, effectiveAssets);
@@ -72,8 +100,17 @@ export function PromptEnhancementControls({
 
   return (
     <div className="prompt-enhancement-controls" aria-label="Prompt enhancement controls">
-      {profilesLoading && <small role="status">Loading verified video enhancement profiles…</small>}
-      {!profilesLoading && profilesError && (
+      {targetModelsLoading && <small role="status">Loading available enhancement targets…</small>}
+      {!targetModelsLoading && targetModelsError && (
+        <small role="alert">
+          Target catalog unavailable: {targetModelsError}{' '}
+          <button type="button" onClick={onRetryTargetModels}>Retry target catalog</button>
+        </small>
+      )}
+      {showVideoCatalogState && profilesLoading && (
+        <small role="status">Loading verified video enhancement profiles…</small>
+      )}
+      {showVideoCatalogState && !profilesLoading && profilesError && (
         <small role="alert">{profilesError} <button type="button" onClick={onRetryProfiles}>Retry</button></small>
       )}
       <div className="prompt-enhancement-row">
@@ -94,43 +131,61 @@ export function PromptEnhancementControls({
             }}
           >
             <option value="">Select target</option>
-            {profiles.map(item => <option key={item.target_model} value={item.target_model}>{item.label}</option>)}
+            {preferences.targetModel && !selectedTarget && (
+              <option value={preferences.targetModel}>Current target unavailable ({preferences.targetModel})</option>
+            )}
+            {(['General', 'Image', 'Video'] as const).map(category => {
+              const options = targetOptions.filter(item => item.category === category);
+              if (options.length === 0) return null;
+              return (
+                <optgroup key={category} label={`${category} targets`}>
+                  {options.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </optgroup>
+              );
+            })}
           </select>
         </label>
-        <label>
-          Dialect
-          <select
-            aria-label="Enhancement dialect"
-            value={preferences.referenceDialect}
-            disabled={disabled || !profile}
-            onChange={event => onChange({ ...preferences, referenceDialect: event.target.value, referenceOrderConfirmed: false })}
-          >
-            {profile?.dialects.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
-        </label>
-        <label>
-          Task
-          <select
-            aria-label="Enhancement task"
-            value={preferences.taskMode === 'auto' ? 'auto' : preferences.task || ''}
-            disabled={disabled || !profile}
-            onChange={event => {
-              const value = event.target.value;
-              onChange({
-                ...preferences,
-                taskMode: value === 'auto' ? 'auto' : 'manual',
-                task: value === 'auto' ? undefined : value as EnhancementTask,
-                referenceOrderConfirmed: false,
-              });
-            }}
-          >
-            <option value="auto">Auto ({effectiveAssets.length ? 'media detected' : 'T2V'})</option>
-            {availableTasks.map(task => <option key={task} value={task}>{taskLabels[task]}</option>)}
-          </select>
-        </label>
+        {isVideoTarget && (
+          <>
+            <label>
+              Dialect
+              <select
+                aria-label="Enhancement dialect"
+                value={preferences.referenceDialect}
+                disabled={disabled || !profile}
+                onChange={event => onChange({ ...preferences, referenceDialect: event.target.value, referenceOrderConfirmed: false })}
+              >
+                {profile?.dialects.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+            <label>
+              Task
+              <select
+                aria-label="Enhancement task"
+                value={preferences.taskMode === 'auto' ? 'auto' : preferences.task || ''}
+                disabled={disabled || !profile}
+                onChange={event => {
+                  const value = event.target.value;
+                  onChange({
+                    ...preferences,
+                    taskMode: value === 'auto' ? 'auto' : 'manual',
+                    task: value === 'auto' ? undefined : value as EnhancementTask,
+                    referenceOrderConfirmed: false,
+                  });
+                }}
+              >
+                <option value="auto">Auto ({effectiveAssets.length ? 'media detected' : 'T2V'})</option>
+                {availableTasks.map(task => <option key={task} value={task}>{taskLabels[task]}</option>)}
+              </select>
+            </label>
+          </>
+        )}
       </div>
 
-      {profile?.target_model === 'minimax_h3' && preferences.referenceDialect === 'local_h3' && resolvedTask === 'i2v' && (
+      {isVideoTarget && !profile && !profilesLoading && (
+        <small role="alert">No verified video enhancement profile is available for this target.</small>
+      )}
+      {isVideoTarget && profile?.target_model === 'minimax_h3' && preferences.referenceDialect === 'local_h3' && resolvedTask === 'i2v' && (
         <small role="status">
           Required local H3 keyframe positions: {frameAssets.some(asset => (preferences.assets?.[asset.binding_id]?.role || asset.role) === 'first_frame') && frameAssets.some(asset => (preferences.assets?.[asset.binding_id]?.role || asset.role) === 'last_frame')
             ? 'first frame = ordinal 1, last frame = ordinal 2 (FLF)'
@@ -139,16 +194,16 @@ export function PromptEnhancementControls({
               : 'last frame = ordinal 1'}; ordinals are never renumbered automatically.
         </small>
       )}
-      {profile && (profile.target_model === 'ltx_2.3' || profile.target_model === 'ltx_2.5') && resolvedTask === 'i2v' && (
+      {isVideoTarget && profile && (profile.target_model === 'ltx_2.3' || profile.target_model === 'ltx_2.5') && resolvedTask === 'i2v' && (
         <small role="status">{profile.label} requires a first frame; last-frame-only is unsupported.</small>
       )}
-      {!resolvedTask && effectiveAssets.length > 0 && preferences.taskMode === 'auto' && (
+      {isVideoTarget && !resolvedTask && effectiveAssets.length > 0 && preferences.taskMode === 'auto' && (
         <small role="alert">Mixed keyframe/reference roles need an explicit I2V or R2V task.</small>
       )}
-      {resolvedTask === 'ref2v' && effectiveAssets.length > 0 && (
+      {isVideoTarget && resolvedTask === 'ref2v' && effectiveAssets.length > 0 && (
         <small role="status">R2V preserves original per-kind ordinals, including intentional gaps after exclusions.</small>
       )}
-      {assets.length > 0 && (
+      {isVideoTarget && assets.length > 0 && (
         <div className="prompt-enhancement-assets">
           {assets.map(asset => {
             const override = preferences.assets?.[asset.binding_id];
@@ -218,14 +273,15 @@ export function PromptEnhancementControls({
           </label>
         </div>
       )}
-      <small>Metadata only: media stays local; no upload, vision pass, path, URL, or data URL is sent to the LLM.</small>
-      {preferences.targetModel === 'minimax_h3' && preferences.referenceDialect === 'local_h3'
+      {isVideoTarget && <small>Metadata only: media stays local; no upload, vision pass, path, URL, or data URL is sent to the LLM.</small>}
+      {isVideoTarget && preferences.targetModel === 'minimax_h3' && preferences.referenceDialect === 'local_h3'
         && assets.some(asset => (preferences.assets?.[asset.binding_id]?.role || asset.role) === 'last_frame') && (
           <small role="status">
             Effective duration: {durationSeconds === undefined ? 'missing (required for last-frame alignment)' : `${durationSeconds.toFixed(2)}s`}
           </small>
         )}
-      {dialect?.reference_style && <small>{dialect.reference_style}</small>}
+      {isVideoTarget && dialect?.reference_style && <small>{dialect.reference_style}</small>}
+      {selectedTarget?.category === 'Image' && <small role="status">Image prompt enhancement uses the selected target without video media settings.</small>}
     </div>
   );
 }

@@ -144,7 +144,11 @@ body {
    ============================================================================ */
 
 .directors-console__content {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   position: relative;
 }

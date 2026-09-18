@@ -179,7 +179,6 @@ export function VideoScrubber({
 
   // Use explicit pixel sizes when provided, otherwise fill container via CSS.
   const containerStyle: React.CSSProperties = {
-    position: 'relative',
     overflow: 'hidden',
     ...(width != null ? { width } : { width: '100%' }),
     ...(height != null ? { height } : { height: '100%' }),

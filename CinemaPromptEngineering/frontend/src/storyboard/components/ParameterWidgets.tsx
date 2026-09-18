@@ -27,6 +27,7 @@ interface ParameterWidgetProps {
 
 interface PromptWidgetProps extends ParameterWidgetProps {
   onEnhance?: (prompt: string, parameterName?: string) => Promise<string | null>;
+  onOpenEnhancementSettings?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   cameraAngle?: CameraAngle | null;
   onCameraAngleChange?: (angle: CameraAngle | null) => void;
 }
@@ -37,6 +38,7 @@ interface ParameterPanelProps {
   onChange: (name: string, value: any) => void;
   disabled?: boolean;
   onEnhancePrompt?: (prompt: string, parameterName?: string) => Promise<string | null>;
+  onOpenEnhancementSettings?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   cameraAngles?: Record<string, CameraAngle | null>;
   onCameraAngleChange?: (paramName: string, angle: CameraAngle | null) => void;
   comfyUrl?: string;
@@ -349,7 +351,7 @@ export function StringWidget({ parameter, value, onChange, disabled }: Parameter
 // Prompt Widget
 // ============================================================================
 
-export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, cameraAngle, onCameraAngleChange }: PromptWidgetProps) {
+export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, onOpenEnhancementSettings, cameraAngle, onCameraAngleChange }: PromptWidgetProps) {
   // Get CPE prompt from store for paste functionality
   const { cpePromptForStoryboard, setCpePromptForStoryboard } = useCinemaStore();
   
@@ -485,14 +487,25 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
           
           {/* AI enhance button */}
           {canEnhance && (
-            <button
-              className={`ai-enhance-btn ${isEnhancing ? 'enhancing' : ''}`}
-              onClick={handleEnhance}
-              disabled={disabled || isEnhancing || !localValue.trim()}
-              title={isEnhancing ? 'Enhancing prompt...' : 'Enhance with AI'}
-            >
-              {isEnhancing ? '✨...' : '✨'}
-            </button>
+            <>
+              <button
+                className={`ai-enhance-btn ${isEnhancing ? 'enhancing' : ''}`}
+                onClick={handleEnhance}
+                disabled={disabled || isEnhancing || !localValue.trim()}
+                title={isEnhancing ? 'Enhancing prompt...' : 'Enhance with AI'}
+              >
+                {isEnhancing ? '✨...' : '✨'}
+              </button>
+              <button
+                className="ai-settings-btn"
+                onClick={event => onOpenEnhancementSettings?.(event)}
+                disabled={disabled}
+                title="Prompt enhancement settings"
+                aria-label="Open prompt enhancement settings"
+              >
+                ⚙
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -847,11 +860,12 @@ export function LoRAWidget({
 
 interface ParameterWidgetRouterProps extends ParameterWidgetProps {
   onEnhancePrompt?: (prompt: string, parameterName?: string) => Promise<string | null>;
+  onOpenEnhancementSettings?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   cameraAngle?: CameraAngle | null;
   onCameraAngleChange?: (paramName: string, angle: CameraAngle | null) => void;
 }
 
-export function ParameterWidget({ parameter, value, onChange, disabled, onEnhancePrompt, cameraAngle, onCameraAngleChange, comfyUrl }: ParameterWidgetRouterProps) {
+export function ParameterWidget({ parameter, value, onChange, disabled, onEnhancePrompt, onOpenEnhancementSettings, cameraAngle, onCameraAngleChange, comfyUrl }: ParameterWidgetRouterProps) {
   switch (parameter.type) {
     case 'string':
       return <StringWidget parameter={parameter} value={value} onChange={onChange} disabled={disabled} />;
@@ -871,7 +885,8 @@ export function ParameterWidget({ parameter, value, onChange, disabled, onEnhanc
         value={value} 
         onChange={onChange} 
         disabled={disabled} 
-        onEnhance={onEnhancePrompt} 
+        onEnhance={onEnhancePrompt}
+        onOpenEnhancementSettings={onOpenEnhancementSettings}
         cameraAngle={cameraAngle}
         onCameraAngleChange={(angle) => onCameraAngleChange?.(parameter.name, angle)}
       />;
@@ -896,7 +911,7 @@ export function ParameterWidget({ parameter, value, onChange, disabled, onEnhanc
         />
       );
     default:
-      return <PromptWidget parameter={parameter} value={value} onChange={onChange} disabled={disabled} onEnhance={onEnhancePrompt} />;
+      return <PromptWidget parameter={parameter} value={value} onChange={onChange} disabled={disabled} onEnhance={onEnhancePrompt} onOpenEnhancementSettings={onOpenEnhancementSettings} />;
   }
 }
 
@@ -904,7 +919,7 @@ export function ParameterWidget({ parameter, value, onChange, disabled, onEnhanc
 // Parameter Panel
 // ============================================================================
 
-export function ParameterPanel({ parameters, values, onChange, disabled, onEnhancePrompt, cameraAngles, onCameraAngleChange, comfyUrl }: ParameterPanelProps) {
+export function ParameterPanel({ parameters, values, onChange, disabled, onEnhancePrompt, onOpenEnhancementSettings, cameraAngles, onCameraAngleChange, comfyUrl }: ParameterPanelProps) {
   if (parameters.length === 0) {
     return (
       <div className="parameter-panel empty">
@@ -925,6 +940,7 @@ export function ParameterPanel({ parameters, values, onChange, disabled, onEnhan
             onChange={onChange}
             disabled={disabled}
             onEnhancePrompt={onEnhancePrompt}
+            onOpenEnhancementSettings={onOpenEnhancementSettings}
             cameraAngle={cameraAngles?.[parameter.name] ?? null}
             onCameraAngleChange={onCameraAngleChange}
             comfyUrl={comfyUrl}

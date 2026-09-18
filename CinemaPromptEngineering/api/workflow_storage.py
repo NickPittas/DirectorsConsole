@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from loguru import logger
 
@@ -48,6 +48,8 @@ def _get_workflows_dir() -> Path:
 class WorkflowSaveRequest(BaseModel):
     """A single workflow to save."""
 
+    model_config = ConfigDict(extra="allow")
+
     id: str
     name: str
     description: str = ""
@@ -57,7 +59,8 @@ class WorkflowSaveRequest(BaseModel):
     parsed: dict[str, Any]  # Parsed workflow data
     config: list[dict[str, Any]]  # ParameterConfig[]
     createdAt: int | None = None
-    categories: list[dict[str, Any]] | None = None
+    # Current frontend sends canonical category strings; retain legacy object tags.
+    categories: list[str | dict[str, Any]] | None = None
 
 
 class WorkflowBulkSaveRequest(BaseModel):

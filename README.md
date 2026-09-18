@@ -22,6 +22,7 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 - [Storyboard Canvas](#storyboard-canvas)
   - [Canvas Overview](#canvas-overview)
   - [Panels](#panels)
+  - [Storyboard AI Enhance](#storyboard-ai-enhance)
   - [Image Viewer & Compare](#image-viewer--compare)
   - [Project Management](#project-management)
   - [Printing](#printing)
@@ -80,9 +81,9 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 
 - **Generation Progress Sidebar** — Dedicated sidebar panel showing detailed progress for all active generations. Per-node workflow stage display (e.g., "Loading Checkpoint", "KSampler", "VAE Decode"), multi-phase progress for multi-KSampler workflows, and step counters. Replaces intrusive panel overlays with a minimal bottom bar indicator.
 
-- **AI-Enhanced Prompts** — Connect 13+ LLM providers (OpenAI, Anthropic, Google AI, Ollama, and more) to refine and enhance your cinema prompts with AI assistance.
+- **AI-Enhanced Prompts** — Connect the configured LLM provider to refine prompts for a separate canonical image or video target model. The current video profile catalog includes versioned LTX, MiniMax H3, Seedance, Wan 3.0, and Kling 3.0/Omni guidance.
 
-- **Model-Specific Output** — Prompts are automatically formatted for your target model: Midjourney, FLUX, Stable Diffusion XL, Wan 2.2, Runway Gen-3, CogVideoX, HunyuanVideo, and more.
+- **Model-Specific Output** — Prompts are formatted for the selected target generator; image and video targets use different guides, tasks, and dialects.
 
 - **Print Storyboards** — Export your storyboard to print with configurable layouts (1–4 panels per row), page sizes, orientation, and optional panel notes.
 
@@ -225,6 +226,8 @@ This launches:
 | Storyboard Frontend | `http://localhost:5173` | React UI (opens in browser) |
 | Orchestrator | `http://localhost:9820` | Render farm manager |
 
+The launcher checks the configured service ports before startup and safely cleans up stale listeners when possible, including on Linux.
+
 ### Optional Flags
 
 ```bash
@@ -271,13 +274,28 @@ Each panel is an independent production unit with its own:
 
 - **Workflow** — Select any imported ComfyUI workflow per panel
 - **Parameters** — Each panel stores its own parameter values (prompt, steps, CFG, sampler, etc.)
-- **Image & Video History** — Navigate through all generated images and videos with forward/back arrows. Videos play inline with native `<video>` controls.
+- **Image & Video History** — Navigate through all generated images and videos with forward/back arrows. Videos play inline with native `<video>` controls inside a bounded, aspect-preserving viewport; letterboxing is used instead of cropping.
+- **Storyboard AI Enhance** — Use the gear button beside a prompt's Enhance with AI button to choose the target model, video dialect/task, and confirmed reference mapping before enhancing.
 - **Star Rating** — Rate images 1–5 stars for quick review
 - **Markdown Notes** — Attach production notes with edit/view toggle
 - **Panel Name** — Custom names that map to folder structure (e.g., "Hero_Shot" creates `{project}/Hero_Shot/`)
 - **Node Selection** — Choose which ComfyUI backend renders this panel
 
 ![Panel Features](Images/Storyboard%20Panel%20Ratings-Notes-Node%20Selection.png)
+
+### Storyboard AI Enhance
+
+Prompt enhancement is available from each positive prompt field. Select a panel and workflow, then click the **gear** immediately beside **Enhance with AI** to open the styled settings popup; settings are not inserted as a bulk inline parameter panel. Choose:
+
+- **Target** — the canonical image or video generator being prompted. This is separate from the LLM provider/model used to enhance the text. A known catalog image target may explicitly override a video workflow's default classification; unknown targets are blocked rather than guessed.
+- **Dialect** — shown for registered video profiles, such as local MiniMax H3 versus the hosted MiniMax API dialect.
+- **Task** — `T2V`, `I2V`, or `ref2v` (`R2V`) only when the selected profile supports it. Auto chooses from the confirmed media mapping.
+- **Media mapping** — include detected reachable workflow media, assign first/last-frame or reference roles, preserve per-kind ordinals, add optional descriptions, and confirm the mapping. Kling named-reference fields appear only for the applicable Kling target.
+- **Duration** — shown when the selected task/dialect needs the workflow's effective duration, including local H3 last-frame alignment.
+
+Click **Done** or press **Escape**, then click **Enhance with AI** on the prompt. Preferences persist with the panel/project draft. Media values stay local: only caller-confirmed metadata such as kind, role, ordinal, label, and description is sent to the enhancer; it does not perform vision inspection or upload media. If a target catalog/profile is unavailable, the UI blocks enhancement with an actionable retry message. A response is discarded when the prompt, panel, workflow, target, or mapping changed while it was running, while the existing guarded OAuth-token retention remains independent of stale content. Paid requests are not automatically retried.
+
+For the full task matrix, exact local-H3 sections, version caveats, and source links, see [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md).
 
 ### Image Viewer & Compare
 
@@ -291,7 +309,7 @@ Each panel is an independent production unit with its own:
 
 ### Project Management
 
-Projects are saved with all panel positions, parameters, workflow assignments, ratings, notes, and image references. All generated images are organized in per-panel folders within your project directory.
+Projects are saved with all panel positions, parameters, workflow assignments, ratings, notes, and image references. All generated images are organized in per-panel folders within your project directory. Persistent session drafts also recover current Cinema/Storyboard work after interruption; this is best-effort draft recovery, not a guarantee of the final keystroke, and interrupted generations are not automatically resubmitted.
 
 ![Load Project](Images/Storyboard%20Load%20Project%20view.png)
 
@@ -322,11 +340,13 @@ The Gallery is a top-level tab alongside Cinema and Storyboard, providing a full
 ### File Browser & Media Viewer
 
 - **Folder Tree** — Hierarchical tree view of your project directory with expand/collapse, file counts, and drag-drop support
-- **Multiple View Modes** — Grid (uniform thumbnails), Masonry (Pinterest-style borderless layout with natural aspect ratios), List (detailed table with metadata columns), and Timeline (chronological grouped by date)
+- **Multiple View Modes** — Grid (virtualized, bounded thumbnails), Masonry (Pinterest-style borderless layout with natural aspect ratios), List (detailed table with metadata columns), and Timeline (chronological grouped by date)
+- **Responsive Grid** — The grid observes available width and measures actual row heights, so an empty-to-loaded refresh or thumbnail-size resize does not crop or misplace rows.
 - **Lightbox** — Full-resolution image/video viewer with keyboard navigation, zoom, and metadata overlay
 - **Compare View** — Side-by-side comparison of selected images
 - **Hover Preview** — Large preview tooltip on thumbnail hover
-- **Video Scrubber** — Frame-by-frame video scrubbing in the detail panel
+- **Video Poster & Hover Scrub** — Video thumbnails show a captured poster first, then scrub inside a bounded `contain` viewport on hover; existing media does not need regeneration or prebuilt thumbnails.
+- **Video Aspect Handling** — Gallery and Storyboard preserve the source aspect ratio and letterbox inside the available viewport. Grid cells remain bounded rather than resizing every container to natural video dimensions.
 - **Breadcrumb Navigation** — Click-through path breadcrumbs for quick folder traversal
 - **Thumbnail Sizes** — Adjustable thumbnail size slider in the toolbar
 
@@ -347,6 +367,10 @@ The Gallery is a top-level tab alongside Cinema and Storyboard, providing a full
 - **Folder Statistics** — View file counts, total size, media type breakdown per folder
 - **Filter Bar** — Filter by rating, tags, file type (image/video), and date range
 - **Saved Views** — Save and restore view configurations (sort, filters, layout, folder state)
+
+### Gallery Layout and Refresh
+
+The Gallery uses the full page width: folder tree, main content, and the optional detail panel share one layout. Selection actions appear in a normal footer below all panes, not as a floating or overlay bar. Use the toolbar or folder-tree refresh button to rescan the tree and current folder without leaving the Gallery.
 
 ### Storyboard Integration
 
@@ -390,6 +414,11 @@ Manage your ComfyUI render backends from the Node Manager:
 - **Per-panel assignment** — each panel can use a different workflow
 - **Parameter isolation** — switching workflows resets technical parameters to defaults while preserving prompts and image inputs
 - **Categorization** — organize workflows into custom categories
+- **Schema-aware controls** — parameter widgets and managed-node choices are derived from the imported workflow schema rather than guessed from arbitrary inputs.
+
+#### Video workflow categories
+
+Use the tags icon in the workflow toolbar to open **Manage Workflow Categories**. Select a workflow, choose **Video Generation**, then choose and save the actual child route: **Text to Video**, **Image to Video**, or **First/Last Frame to Video**. Saving updates the Storyboard tab/subcategory routing and persists the workflow's categories. Existing custom, legacy, and intentional multi-category tags are preserved. An incorrectly imported video workflow is not mass-reclassified automatically; assign the correct child route and save it manually.
 
 ### Model & LoRA Dropdowns
 
@@ -629,24 +658,18 @@ Each preset configures: **medium** (2D / 3D / Hybrid / Stop Motion), **style dom
 
 ### AI-Enhanced Prompts
 
-Beyond rule-based generation, CPE can send your structured prompt to an LLM for enrichment. The LLM adds:
-- Atmospheric detail and environmental description
-- Character and object specifics
-- Narrative context
-- Model-optimized phrasing
+Beyond rule-based generation, CPE can send a structured prompt to an enhancing LLM. The **target model** is the image/video generator whose prompt is being written; the **LLM provider and model** are the service that rewrites it. Configure those separately in Settings. Do not treat the enhancing provider as the generation target.
 
-**Model-Specific Formatting:**
+#### Cinema Prompt Engineering page
 
-| Target Model | Type | Strategy |
-|--------------|------|----------|
-| Midjourney | Image | Comma-separated keywords + `--v 6 --q 2` parameters |
-| FLUX | Image | Natural language sentences, no negative prompts |
-| SDXL / Stable Diffusion | Image | Comma-separated keywords with weights |
-| Wan 2.2 | Video | 80–120 words, over-specified, padded with detail |
-| Runway Gen-3 | Video | Natural language, lowercase |
-| CogVideoX | Video | Concise, max 15 parts (224 token limit) |
-| HunyuanVideo | Video | Capitalized sentences |
-| LTX-2 | Video | 200 word limit |
+1. Choose the canonical target from the **General**, **Image**, or **Video** target dropdown.
+2. For a registered video target, choose its available dialect (for example, `local_h3` or `minimax_api`). Dialects are model-specific; prose targets are not all one JSON template.
+3. Configure an LLM provider/model in **Settings**, enter the scene idea and cinematography selections, and click **Enhance with AI**.
+4. Review/copy the AI-Enhanced Prompt, or use **Send to Storyboard**. Image targets use image guidance; profiled video targets use the selected video profile and default to a text-to-video enhancement context on this page because it has no workflow media mapping.
+
+The canonical image catalog includes Midjourney, FLUX.1 variants, Flux Kontext/Krea, DALL-E 3, GPT-Image, Ideogram, Leonardo, SDXL, Stable Diffusion 3, Z-Image Turbo, and Qwen-Image. The current registered video profiles include **LTX 2.3**, **LTX 2.5**, **MiniMax H3**, **MiniMax H3 Max**, **Seedance 2.0**, **Seedance 2.5**, **Wan 3.0**, **Kling 3.0**, and **Kling 3.0 Omni**. The [Prompt enhancement profiles guide](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) links each versioned guide and its official sources.
+
+These guides are available now as prompt-text guidance. They do not guarantee local weights, a ComfyUI node, provider credentials, account/region access, API submission, or visual quality.
 
 ---
 
@@ -925,7 +948,7 @@ Just start the local LLM server and Director's Console will detect it automatica
 ## Completed Maintenance Notes
 
 - [Private workstation refresh plan](docs/private-workstation-refresh-plan.md) records the completed maintenance scope, checks, and remaining live-provider/ComfyUI verification limits.
-- The [video capability matrix](CinemaPromptEngineering/Documentation/model_prompting/video_capability_matrix.md) links six verified, version-specific prompt guides: [LTX 2.3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.3.md), [LTX 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.5.md), [MiniMax H3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3.md), [MiniMax H3 Max](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3_max.md), [Seedance 2.0](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.0.md), and [Seedance 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.5.md). These are prompting guidance only, not a rendering backend or guarantee of local/API availability.
+- [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) documents the current target/task/dialect catalog, the CPE and Storyboard UI flow, reference-metadata limits, and official sources. The [video capability matrix](CinemaPromptEngineering/Documentation/model_prompting/video_capability_matrix.md) links six versioned guides: [LTX 2.3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.3.md), [LTX 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.5.md), [MiniMax H3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3.md), [MiniMax H3 Max](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3_max.md), [Seedance 2.0](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.0.md), and [Seedance 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.5.md). Wan 3.0 and Kling 3.0/Omni profiles are also covered by the registry-backed guide files. These are prompting guidance only, not a rendering backend or guarantee of local/API availability.
 - To refresh the standalone node's generated rules copy, run [`scripts/sync_comfy_node.py`](scripts/sync_comfy_node.py) from the repository root. Edit the canonical `CinemaPromptEngineering/cinema_rules/` package, then run the helper before distributing `ComfyCinemaPrompting/`.
 
 ---

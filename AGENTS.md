@@ -336,6 +336,14 @@ ORCHESTRATOR_COMFY_NODES="192.168.1.100:8188,192.168.1.101:8188"
 
 ## Development Workflow
 
+### Agent working policy
+
+- Delegate coding to subagents only when they work directly in the current codebase; do not use worktrees or leave unapplied changes unless the user explicitly asks.
+- Do not edit global/private configuration or workflow YAML during ordinary maintenance unless the user explicitly approves it.
+- The parent reviews changes and performs live application verification.
+- Do not create, generate, or run automated tests without the user's explicit approval after live verification; run regression tests only after the user confirms.
+- After review and approval, the parent commits and pushes the working changes with `[skip ci]`; for delegated work, the parent owns that delivery step.
+
 ### Adding New Film Presets
 1. Add preset to `CinemaPromptEngineering/cinema_rules/presets/live_action.py`
 2. Add cinematography style to `cinematography_styles.py`

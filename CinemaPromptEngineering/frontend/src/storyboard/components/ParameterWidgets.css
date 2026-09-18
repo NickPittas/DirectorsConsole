@@ -430,6 +430,32 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.ai-settings-btn {
+  padding: 4px 10px;
+  background-color: var(--sb-bg-elevated);
+  border: none;
+  border-radius: 4px;
+  color: var(--sb-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+}
+
+.ai-settings-btn:hover:not(:disabled),
+.ai-settings-btn:focus-visible {
+  background-color: var(--sb-border-strong);
+  transform: scale(1.05);
+}
+
+.ai-settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* CPE Paste Button */
 .cpe-paste-btn {
   padding: 4px 10px;

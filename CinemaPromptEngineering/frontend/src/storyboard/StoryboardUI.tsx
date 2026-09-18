@@ -13,7 +13,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { ParameterPanel } from './components/ParameterWidgets';
-import { PromptEnhancementControls } from './components/PromptEnhancementControls';
+import { PromptEnhancementSettingsPopup } from './components/PromptEnhancementSettingsPopup';
+import type { TargetModelOption } from './components/PromptEnhancementControls';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
 import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
 import {
@@ -57,6 +58,18 @@ import { PrintDialog } from './components/PrintDialog';
 import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
+import {
+  filterWorkflowsByRoute,
+  getDefaultSubCategory,
+  isSubTabType,
+  isTabType,
+  isValidWorkflowRoute,
+  isVideoWorkflow,
+  type SubTabType,
+  type TabType,
+  type WorkflowCategory,
+} from './workflow-categories';
+export { WORKFLOW_CATEGORIES, SUBCATEGORY_TO_CATEGORY_MAP } from './workflow-categories';
 import {
   activateSessionIdentity,
   recoverInterruptedPanels,
@@ -209,39 +222,9 @@ function buildWorkflowProgressInfo(workflow: Record<string, any>): WorkflowProgr
 // Types
 // ============================================================================
 
-type TabType = 'image-generation' | 'image-editing' | 'upscaling' | 'video-generation';
-type SubTabType = 'text2img' | 'img2img' | 'inpainting' | 'editing' | 'upscale' | 'img2vid' | 'txt2vid' | 'fflf';
-
-// Workflow Categories
-export type WorkflowCategory =
-  | 'Image Generation'
-  | 'Text to Image'
-  | 'Image to Image'
-  | 'InPainting'
-  | 'Image Editing'
-  | 'Upscaling'
-  | 'Video Generation';
-
-export const WORKFLOW_CATEGORIES: WorkflowCategory[] = [
-  'Image Generation',
-  'Text to Image',
-  'Image to Image',
-  'InPainting',
-  'Image Editing',
-  'Upscaling',
-  'Video Generation',
-];
-
-// Map subcategory IDs to WorkflowCategory names (1-to-1 mapping)
-export const SUBCATEGORY_TO_CATEGORY_MAP: Record<string, WorkflowCategory> = {
-  'text2img': 'Text to Image',
-  'img2img': 'Image to Image',
-  'inpainting': 'InPainting',
-  'editing': 'Image Editing',
-  'upscale': 'Upscaling',
-  'video': 'Video Generation',
-};
-
+// Workflow categories live outside this component so import, filtering, editing,
+// and enhancement classification cannot drift apart.
+export type { TabType, SubTabType, WorkflowCategory };
 export interface Panel {
   id: number;
   image: string | null;
@@ -338,26 +321,28 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // State - Tabs (with localStorage persistence)
   // ---------------------------------------------------------------------------
   const [activeTab, setActiveTab] = useState<TabType>(() => {
-    if (initialSession?.activeTab) return initialSession.activeTab as TabType;
+    if (isTabType(initialSession?.activeTab)) return initialSession.activeTab;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return parsed.activeTab ?? 'image-generation';
+        return isTabType(parsed.activeTab) ? parsed.activeTab : 'image-generation';
       } catch { /* ignore parse errors */ }
     }
     return 'image-generation';
   });
   const [activeSubTab, setActiveSubTab] = useState<SubTabType>(() => {
-    if (initialSession?.activeSubTab) return initialSession.activeSubTab as SubTabType;
     const saved = localStorage.getItem('storyboard-ui-state');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.activeSubTab ?? 'text2img';
-      } catch { /* ignore parse errors */ }
-    }
-    return 'text2img';
+    const savedState = saved ? (() => {
+      try { return JSON.parse(saved) as { activeTab?: unknown; activeSubTab?: unknown }; }
+      catch { return {}; }
+    })() : {};
+    const tab = isTabType(initialSession?.activeTab) ? initialSession.activeTab
+      : isTabType(savedState.activeTab) ? savedState.activeTab : 'image-generation';
+    const subTab = initialSession?.activeSubTab ?? savedState.activeSubTab;
+    return isSubTabType(subTab) && isValidWorkflowRoute(tab, subTab)
+      ? subTab
+      : getDefaultSubCategory(tab);
   });
   const [openDropdown, setOpenDropdown] = useState<TabType | null>(null);
   
@@ -450,7 +435,12 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [enhancementProfiles, setEnhancementProfiles] = useState<EnhancementProfile[]>([]);
   const [enhancementProfilesLoading, setEnhancementProfilesLoading] = useState(true);
   const [enhancementProfilesError, setEnhancementProfilesError] = useState<string | null>(null);
+  const [enhancementTargetModels, setEnhancementTargetModels] = useState<TargetModelOption[]>([]);
+  const [enhancementTargetModelsLoading, setEnhancementTargetModelsLoading] = useState(true);
+  const [enhancementTargetModelsError, setEnhancementTargetModelsError] = useState<string | null>(null);
   const [enhancementPreferences, setEnhancementPreferences] = useState<EnhancementPreferences>(EMPTY_ENHANCEMENT_PREFERENCES);
+  const [showEnhancementSettings, setShowEnhancementSettings] = useState(false);
+  const enhancementSettingsTriggerRef = useRef<HTMLElement | null>(null);
   
   // ---------------------------------------------------------------------------
   // State - Image Viewer
@@ -1241,10 +1231,25 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     }
   }, []);
 
+  const loadEnhancementTargetModels = useCallback(async () => {
+    setEnhancementTargetModelsLoading(true);
+    setEnhancementTargetModelsError(null);
+    try {
+      setEnhancementTargetModels(await api.getTargetModels());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Target catalog is unavailable.';
+      setEnhancementTargetModelsError(message);
+      console.warn('[PromptEnhancement] target catalog unavailable:', error);
+    } finally {
+      setEnhancementTargetModelsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadEnhancementProfiles().catch(() => undefined);
+    loadEnhancementTargetModels().catch(() => undefined);
     return () => { enhancementRequestRevisionRef.current += 1; };
-  }, [loadEnhancementProfiles]);
+  }, [loadEnhancementProfiles, loadEnhancementTargetModels]);
 
   useEffect(() => {
     enhancementRequestRevisionRef.current += 1;
@@ -1478,6 +1483,15 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   // Effects - Save workflows to persistent backend storage
   // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!workflowsLoadedRef.current) return;
+    const visibleWorkflows = filterWorkflowsByRoute(workflows, activeTab, activeSubTab);
+    if (!visibleWorkflows.some(workflow => workflow.id === selectedWorkflowId)) {
+      const nextWorkflowId = visibleWorkflows[0]?.id || null;
+      if (nextWorkflowId !== selectedWorkflowId) setSelectedWorkflowId(nextWorkflowId);
+    }
+  }, [activeTab, activeSubTab, workflows, selectedWorkflowId]);
+
   useEffect(() => {
     // Skip save on initial mount — the load hasn't completed yet
     if (!workflowsLoadedRef.current) return;
@@ -2161,11 +2175,18 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
    * Update a single workflow (used by categories modal)
    */
   const handleUpdateWorkflow = useCallback((updatedWorkflow: Workflow) => {
-    setWorkflows(prev => prev.map(w => 
-      w.id === updatedWorkflow.id ? updatedWorkflow : w
-    ));
+    const nextWorkflows = workflowsRef.current.map(workflow =>
+      workflow.id === updatedWorkflow.id ? updatedWorkflow : workflow,
+    );
+    workflowsRef.current = nextWorkflows;
+    setWorkflows(nextWorkflows);
+
+    const visibleWorkflows = filterWorkflowsByRoute(nextWorkflows, activeTab, activeSubTab);
+    if (selectedWorkflowIdRef.current && !visibleWorkflows.some(workflow => workflow.id === selectedWorkflowIdRef.current)) {
+      setSelectedWorkflowId(visibleWorkflows[0]?.id || null);
+    }
     addLog('info', `Updated categories for workflow: ${updatedWorkflow.name}`);
-  }, [addLog]);
+  }, [activeTab, activeSubTab, addLog]);
 
   const exportWorkflows = useCallback(() => {
     const exportData = {
@@ -2230,13 +2251,17 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         const parser = getWorkflowParser();
         const parsed = parser.parseWorkflow(workflow);
         
-        // Create workflow object
+        // Create workflow object using only a canonical route from the taxonomy.
+        const importCategory: TabType = isTabType(activeTab) ? activeTab : 'image-generation';
+        const importSubCategory: SubTabType = isValidWorkflowRoute(importCategory, activeSubTab)
+          ? activeSubTab
+          : getDefaultSubCategory(importCategory);
         const newWorkflow: Workflow = {
           id: `workflow_${Date.now()}`,
           name: file.name.replace('.json', ''),
           description: 'Imported from ComfyUI',
-          category: activeTab,
-          subCategory: activeSubTab,
+          category: importCategory,
+          subCategory: importSubCategory,
           workflow,
           parsed,
           config: [],
@@ -4098,6 +4123,25 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     }
   }, []);
   
+  const openEnhancementSettings = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    const trigger = event.currentTarget;
+    enhancementSettingsTriggerRef.current = document.contains(trigger) ? trigger : null;
+    setShowEnhancementSettings(true);
+  }, []);
+
+  const closeEnhancementSettings = useCallback(() => {
+    setShowEnhancementSettings(false);
+    const trigger = enhancementSettingsTriggerRef.current;
+    enhancementSettingsTriggerRef.current = null;
+    if (trigger && document.contains(trigger)) trigger.focus();
+  }, []);
+
+  // Settings belong to the selected panel/workflow and must never remain open
+  // while another context is active. Use the same close path for focus safety.
+  useEffect(() => {
+    closeEnhancementSettings();
+  }, [selectedPanelId, selectedWorkflowId, closeEnhancementSettings]);
+
   // Handle camera angle changes for multi-angle LoRA
   const handleCameraAngleChange = useCallback((paramName: string, angle: CameraAngle | null) => {
     setCameraAngles(prev => ({ ...prev, [paramName]: angle }));
@@ -4113,15 +4157,42 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const workflow = workflowsRef.current.find(item => item.id === workflowId);
     const values = parameterValuesRef.current;
     const preferences = panel?.enhancementPreferences || enhancementPreferencesRef.current;
-    const profile = enhancementProfiles.find(item => item.target_model === preferences.targetModel);
-    const isVideoWorkflow = workflow?.category === 'video-generation'
-      || workflow?.subCategory === 'img2vid' || workflow?.subCategory === 'txt2vid' || workflow?.subCategory === 'fflf';
+    const resolveTarget = (targetPreferences: EnhancementPreferences, targetWorkflow: typeof workflow) => {
+      const explicitTarget = targetPreferences.targetModel?.trim() || '';
+      const legacyTarget = loadTargetModel()?.trim() || '';
+      const targetModel = explicitTarget || legacyTarget || 'generic';
+      const catalogTarget = enhancementTargetModels.find(item => item.id === targetModel);
+      const targetProfile = enhancementProfiles.find(item => item.target_model === targetModel);
+      const catalogCategory = catalogTarget?.category?.trim().toLowerCase();
+      const workflowIsVideo = isVideoWorkflow(targetWorkflow);
+      const confirmedExplicitImage = Boolean(explicitTarget && catalogCategory === 'image');
+      const targetClassificationKnown = Boolean(targetProfile || catalogTarget);
+      const targetClassificationError = explicitTarget && !targetClassificationKnown
+        ? (enhancementTargetModelsLoading || enhancementProfilesLoading
+          ? `Target model "${targetModel}" is still loading. Retry after the target catalog and profiles finish loading.`
+          : `Target model "${targetModel}" is unavailable${enhancementTargetModelsError || enhancementProfilesError
+            ? `: ${enhancementTargetModelsError || enhancementProfilesError}`
+            : '.'} Retry after the target catalog and profiles load.`)
+        : undefined;
+      const isVideoTarget = !confirmedExplicitImage && (
+        catalogCategory === 'video'
+        || Boolean(targetProfile)
+        || workflowIsVideo
+      );
+      return { targetModel, targetProfile, isVideoTarget, targetClassificationError };
+    };
+    const effectiveTargetAtSubmit = resolveTarget(preferences, workflow);
+    const profile = effectiveTargetAtSubmit.targetProfile;
 
     if (!workflow) {
       showError('Select a workflow before enhancing.');
       throw new Error('Select a workflow before enhancing.');
     }
-    if (!profile && isVideoWorkflow) {
+    if (effectiveTargetAtSubmit.targetClassificationError) {
+      showError(effectiveTargetAtSubmit.targetClassificationError);
+      throw new Error(effectiveTargetAtSubmit.targetClassificationError);
+    }
+    if (effectiveTargetAtSubmit.isVideoTarget && !profile) {
       const message = enhancementProfilesLoading
         ? 'Video enhancement profiles are still loading. Retry after they finish loading.'
         : `Video enhancement profiles are unavailable${enhancementProfilesError ? `: ${enhancementProfilesError}` : '.'} Retry before enhancing.`;
@@ -4129,8 +4200,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       throw new Error(message);
     }
 
-    const built = profile ? buildEnhancementContext(workflow, values, profile, preferences) : undefined;
-    if (profile && !built?.context) {
+    const built = effectiveTargetAtSubmit.isVideoTarget && profile
+      ? buildEnhancementContext(workflow, values, profile, preferences)
+      : undefined;
+    if (effectiveTargetAtSubmit.isVideoTarget && profile && !built?.context) {
       showError(built?.error || 'The media mapping is not ready.');
       throw new Error(built?.error || 'The media mapping is not ready.');
     }
@@ -4139,7 +4212,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const workflowAtSubmit = workflow.id;
     const workflowSnapshotAtSubmit = JSON.stringify(workflow);
     const panelAtSubmit = panelId;
-    const targetAtSubmit = profile?.target_model || loadTargetModel() || 'generic';
+    const targetModelAtSubmit = effectiveTargetAtSubmit.targetModel;
     const projectTypeAtSubmit = enhancementProjectTypeRef.current;
     const configAtSubmit = JSON.stringify(enhancementConfigRef.current);
     const requestRevision = enhancementRequestRevisionRef.current;
@@ -4154,7 +4227,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         userPrompt: requestedPrompt,
         llmProvider: llmSettings.provider,
         llmModel: llmSettings.model,
-        targetModel: targetAtSubmit,
+        targetModel: targetModelAtSubmit,
         projectType: projectTypeAtSubmit,
         config: enhancementConfigRef.current as any,
         ...(built?.context ? {
@@ -4201,10 +4274,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         ? parameterValuesRef.current
         : (currentPanel?.parameterValues || {});
       const currentPreferences = currentPanel?.enhancementPreferences || enhancementPreferencesRef.current;
-      const currentProfile = enhancementProfiles.find(item => item.target_model === currentPreferences.targetModel);
       const currentWorkflow = workflowsRef.current.find(item => item.id === currentWorkflowId) || workflow;
-      const currentMapping = currentProfile
-        ? buildEnhancementContext(currentWorkflow, currentValues, currentProfile, currentPreferences)
+      const currentTarget = resolveTarget(currentPreferences, currentWorkflow);
+      const currentMapping = currentTarget.isVideoTarget && currentTarget.targetProfile
+        ? buildEnhancementContext(currentWorkflow, currentValues, currentTarget.targetProfile, currentPreferences)
         : undefined;
       const promptStillCurrent = !parameterName || String(currentValues[parameterName] ?? '').trim() === requestedPrompt;
       const contentStillCurrent = requestRevision === enhancementRequestRevisionRef.current
@@ -4216,9 +4289,11 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         && projectTypeAtSubmit === enhancementProjectTypeRef.current
         && configAtSubmit === JSON.stringify(enhancementConfigRef.current)
         && promptStillCurrent
+        && currentTarget.targetModel === targetModelAtSubmit
         && (profile
-          ? currentMapping?.mappingFingerprint === mappingAtSubmit
-          : targetAtSubmit === (loadTargetModel() || 'generic'));
+          ? currentTarget.targetProfile?.target_model === profile.target_model
+            && currentMapping?.mappingFingerprint === mappingAtSubmit
+          : true);
       if (!result.success || !contentStillCurrent) {
         if (result.success) showWarning('Enhancement discarded because the prompt, panel, workflow, target, or media mapping changed.');
         throw new Error(result.success ? 'Enhancement response discarded as stale.' : (result.error || 'Enhancement failed'));
@@ -4232,7 +4307,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       if (/discarded as stale/i.test(errorMsg)) return null;
       throw error;
     }
-  }, [enhancementProfiles, enhancementProfilesLoading, enhancementProfilesError, showInfo, showWarning, showError]);
+  }, [enhancementProfiles, enhancementProfilesLoading, enhancementProfilesError, enhancementTargetModels, enhancementTargetModelsLoading, enhancementTargetModelsError, showInfo, showWarning, showError]);
   
   // ---------------------------------------------------------------------------
   // Render Helpers
@@ -4241,18 +4316,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     return date.toTimeString().split(' ')[0];
   };
   
-  const getFilteredWorkflows = () => {
-    return workflows.filter(w => {
-      // Check if workflow belongs to this tab by original category/subcategory
-      const matchesOriginalCategory = w.category === activeTab && w.subCategory === activeSubTab;
-      
-      // Check if workflow is tagged with the specific category for this subcategory
-      const expectedCategory = SUBCATEGORY_TO_CATEGORY_MAP[activeSubTab];
-      const matchesNewCategories = expectedCategory && w.categories?.includes(expectedCategory);
-      
-      return matchesOriginalCategory || matchesNewCategories;
-    });
-  };
+  const getFilteredWorkflows = () => filterWorkflowsByRoute(workflows, activeTab, activeSubTab);
   
   const selectedWorkflow = workflows.find(w => w.id === selectedWorkflowId);
   const selectedEnhancementPanel = selectedPanelId === null ? undefined : panels.find(panel => panel.id === selectedPanelId);
@@ -5512,17 +5576,6 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 )}
               </div>
               
-              <PromptEnhancementControls
-                profiles={enhancementProfiles}
-                assets={enhancementAssets}
-                preferences={selectedEnhancementPreferences}
-                durationSeconds={enhancementDuration}
-                onChange={handleEnhancementPreferencesChange}
-                profilesLoading={enhancementProfilesLoading}
-                profilesError={enhancementProfilesError}
-                onRetryProfiles={loadEnhancementProfiles}
-                disabled={false}
-              />
               <ParameterPanel
                 parameters={exposedParameters.map(p => ({
                   name: p.name,
@@ -5538,9 +5591,27 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 onChange={handleParameterChange}
                 disabled={false}
                 onEnhancePrompt={handleEnhancePrompt}
+                onOpenEnhancementSettings={openEnhancementSettings}
                 cameraAngles={cameraAngles}
                 onCameraAngleChange={handleCameraAngleChange}
                 comfyUrl={editorComfyUrl}
+              />
+              <PromptEnhancementSettingsPopup
+                isOpen={showEnhancementSettings}
+                onClose={closeEnhancementSettings}
+                profiles={enhancementProfiles}
+                targetModels={enhancementTargetModels}
+                assets={enhancementAssets}
+                preferences={selectedEnhancementPreferences}
+                durationSeconds={enhancementDuration}
+                onChange={handleEnhancementPreferencesChange}
+                profilesLoading={enhancementProfilesLoading}
+                profilesError={enhancementProfilesError}
+                targetModelsLoading={enhancementTargetModelsLoading}
+                targetModelsError={enhancementTargetModelsError}
+                onRetryProfiles={loadEnhancementProfiles}
+                onRetryTargetModels={loadEnhancementTargetModels}
+                disabled={false}
               />
             </div>
           )}

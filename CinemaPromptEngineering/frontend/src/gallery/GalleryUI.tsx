@@ -919,7 +919,8 @@ export function GalleryUI({
 
   return (
     <div className="gallery-ui">
-      {/* Left sidebar — Folder tree */}
+      <div className="gallery-body">
+        {/* Left sidebar — Folder tree */}
       <aside className="gallery-sidebar" style={{ width: sidebarWidth }}>
         <div className="gallery-sidebar-header">
           <span className="gallery-sidebar-title">Folders</span>
@@ -1041,20 +1042,10 @@ export function GalleryUI({
               onDoubleClick={handleOpenLightbox}
             />
           )}
-          <BatchBar
-            orchestratorUrl={orchestratorUrl}
-            projectPath={projectPath}
-            totalFiles={currentFiles.length}
-            allFilePaths={currentFiles.map((f) => f.path)}
-            onMove={handleBatchMove}
-            onTrash={handleBatchTrash}
-            onCompare={handleBatchCompare}
-            onRefresh={handleRefresh}
-          />
         </div>
       </section>
 
-      {/* Right panel — Detail */}
+        {/* Right panel — Detail */}
       {showDetailPanel && detailFile && (
         <aside className="gallery-detail-panel">
           <DetailPanel
@@ -1070,6 +1061,22 @@ export function GalleryUI({
             onCreateTag={handleCreateTag}
           />
         </aside>
+        )}
+      </div>
+
+      {selectedFiles.size > 0 && (
+        <footer className="gallery-main-footer">
+          <BatchBar
+            orchestratorUrl={orchestratorUrl}
+            projectPath={projectPath}
+            totalFiles={currentFiles.length}
+            allFilePaths={currentFiles.map((f) => f.path)}
+            onMove={handleBatchMove}
+            onTrash={handleBatchTrash}
+            onCompare={handleBatchCompare}
+            onRefresh={handleRefresh}
+          />
+        </footer>
       )}
 
       {/* Context Menu */}

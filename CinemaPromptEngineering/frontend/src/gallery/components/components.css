@@ -270,6 +270,13 @@
   flex: 1;
 }
 
+.gallery-grid-virtual-scroll {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .gallery-grid-empty {
   display: flex;
   align-items: center;
@@ -286,6 +293,7 @@
 
 .gallery-thumbnail {
   position: relative;
+  min-width: 0;
   border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
@@ -701,8 +709,16 @@
    --------------------------------------------------------------------------- */
 
 .video-scrubber-container {
+  position: relative;
   cursor: pointer;
   background: var(--color-bg-primary, #141414);
+}
+
+/* Fit the fixed thumbnail viewport instead of sizing it from video dimensions. */
+.gallery-thumbnail-image-container > .video-scrubber-container,
+.gallery-masonry-image-container--video > .video-scrubber-container {
+  position: absolute;
+  inset: 0;
 }
 
 .video-scrubber-poster {
@@ -1957,8 +1973,7 @@
    --------------------------------------------------------------------------- */
 
 .batch-bar {
-  position: sticky;
-  bottom: 0;
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -1968,7 +1983,6 @@
   padding: 0 12px;
   background: var(--color-bg-secondary, #161b22);
   border-top: 1px solid var(--color-border, #30363d);
-  z-index: 20;
   flex-shrink: 0;
 }
 
