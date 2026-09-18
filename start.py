@@ -36,6 +36,7 @@ import argparse
 import atexit
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -907,8 +908,80 @@ def kill_orphaned_processes() -> None:
         log("CLEANUP", f"Error checking for orphaned processes: {e}", Colors.YELLOW)
 
 
+def _unix_listener_pids(port: int) -> Optional[set[int]]:
+    """Return PIDs listening on an exact TCP port, or None on discovery failure."""
+    lsof = shutil.which("lsof")
+    ss = shutil.which("ss")
+
+    if lsof:
+        command = [lsof, "-nP", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"]
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=5
+            )
+        except subprocess.TimeoutExpired:
+            log("CLEANUP", f"Timed out discovering listeners on port {port}", Colors.RED)
+            return None
+        except OSError as exc:
+            log("CLEANUP", f"Could not run lsof for port {port}: {exc}", Colors.RED)
+            return None
+
+        if result.returncode not in (0, 1):
+            detail = result.stderr.strip() or f"exit code {result.returncode}"
+            log("CLEANUP", f"lsof failed for port {port}: {detail}", Colors.RED)
+            return None
+        return {int(pid) for pid in result.stdout.split() if pid.isdigit()}
+
+    if ss:
+        try:
+            result = subprocess.run(
+                [ss, "-ltnp"], capture_output=True, text=True, timeout=5
+            )
+        except subprocess.TimeoutExpired:
+            log("CLEANUP", f"Timed out discovering listeners on port {port}", Colors.RED)
+            return None
+        except OSError as exc:
+            log("CLEANUP", f"Could not run ss for port {port}: {exc}", Colors.RED)
+            return None
+
+        if result.returncode != 0:
+            detail = result.stderr.strip() or f"exit code {result.returncode}"
+            log("CLEANUP", f"ss failed for port {port}: {detail}", Colors.RED)
+            return None
+
+        pids: set[int] = set()
+        listener_without_pid = False
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) < 4 or fields[0] != "LISTEN":
+                continue
+            local_port = fields[3].rsplit(":", 1)[-1].rstrip("]")
+            if local_port != str(port):
+                continue
+            found = {int(pid) for pid in re.findall(r"pid=(\d+)", line)}
+            if found:
+                pids.update(found)
+            else:
+                listener_without_pid = True
+
+        if listener_without_pid:
+            log(
+                "CLEANUP",
+                f"ss found a listener on port {port} but did not report its PID",
+                Colors.RED,
+            )
+        return pids
+
+    log(
+        "CLEANUP",
+        f"Cannot clean port {port}: neither lsof nor ss is available",
+        Colors.RED,
+    )
+    return None
+
+
 def kill_process_on_port(port: int) -> bool:
-    """Kill any process using the specified port."""
+    """Free a port without touching clients or unrelated processes."""
     if platform.system() == "Windows":
         try:
             # Find process using the port
@@ -943,28 +1016,79 @@ def kill_process_on_port(port: int) -> bool:
         except Exception as e:
             log("CLEANUP", f"Error cleaning port {port}: {e}", Colors.YELLOW)
     else:
-        # Unix: use lsof and kill
-        try:
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=5
+        pids = _unix_listener_pids(port)
+        if pids is None:
+            return not is_port_in_use(port)
+
+        current_pid = os.getpid()
+        pids.discard(0)
+        if current_pid in pids:
+            pids.remove(current_pid)
+            log("CLEANUP", f"Skipping self (PID {current_pid})", Colors.GRAY)
+
+        if not pids:
+            if is_port_in_use(port):
+                log(
+                    "CLEANUP",
+                    f"Port {port} is still in use, but no safe listener PID was found",
+                    Colors.RED,
+                )
+                return False
+            return True
+
+        for pid in sorted(pids):
+            log(
+                "CLEANUP",
+                f"Stopping listener PID {pid} on port {port}",
+                Colors.YELLOW,
             )
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            except PermissionError as exc:
+                log("CLEANUP", f"Permission denied stopping PID {pid}: {exc}", Colors.RED)
+            except OSError as exc:
+                log("CLEANUP", f"Could not stop PID {pid}: {exc}", Colors.RED)
 
-            pids = result.stdout.strip().split("\n")
-            for pid in pids:
-                if pid.isdigit():
-                    log(
-                        "CLEANUP",
-                        f"Killing process {pid} on port {port}",
-                        Colors.YELLOW,
-                    )
-                    subprocess.run(["kill", "-9", pid], capture_output=True, timeout=2)
+        # Give graceful shutdown a bounded chance before re-discovering listeners.
+        time.sleep(1)
+        if not is_port_in_use(port):
+            return True
 
-            if pids and pids[0]:
-                time.sleep(1)
-                return True
+        remaining = _unix_listener_pids(port)
+        if remaining is None:
+            log(
+                "CLEANUP",
+                f"Port {port} remains in use; cannot safely verify force-kill targets",
+                Colors.RED,
+            )
+            return False
 
-        except Exception as e:
-            pass
+        # Only force-kill PIDs still listening on this exact port. Never guess.
+        remaining.intersection_update(pids)
+        remaining.discard(current_pid)
+        if not remaining:
+            log(
+                "CLEANUP",
+                f"Port {port} remains in use, but no safe force-kill target was found",
+                Colors.RED,
+            )
+            return False
+
+        for pid in sorted(remaining):
+            log("CLEANUP", f"Force-stopping listener PID {pid} on port {port}", Colors.YELLOW)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                continue
+            except PermissionError as exc:
+                log("CLEANUP", f"Permission denied force-stopping PID {pid}: {exc}", Colors.RED)
+            except OSError as exc:
+                log("CLEANUP", f"Could not force-stop PID {pid}: {exc}", Colors.RED)
+
+        time.sleep(0.5)
+        return not is_port_in_use(port)
 
     return False
 
