@@ -135,6 +135,38 @@ export function getDefaultOrchestratorUrl(): string {
   return 'http://localhost:9820';
 }
 
+function cloneForSave<T>(value: T, seen = new WeakMap<object, unknown>()): T {
+  if (value === null || typeof value !== 'object') return value;
+  if ((typeof Blob !== 'undefined' && value instanceof Blob) || value instanceof Date || value instanceof ArrayBuffer) {
+    return value instanceof Date ? new Date(value.getTime()) as T : value;
+  }
+  if (seen.has(value)) return seen.get(value) as T;
+
+  if (value instanceof Map) {
+    const copy = new Map();
+    seen.set(value, copy);
+    value.forEach((item, key) => copy.set(cloneForSave(key, seen), cloneForSave(item, seen)));
+    return copy as T;
+  }
+  if (value instanceof Set) {
+    const copy = new Set();
+    seen.set(value, copy);
+    value.forEach(item => copy.add(cloneForSave(item, seen)));
+    return copy as T;
+  }
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value, copy);
+    value.forEach(item => copy.push(cloneForSave(item, seen)));
+    return copy as T;
+  }
+
+  const copy: Record<string, unknown> = {};
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) copy[key] = cloneForSave(item, seen);
+  return copy as T;
+}
+
 function normalizeOrchestratorUrl(orchestratorUrl: string): string {
   if (!orchestratorUrl) return orchestratorUrl;
 
@@ -989,7 +1021,9 @@ export class ProjectManager {
       // Phase 2: Strip all image data from panels - will be reconstructed on load
       // Phase 3: Externalize base64 reference images to disk files
       const sanitizedPanels = panels.map((panel: unknown) => {
-        const p = panel as Record<string, unknown>;
+        // Stage a detached snapshot: reference-image externalization must never
+        // rewrite live panel state when Save/Save As or the final project write fails.
+        const p = cloneForSave(panel) as Record<string, unknown>;
         
         // DEBUG: Log what we're saving
         console.log('[ProjectManager] Saving panel:', {
@@ -1082,7 +1116,7 @@ export class ProjectManager {
       }
       
       // Also externalize global parameter_values
-      const globalPv = parameterValues ? { ...parameterValues } : null;
+      const globalPv = parameterValues ? cloneForSave(parameterValues) : null;
       if (globalPv) {
         const globalRefFolder = `${folderPath}/.ref_images`;
         for (const [key, value] of Object.entries(globalPv)) {
