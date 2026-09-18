@@ -662,14 +662,30 @@ Beyond rule-based generation, CPE can send a structured prompt to an enhancing L
 
 #### Cinema Prompt Engineering page
 
-1. Choose the canonical target from the **General**, **Image**, or **Video** target dropdown.
+1. Choose the canonical target from the **General**, **Image**, or **Video** target dropdown. The scene prompt is a full-width row above these target controls.
 2. For a registered video target, choose its available dialect (for example, `local_h3` or `minimax_api`). Dialects are model-specific; prose targets are not all one JSON template.
 3. Configure an LLM provider/model in **Settings**, enter the scene idea and cinematography selections, and click **Enhance with AI**.
-4. Review/copy the AI-Enhanced Prompt, or use **Send to Storyboard**. Image targets use image guidance; profiled video targets use the selected video profile and default to a text-to-video enhancement context on this page because it has no workflow media mapping.
+4. Review/copy the AI-Enhanced Prompt, or use **Send to Storyboard**. Image targets use their family guide; profiled video targets use the selected video profile and default to a text-to-video enhancement context on this page because it has no workflow media mapping.
 
-The canonical image catalog includes Midjourney, FLUX.1 variants, Flux Kontext/Krea, DALL-E 3, GPT-Image, Ideogram, Leonardo, SDXL, Stable Diffusion 3, Z-Image Turbo, and Qwen-Image. The current registered video profiles include **LTX 2.3**, **LTX 2.5**, **MiniMax H3**, **MiniMax H3 Max**, **Seedance 2.0**, **Seedance 2.5**, **Wan 3.0**, **Kling 3.0**, and **Kling 3.0 Omni**. The [Prompt enhancement profiles guide](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) links each versioned guide and its official sources.
+### Image target guide families
 
-These guides are available now as prompt-text guidance. They do not guarantee local weights, a ComfyUI node, provider credentials, account/region access, API submission, or visual quality.
+The canonical image catalog preserves all older targets and adds these 14 prompt-guide targets:
+
+| Family | Canonical targets | Prompt distinction |
+|---|---|---|
+| Krea 2 | `krea_2_large`, `krea_2_turbo` | Large supports richer supplied detail; Turbo stays concise for iteration. Vague ideas remain exploratory rather than acquiring invented props or camera specs. |
+| FLUX.2 | `flux_2_max`, `flux_2_pro`, `flux_2_flex`, `flux_2_klein`, `flux_2_dev` | Natural subject/action/style/context prose; no SD-style weighting or negative block. Klein gets a separate rich-narrative guide because it does not upsample prompts. |
+| GPT Image 2.5 | `gpt_image_2.5_sunburst`, `gpt_image_2.5_flare` | Sunburst prioritizes precise composition and editing constraints; Flare favors direct, efficient iteration. |
+| Nano Banana | `nano_banana_2`, `nano_banana_pro`, `nano_banana_2_lite` | Nano Banana 2 and Pro use complete scene/edit instructions; Lite is not optimized for multiple references or multi-turn sequential editing. |
+| Seedream 5.0 | `seedream_5.0_pro`, `seedream_5.0_lite` | Pro can express supplied layouts, typography, and spatial edits; Lite remains a focused natural-language task guide without assumed Pro controls. |
+
+These are prompt-text guides, not image-generation integrations. Hosted/API model pages, open-weight releases, local checkpoints, and ComfyUI nodes are separate availability questions: Krea 2 includes open-weight releases, but that does not make every Krea service or feature local; likewise, a catalog target never promises local weights, a hosted endpoint, credentials, account/region access, or a ComfyUI workflow. FLUX 3 Image is intentionally excluded pending verified API/prompt availability.
+
+Both the CPE page and Storyboard AI Enhance use the same target catalog and guides. Image enhancement has no separate image task, mode, or reference-mapping selector: the user's wording must identify a new generation or the exact edit. For edits, state what changes and what caller-provided identity, composition, lighting, or text must remain; the enhancer receives metadata only and does not inspect image bytes or invent reference contents. The Storyboard gear remains the place for video dialect/task and confirmed media mapping controls.
+
+Official image sources: [Krea 2](https://www.krea.ai/blog/explorative-prompting-krea-2), [FLUX.2 prompting](https://docs.bfl.ai/guides/prompting_guide_flux2), [GPT Image prompting](https://developers.openai.com/api/docs/guides/image-prompting), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation), and [Seedream 5.0 Pro/Lite](https://seed.bytedance.com/en/blog/beyond-generation-it-understands-design-introducing-seedream-5-0-pro).
+
+The current registered video profiles remain **LTX 2.3**, **LTX 2.5**, **MiniMax H3**, **MiniMax H3 Max**, **Seedance 2.0**, **Seedance 2.5**, **Wan 3.0**, **Kling 3.0**, and **Kling 3.0 Omni**. The [Prompt enhancement profiles guide](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) links each versioned guide and its official sources.
 
 ---
 

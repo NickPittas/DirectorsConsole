@@ -25,6 +25,25 @@ PROMPTS_DIR = Path(__file__).parent / "system_prompts"
 MODEL_PROMPTS_DIR = PROMPTS_DIR / "model_prompts"
 GENERAL_PROMPT_PATH = PROMPTS_DIR / "general.md"
 
+# Shared image-family guides keep variant-specific constraints explicit without
+# creating a separate registry or duplicating near-identical prompt files.
+MODEL_PROMPT_FILES: dict[str, str] = {
+    "krea_2_large": "krea_2",
+    "krea_2_turbo": "krea_2",
+    "flux_2_max": "flux_2",
+    "flux_2_pro": "flux_2",
+    "flux_2_flex": "flux_2",
+    "flux_2_klein": "flux_2_klein",
+    "flux_2_dev": "flux_2",
+    "gpt_image_2.5_sunburst": "gpt_image_2.5",
+    "gpt_image_2.5_flare": "gpt_image_2.5",
+    "nano_banana_2": "nano_banana",
+    "nano_banana_pro": "nano_banana",
+    "nano_banana_2_lite": "nano_banana_2_lite",
+    "seedream_5.0_pro": "seedream_5.0",
+    "seedream_5.0_lite": "seedream_5.0",
+}
+
 
 def get_target_models() -> list[dict[str, str]]:
     """Get list of available target models for dropdown population."""
@@ -82,7 +101,8 @@ def get_system_prompt(target_model: str, project_type: str = "live_action") -> s
     general_prompt = _read_prompt_file(GENERAL_PROMPT_PATH)
     model_prompt = ""
     if model_key != "generic":
-        model_prompt = _read_prompt_file(MODEL_PROMPTS_DIR / f"{model_key}.md")
+        prompt_file = MODEL_PROMPT_FILES.get(model_key, model_key)
+        model_prompt = _read_prompt_file(MODEL_PROMPTS_DIR / f"{prompt_file}.md")
 
     if model_prompt and general_prompt:
         return f"{general_prompt}\n\n{model_prompt}"

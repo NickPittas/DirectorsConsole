@@ -63,6 +63,20 @@
 
 ## IMAGE GENERATION MODELS
 
+### Current image target additions
+
+The canonical prompt-target catalog now also includes these versioned image families. These entries describe enhancement guidance only; they do not imply a local checkpoint, ComfyUI node, provider account, or API endpoint.
+
+| Family | Targets | Prompting note |
+|---------|---------|----------------|
+| Krea 2 | Krea 2 Large, Krea 2 Turbo | Keep intentionally exploratory prompts concise; retain explicit detail. |
+| FLUX.2 | Max, Pro, Flex, Klein, Dev | Use natural subject/action/style/context prose; no negative block or SD weighting. Klein does not upsample prompts. |
+| GPT Image 2.5 | Sunburst, Flare | Preserve exact composition, text, counts, and edit constraints; model settings are separate. |
+| Nano Banana | 2, Pro, 2 Lite | Use complete scene instructions; Lite is not optimized for multiple references or multi-turn sequential editing. |
+| Seedream 5.0 | Pro, Lite | Express supplied layout, hierarchy, typography, and concrete edits in natural language. |
+
+These guides are shared by Cinema Prompt Engineering and Storyboard AI Enhance. The user's wording distinguishes new generation from editing; there is no separate image task/mode or reference-mapping selector. FLUX 3 Image remains excluded pending verified API/prompt availability.
+
 ### 1. MIDJOURNEY V6
 
 #### 1.1 Prompt Structure
@@ -720,57 +734,43 @@ This section covers open-source models that can run locally via ComfyUI, essenti
 
 #### 1. FLUX.2 (Black Forest Labs)
 
-**Released:** November 2025  
-**License:** Open weights (dev variant)  
-**Parameters:** 32B (dev), 4B/9B (klein)
+FLUX.2 is a family with both hosted and open-weight variants. A target selection or prompt guide does not establish local weights, a ComfyUI workflow, an API endpoint, or account access.
 
 ##### 1.1 Model Variants
 
-| Variant | Parameters | Speed | Quality | Use Case |
-|---------|------------|-------|---------|----------|
-| **FLUX.2 [dev]** | 32B | Slower | Highest | Production |
-| **FLUX.2 [klein]** | 4B/9B | Sub-second | Good | Rapid prototyping |
-| **FLUX.2 [pro/max]** | API only | Fast | Highest | Commercial API |
+| Variant | Prompting distinction |
+|---------|-----------------------|
+| **FLUX.2 Max** | Prioritize the main subject and critical relationships before optional detail. |
+| **FLUX.2 Pro** | Use balanced, precise prose that retains explicit constraints without embellishment. |
+| **FLUX.2 Flex** | Preserve exact requested typography, wording, placement, and visual hierarchy; sampling and guidance controls remain outside prose. |
+| **FLUX.2 Klein** | Use sufficiently rich narrative because Klein does not perform prompt upsampling. |
+| **FLUX.2 Dev** | Use clear natural language without assuming hosted controls or a local checkpoint. |
 
 ##### 1.2 Prompt Structure
 
-FLUX.2 uses **natural language** with a 4-pillar structure:
+FLUX.2 uses natural language with a useful priority order:
 
 ```
 Subject + Action + Style + Context
 ```
 
 **Key Principles:**
-- **No negative prompts** - FLUX.2 doesn't support them; describe what you WANT
-- Word order matters: Most important elements FIRST
-- Supports **HEX color codes** directly: `#FF6B35 orange sunset`
-- Supports **JSON structured prompts** for complex scenes
-- Optimal prompt length: 30-80 words
+- Describe the desired result positively; FLUX.2 does not use a Stable Diffusion-style negative block.
+- Put the main subject, key action, critical style, and essential context before secondary detail.
+- Preserve caller-supplied hex colors and exact quoted typography with placement and style.
+- Assign multiple-reference roles only when the caller explicitly identifies them; never invent image numbers or contents.
+- 30–80 words can be useful, but is not a hard limit.
+
+Do not treat hosted API controls as universal local sampler settings. The enhancement guide writes prompt prose only.
 
 ##### 1.3 Cinematic Keywords
 
-| Category | Effective Keywords |
-|----------|-------------------|
-| **Camera** | 85mm lens, wide-angle, telephoto, shallow DOF, f/2.8 aperture |
-| **Lighting** | Rembrandt lighting, rim light, golden hour, volumetric, chiaroscuro |
+| Category | Effective language |
+|----------|--------------------|
+| **Camera** | 85mm lens, wide-angle, telephoto, shallow depth of field, f/2.8 aperture |
+| **Lighting** | Rembrandt lighting, rim light, golden hour, volumetric light, chiaroscuro |
 | **Style** | photorealistic, cinematic, film grain, anamorphic, IMAX |
 | **Reference** | shot on ARRI Alexa, medium format, Hasselblad |
-
-##### 1.4 ComfyUI Parameters
-
-| Parameter | Default | Range | Notes |
-|-----------|---------|-------|-------|
-| `guidance_scale` | 3.5 | 1-7 | 3-5 for quality; higher = stricter |
-| `num_inference_steps` | 50 | 20-100 | 50 is standard |
-| `caption_upsample_temperature` | 0.15 | 0-1 | Improves prompt understanding |
-
-##### 1.5 Example Prompt
-
-```
-A weathered detective in a rain-soaked Tokyo alley at night, #FF6B35 neon signs 
-reflecting in puddles, shot with 85mm lens at f/1.8, cinematic film grain, 
-shallow depth of field, Blade Runner aesthetic, high contrast shadows
-```
 
 ---
 
@@ -1117,22 +1117,15 @@ skeptical expression. High contrast lighting, deep shadows, noir atmosphere.
 
 #### 6. NANO BANANA (Google Gemini API)
 
-**Note:** This is an **API-based model** (Google Gemini 2.5 Flash Image / Gemini 3 Pro Image), not locally runnable, but accessible via ComfyUI Partner Nodes.
+The canonical targets map to the official model IDs: Nano Banana 2 is `gemini-3.1-flash-image`, Nano Banana Pro is `gemini-3-pro-image`, and Nano Banana 2 Lite is `gemini-3.1-flash-lite-image`. These IDs support prompt guidance only; this catalog does not promise Google API access, ComfyUI Partner Nodes, credits, or local execution.
 
-##### 6.1 Features
+##### 6.1 Prompting distinctions
 
-- Studio-grade quality
-- 4K content generation
-- Advanced text rendering (10+ languages)
-- High-resolution blending (up to 14 images)
-- Strong character consistency
+- **Nano Banana 2:** Use a complete natural-language scene description for clear iteration.
+- **Nano Banana Pro:** Add explicit spatial relationships, layout, typography, and edit constraints when the caller supplies them.
+- **Nano Banana 2 Lite:** Keep the request self-contained. It is not optimized for multiple reference inputs or multi-turn sequential editing; do not assume Pro's limits or features.
 
-##### 6.2 ComfyUI Access
-
-Access via **Google Gemini** Partner Nodes in ComfyUI:
-- Requires API credits
-- No local VRAM required
-- Works well as keyframe generator for Wan 2.2 workflows
+For all variants, preserve exact quoted text, counts, positions, and caller-confirmed edit instructions. Do not claim vision access, grounding, 4K, native tools, or automatic reference handling from prompt prose.
 
 ---
 

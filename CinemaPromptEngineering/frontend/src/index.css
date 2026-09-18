@@ -186,7 +186,8 @@ body {
 /* CPE Toolbar - replaces title with action bar */
 .cpe-toolbar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
   padding: 12px 20px;
   margin-bottom: 1rem;
@@ -195,10 +196,11 @@ body {
   border-radius: 0;
 }
 
-.toolbar-prompt {
-  flex: 1;
-  min-width: 200px;
-  max-width: 500px;
+.cpe-toolbar .toolbar-prompt {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 80px;
   padding: 0.5rem 0.75rem;
   background: var(--bg-medium);
   border: 1px solid var(--border-medium);
@@ -206,21 +208,30 @@ body {
   color: var(--text-primary);
   font-size: 0.85rem;
   font-family: inherit;
-  resize: none;
+  resize: vertical;
   line-height: 1.4;
 }
 
-.toolbar-prompt:focus {
+.cpe-toolbar .toolbar-prompt:focus {
   outline: none;
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 2px var(--accent-primary-muted);
 }
 
-.toolbar-prompt::placeholder {
+.cpe-toolbar .toolbar-prompt::placeholder {
   color: var(--text-muted);
 }
 
-.toolbar-model {
+.cpe-toolbar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.cpe-toolbar .toolbar-model {
   padding: 0.5rem 2rem 0.5rem 0.75rem;
   background: var(--bg-medium);
   border: 1px solid var(--border-medium);
@@ -235,17 +246,17 @@ body {
   background-position: right 0.75rem center;
 }
 
-.toolbar-model:focus {
+.cpe-toolbar .toolbar-model:focus {
   outline: none;
   border-color: var(--accent-primary);
 }
 
-.toolbar-model:disabled {
+.cpe-toolbar .toolbar-model:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.toolbar-btn {
+.cpe-toolbar .toolbar-btn {
   padding: 0.5rem 1rem;
   border-radius: 6px;
   font-size: 0.85rem;
@@ -264,30 +275,30 @@ body {
   justify-content: center;
 }
 
-.toolbar-btn:hover:not(:disabled) {
+.cpe-toolbar .toolbar-btn:hover:not(:disabled) {
   background: var(--bg-light);
   border-color: var(--accent-secondary);
 }
 
-.toolbar-btn.primary {
+.cpe-toolbar .toolbar-btn.primary {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
   color: var(--bg-darkest);
   font-weight: 600;
 }
 
-.toolbar-btn.primary:hover:not(:disabled) {
+.cpe-toolbar .toolbar-btn.primary:hover:not(:disabled) {
   background: var(--accent-primary-hover);
   border-color: var(--accent-primary-hover);
   box-shadow: 0 2px 8px rgba(212, 168, 85, 0.25);
 }
 
-.toolbar-btn:disabled {
+.cpe-toolbar .toolbar-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.toolbar-settings {
+.cpe-toolbar .toolbar-settings {
   padding: 0.5rem;
   background: transparent;
   border: none;
@@ -300,12 +311,12 @@ body {
   transition: all 0.15s ease;
 }
 
-.toolbar-settings:hover {
+.cpe-toolbar .toolbar-settings:hover {
   color: var(--text-primary);
   background: var(--bg-elevated);
 }
 
-.toolbar-settings svg {
+.cpe-toolbar .toolbar-settings svg {
   width: 20px;
   height: 20px;
 }
