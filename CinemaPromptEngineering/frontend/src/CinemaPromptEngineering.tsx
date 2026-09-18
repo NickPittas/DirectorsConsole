@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useCinemaStore } from '@/store';
-import { api } from '@/api/client';
+import { api, type PromptEnhancementProfile } from '@/api/client';
 import type { RuleSeverity, FilmPresetSummary, AnimationPresetSummary, CinematographyStyle, OptionsResponse } from '@/types';
 import Settings, { getConfiguredProviders, getSelectedLlmSettings, loadTargetModel, saveTargetModel, updateSavedOAuthToken, type ConfiguredProvider } from '@/components/Settings';
 
@@ -200,7 +200,7 @@ const ENUMS = {
     // Video Models
     'sora', 'sora_2', 'veo_2', 'veo_3', 'runway_gen-3', 'runway_gen-4', 
     'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'ltx_2.3', 'ltx_2.5', 'cogvideox',
-    'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
+    'hunyuan', 'wan_2.1', 'wan_2.2', 'wan_3.0', 'kling_3.0', 'kling_3.0_omni', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
     'qwen_vl', 'seedance_2.0', 'seedance_2.5',
   ],
 };
@@ -237,6 +237,9 @@ const TARGET_MODEL_NAMES: Record<string, string> = {
   'hunyuan': 'Hunyuan Video',
   'wan_2.1': 'Wan 2.1',
   'wan_2.2': 'Wan 2.2',
+  'wan_3.0': 'Wan 3.0',
+  'kling_3.0': 'Kling 3.0',
+  'kling_3.0_omni': 'Kling 3.0 Omni',
   'minimax_video': 'Minimax Video',
   'minimax_h3': 'MiniMax H3',
   'minimax_h3_max': 'MiniMax H3 Max',
@@ -2238,6 +2241,25 @@ function App() {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
   const [enhanceWarnings, setEnhanceWarnings] = useState<string[]>([]);
+  const [enhancementProfiles, setEnhancementProfiles] = useState<PromptEnhancementProfile[]>([]);
+  const [enhancementDialect, setEnhancementDialect] = useState('');
+  const enhancementRevisionRef = useRef(0);
+  const userPromptRef = useRef(userPrompt);
+  const projectTypeRef = useRef(projectType);
+  const enhancementDialectRef = useRef(enhancementDialect);
+  const enhancementConfigRef = useRef<unknown>(liveActionConfig);
+  userPromptRef.current = userPrompt;
+  projectTypeRef.current = projectType;
+  enhancementDialectRef.current = enhancementDialect;
+  enhancementConfigRef.current = projectType === 'live_action' ? liveActionConfig : animationConfig;
+
+  useEffect(() => {
+    enhancementRevisionRef.current += 1;
+  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect]);
+
+  useEffect(() => () => {
+    enhancementRevisionRef.current += 1;
+  }, []);
   
   // Target AI models (fetched from API)
   const [availableTargetModels, setAvailableTargetModels] = useState<Array<{id: string, name: string, category: string}>>([]);
@@ -2431,6 +2453,23 @@ function App() {
       });
   }, [sessionHydrated]);
 
+  useEffect(() => {
+    let active = true;
+    api.getPromptEnhancementProfiles()
+      .then(result => { if (active) setEnhancementProfiles(result.profiles || []); })
+      .catch(error => console.warn('Failed to fetch prompt enhancement profiles:', error));
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const profile = enhancementProfiles.find(item => item.target_model === targetModel);
+    if (!profile && enhancementDialect) {
+      setEnhancementDialect('');
+    } else if (profile && (!enhancementDialect || !profile.dialects.some(item => item.id === enhancementDialect))) {
+      setEnhancementDialect(profile.default_dialect);
+    }
+  }, [enhancementProfiles, targetModel, enhancementDialect]);
+
   // Save preset panel state to localStorage (consolidated key)
   useEffect(() => {
     const state = {
@@ -2600,15 +2639,32 @@ function App() {
     setIsEnhancing(true);
     setEnhanceError(null);
     const submittedOAuthToken = provider.credentials.oauthToken;
+    const requestedPrompt = userPrompt.trim();
+    const requestedTarget = targetModel;
+    const requestedProjectType = projectType;
+    const requestedConfig = JSON.stringify(enhancementConfigRef.current);
+    const requestRevision = enhancementRevisionRef.current;
+    const selectedProfile = enhancementProfiles.find(profile => profile.target_model === targetModel);
+    const requestedDialect = selectedProfile?.dialects.some(item => item.id === enhancementDialect)
+      ? enhancementDialect
+      : selectedProfile?.default_dialect;
     
     try {
       const result = await api.enhancePrompt({
-        userPrompt: userPrompt.trim(),
+        userPrompt: requestedPrompt,
         llmProvider: selectedLlmProvider,
         llmModel: selectedLlmModel,
-        targetModel,
-        projectType,
-        config: projectType === 'live_action' ? liveActionConfig : animationConfig,
+        targetModel: requestedTarget,
+        projectType: requestedProjectType,
+        config: requestedProjectType === 'live_action' ? liveActionConfig : animationConfig,
+        ...(selectedProfile ? {
+          enhancementContext: {
+            task: 't2v' as const,
+            ...(requestedDialect ? { referenceDialect: requestedDialect } : {}),
+            assets: [],
+            referenceOrderConfirmed: true,
+          },
+        } : {}),
         credentials: {
           apiKey: provider.credentials.apiKey,
           endpoint: provider.credentials.endpoint,
@@ -2630,11 +2686,32 @@ function App() {
       }
 
       if (result.success) {
-        // Set the enhanced prompt separately from the simple generated prompt
+        // Read current refs after the await. The callback closure may describe
+        // the request that was submitted, not the request still visible in the UI.
+        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
+          && userPromptRef.current.trim() === requestedPrompt
+          && targetModelRef.current === requestedTarget
+          && projectTypeRef.current === requestedProjectType
+          && enhancementDialectRef.current === requestedDialect
+          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
+        if (!requestStillCurrent) {
+          setEnhanceError('Enhancement discarded because the request changed while it was running.');
+          return;
+        }
+        // Set the enhanced prompt separately from the simple generated prompt.
         setEnhancedPrompt(result.enhanced_prompt);
         setEnhanceWarnings(result.warnings ?? []);
-
       } else {
+        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
+          && userPromptRef.current.trim() === requestedPrompt
+          && targetModelRef.current === requestedTarget
+          && projectTypeRef.current === requestedProjectType
+          && enhancementDialectRef.current === requestedDialect
+          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
+        if (!requestStillCurrent) {
+          setEnhanceError('Enhancement discarded because the request changed while it was running.');
+          return;
+        }
         setEnhanceError(result.error || 'Enhancement failed');
       }
     } catch (error) {
@@ -2644,7 +2721,7 @@ function App() {
     } finally {
       setIsEnhancing(false);
     }
-  }, [userPrompt, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, setEnhancedPrompt]);
+  }, [userPrompt, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, enhancementProfiles, enhancementDialect, setEnhancedPrompt]);
 
   const getSeverityClass = (severity: RuleSeverity) => {
     switch (severity) {
@@ -2718,7 +2795,7 @@ function App() {
                 {ENUMS.target_model.filter(v => 
                   ['sora', 'sora_2', 'veo_2', 'veo_3', 'runway_gen-3', 'runway_gen-4',
                    'kling_1.6', 'pika_2.0', 'luma_dream_machine', 'ltx_2', 'ltx_2.3', 'ltx_2.5', 'cogvideox',
-                   'hunyuan', 'wan_2.1', 'wan_2.2', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
+                   'hunyuan', 'wan_2.1', 'wan_2.2', 'wan_3.0', 'kling_3.0', 'kling_3.0_omni', 'minimax_video', 'minimax_h3', 'minimax_h3_max',
                    'qwen_vl', 'seedance_2.0', 'seedance_2.5'].includes(v)
                 ).map((v) => (
                   <option key={v} value={v}>{TARGET_MODEL_NAMES[v] || v}</option>
@@ -2727,6 +2804,18 @@ function App() {
             </>
           )}
         </select>
+        {enhancementProfiles.find(profile => profile.target_model === targetModel) && (
+          <select
+            className="toolbar-model"
+            aria-label="Enhancement dialect"
+            value={enhancementDialect || enhancementProfiles.find(profile => profile.target_model === targetModel)?.default_dialect || ''}
+            onChange={event => setEnhancementDialect(event.target.value)}
+          >
+            {enhancementProfiles.find(profile => profile.target_model === targetModel)?.dialects.map(dialect => (
+              <option key={dialect.id} value={dialect.id}>{dialect.label}</option>
+            ))}
+          </select>
+        )}
         {targetModelWarning && (
           <span role="status" style={{ color: 'var(--text-warning, #f59e0b)', fontSize: '0.75rem' }}>
             {targetModelWarning}

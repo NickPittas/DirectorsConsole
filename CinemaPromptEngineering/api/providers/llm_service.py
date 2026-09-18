@@ -31,6 +31,7 @@ class LLMResponse:
     error: str = ""
     tokens_used: int = 0
     model_used: str = ""
+    truncated: bool = False
 
 
 @dataclass
@@ -103,6 +104,7 @@ class LLMService:
         provider: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """
         Enhance a prompt using the specified LLM provider.
@@ -113,6 +115,7 @@ class LLMService:
             provider: LLM provider ID (openai, anthropic, etc.)
             model: Model name/ID
             credentials: Authentication credentials
+            output_token_budget: Optional provider output limit for structured prompts
 
         Returns:
             LLMResponse with enhanced prompt or error
@@ -121,29 +124,29 @@ class LLMService:
 
         try:
             if provider_lower == "openai":
-                return await self._call_openai(user_prompt, system_prompt, model, credentials)
+                return await self._call_openai(user_prompt, system_prompt, model, credentials, output_token_budget)
             elif provider_lower == "anthropic":
-                return await self._call_anthropic(user_prompt, system_prompt, model, credentials)
+                return await self._call_anthropic(user_prompt, system_prompt, model, credentials, output_token_budget)
             elif provider_lower == "google":
-                return await self._call_google(user_prompt, system_prompt, model, credentials)
+                return await self._call_google(user_prompt, system_prompt, model, credentials, output_token_budget)
             elif provider_lower == "openrouter":
-                return await self._call_openrouter(user_prompt, system_prompt, model, credentials)
+                return await self._call_openrouter(user_prompt, system_prompt, model, credentials, output_token_budget)
             elif provider_lower in ("ollama", "lmstudio"):
                 return await self._call_local(
-                    user_prompt, system_prompt, model, credentials, provider_lower
+                    user_prompt, system_prompt, model, credentials, provider_lower, output_token_budget
                 )
             elif provider_lower == "github_copilot":
                 return await self._call_github_copilot(
-                    user_prompt, system_prompt, model, credentials
+                    user_prompt, system_prompt, model, credentials, output_token_budget
                 )
             elif provider_lower == "antigravity":
-                return await self._call_antigravity(user_prompt, system_prompt, model, credentials)
+                return await self._call_antigravity(user_prompt, system_prompt, model, credentials, output_token_budget)
             elif provider_lower == "github_models":
                 return await self._call_github_models(
-                    user_prompt, system_prompt, model, credentials
+                    user_prompt, system_prompt, model, credentials, output_token_budget
                 )
             elif provider_lower == "openai_codex":
-                return await self._call_openai_codex(user_prompt, system_prompt, model, credentials)
+                return await self._call_openai_codex(user_prompt, system_prompt, model, credentials, output_token_budget)
             else:
                 return LLMResponse(success=False, error=f"Unsupported provider: {provider}")
         except asyncio.TimeoutError:
@@ -164,6 +167,7 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call OpenAI API."""
         if not credentials.api_key:
@@ -175,6 +179,7 @@ class LLMService:
             )
 
         endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["openai"]
+        output_token_budget = output_token_budget or 1000
 
         # Debug logging for 404 investigation
         logger.info(f"OpenAI request - model: '{model}', endpoint: '{endpoint}'")
@@ -197,7 +202,7 @@ class LLMService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "max_tokens": 1000,
+                    "max_tokens": output_token_budget,
                     "temperature": 0.7,
                 },
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -228,7 +233,8 @@ class LLMService:
                         success=False, error=f"OpenAI error ({response.status}): {error_msg}"
                     )
 
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
                 tokens = data.get("usage", {}).get("total_tokens", 0)
 
                 return LLMResponse(
@@ -236,6 +242,7 @@ class LLMService:
                     content=content,
                     tokens_used=tokens,
                     model_used=model,
+                    truncated=choice.get("finish_reason") in {"length", "max_tokens"},
                 )
 
     # -------------------------------------------------------------------------
@@ -248,12 +255,14 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call Anthropic API."""
         if not credentials.api_key:
             return LLMResponse(success=False, error="Anthropic API key required")
 
         endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["anthropic"]
+        output_token_budget = output_token_budget or 1000
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -269,7 +278,7 @@ class LLMService:
                     "messages": [
                         {"role": "user", "content": user_prompt},
                     ],
-                    "max_tokens": 1000,
+                    "max_tokens": output_token_budget,
                 },
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
@@ -289,6 +298,7 @@ class LLMService:
                     content=content,
                     tokens_used=tokens,
                     model_used=model,
+                    truncated=data.get("stop_reason") == "max_tokens",
                 )
 
     # -------------------------------------------------------------------------
@@ -301,12 +311,14 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call Google Gemini API."""
         if not credentials.api_key:
             return LLMResponse(success=False, error="Google API key required")
 
         endpoint = PROVIDER_ENDPOINTS["google"].format(model=model) + f"?key={credentials.api_key}"
+        output_token_budget = output_token_budget or 1000
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -315,7 +327,7 @@ class LLMService:
                 json={
                     "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
                     "generationConfig": {
-                        "maxOutputTokens": 1000,
+                        "maxOutputTokens": output_token_budget,
                         "temperature": 0.7,
                     },
                 },
@@ -327,12 +339,14 @@ class LLMService:
                     error_msg = data.get("error", {}).get("message", str(data))
                     return LLMResponse(success=False, error=f"Google error: {error_msg}")
 
-                content = data["candidates"][0]["content"]["parts"][0]["text"]
+                candidate = data["candidates"][0]
+                content = candidate["content"]["parts"][0]["text"]
 
                 return LLMResponse(
                     success=True,
                     content=content,
                     model_used=model,
+                    truncated=candidate.get("finishReason") in {"MAX_TOKENS", "LENGTH"},
                 )
 
     # -------------------------------------------------------------------------
@@ -345,12 +359,14 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call OpenRouter API (OpenAI-compatible)."""
         if not credentials.api_key:
             return LLMResponse(success=False, error="OpenRouter API key required")
 
         endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["openrouter"]
+        output_token_budget = output_token_budget or 1000
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -367,7 +383,7 @@ class LLMService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "max_tokens": 1000,
+                    "max_tokens": output_token_budget,
                     "temperature": 0.7,
                 },
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -378,7 +394,8 @@ class LLMService:
                     error_msg = data.get("error", {}).get("message", str(data))
                     return LLMResponse(success=False, error=f"OpenRouter error: {error_msg}")
 
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
                 tokens = data.get("usage", {}).get("total_tokens", 0)
 
                 return LLMResponse(
@@ -386,6 +403,7 @@ class LLMService:
                     content=content,
                     tokens_used=tokens,
                     model_used=model,
+                    truncated=choice.get("finish_reason") in {"length", "max_tokens"},
                 )
 
     # -------------------------------------------------------------------------
@@ -399,6 +417,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         provider: str,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call local LLM providers (Ollama or LM Studio)."""
         default_endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["ollama"])
@@ -421,6 +440,7 @@ class LLMService:
                     {"role": "user", "content": user_prompt},
                 ],
                 "stream": False,
+                **({"options": {"num_predict": output_token_budget}} if output_token_budget else {}),
             }
         else:
             # LM Studio uses OpenAI-compatible format
@@ -430,7 +450,7 @@ class LLMService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                "max_tokens": 1000,
+                "max_tokens": output_token_budget or 1000,
                 "temperature": 0.7,
             }
 
@@ -451,6 +471,7 @@ class LLMService:
 
                 if provider == "ollama":
                     content = data.get("message", {}).get("content", "")
+                    truncated = data.get("done_reason") in {"length", "max_tokens"}
                 else:
                     # LM Studio uses OpenAI-compatible format with choices array
                     choices = data.get("choices")
@@ -460,6 +481,7 @@ class LLMService:
                             success=False, error=f"LM Studio response error: {error_info}"
                         )
                     content = choices[0].get("message", {}).get("content", "")
+                    truncated = choices[0].get("finish_reason") in {"length", "max_tokens"}
                     if not content:
                         return LLMResponse(success=False, error="LM Studio returned empty content")
 
@@ -467,6 +489,7 @@ class LLMService:
                     success=True,
                     content=content,
                     model_used=model,
+                    truncated=truncated,
                 )
 
     # -------------------------------------------------------------------------
@@ -479,6 +502,7 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call GitHub Copilot API via OAuth token.
 
@@ -514,6 +538,7 @@ class LLMService:
             )
 
         endpoint = PROVIDER_ENDPOINTS["github_copilot"]
+        output_token_budget = output_token_budget or 2000
 
         # Must use exact headers that VS Code Copilot extension uses
         headers = {
@@ -534,7 +559,7 @@ class LLMService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_tokens": 2000,
+            "max_tokens": output_token_budget,
             "temperature": 0.7,
             "stream": False,
         }
@@ -600,12 +625,14 @@ class LLMService:
                         success=False, error=f"GitHub Copilot returned invalid JSON: {text[:200]}"
                     )
 
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
 
                 return LLMResponse(
                     success=True,
                     content=content,
                     model_used=model,
+                    truncated=choice.get("finish_reason") in {"length", "max_tokens"},
                 )
 
     # -------------------------------------------------------------------------
@@ -618,6 +645,7 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call GitHub Models API (models.github.ai).
 
@@ -637,6 +665,7 @@ class LLMService:
             )
 
         endpoint = PROVIDER_ENDPOINTS["github_models"]
+        output_token_budget = output_token_budget or 2000
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -653,7 +682,7 @@ class LLMService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "max_tokens": 2000,
+                    "max_tokens": output_token_budget,
                     "temperature": 0.7,
                 },
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -664,12 +693,14 @@ class LLMService:
                     error_msg = data.get("error", {}).get("message", str(data))
                     return LLMResponse(success=False, error=f"GitHub Models error: {error_msg}")
 
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
 
                 return LLMResponse(
                     success=True,
                     content=content,
                     model_used=model,
+                    truncated=choice.get("finish_reason") in {"length", "max_tokens"},
                 )
 
     # -------------------------------------------------------------------------
@@ -684,6 +715,7 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call Antigravity API (Google Cloud AI Companion).
 
@@ -725,7 +757,7 @@ class LLMService:
                 {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}
             ],
             "generationConfig": {
-                "maxOutputTokens": 2000,
+                "maxOutputTokens": output_token_budget or 2000,
                 "temperature": 0.7,
             },
         }
@@ -765,12 +797,14 @@ class LLMService:
 
                                 usage = response_data.get("usageMetadata", {})
                                 tokens = usage.get("totalTokenCount", 0)
+                                finish_reason = candidates[0].get("finishReason")
 
                                 return LLMResponse(
                                     success=True,
                                     content=text,
                                     tokens_used=tokens,
                                     model_used=model,
+                                    truncated=finish_reason in {"MAX_TOKENS", "LENGTH"},
                                 )
                             except (KeyError, IndexError) as e:
                                 last_error = f"Failed to parse response: {e}"
@@ -824,6 +858,7 @@ class LLMService:
         system_prompt: str,
         model: str,
         credentials: LLMCredentials,
+        output_token_budget: int | None = None,
     ) -> LLMResponse:
         """Call OpenAI Codex API via ChatGPT backend.
 
@@ -867,6 +902,7 @@ class LLMService:
             "reasoning": {"effort": "medium", "summary": "auto"},
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
+            **({"max_output_tokens": output_token_budget} if output_token_budget else {}),
         }
 
         # Required headers for Codex backend
@@ -950,7 +986,7 @@ class LLMService:
                     )
 
                 # Parse SSE stream to get the final response
-                content, tokens = await self._parse_codex_sse_response(response)
+                content, tokens, truncated = await self._parse_codex_sse_response(response)
 
                 if not content:
                     return LLMResponse(
@@ -962,6 +998,7 @@ class LLMService:
                     content=content,
                     tokens_used=tokens,
                     model_used=normalized_model,
+                    truncated=truncated,
                 )
 
     def _extract_chatgpt_account_id(self, token: str) -> Optional[str]:
@@ -1040,7 +1077,7 @@ class LLMService:
 
         return model_map.get(model.lower(), model)
 
-    async def _parse_codex_sse_response(self, response: aiohttp.ClientResponse) -> tuple[str, int]:
+    async def _parse_codex_sse_response(self, response: aiohttp.ClientResponse) -> tuple[str, int, bool]:
         """Parse SSE stream from Codex API to extract final response.
 
         The stream contains multiple events, we're looking for:
@@ -1048,10 +1085,11 @@ class LLMService:
         - Response contains 'output' array with the generated content
 
         Returns:
-            Tuple of (content_text, token_count)
+            Tuple of (content_text, token_count, truncated)
         """
         content = ""
         tokens = 0
+        truncated = False
 
         try:
             async for line in response.content:
@@ -1084,6 +1122,7 @@ class LLMService:
                         # Extract token usage
                         usage = response_data.get("usage", {})
                         tokens = usage.get("total_tokens", 0)
+                        truncated = response_data.get("status") in {"incomplete", "max_tokens"}
                         break
 
                     # Also handle streaming content deltas
@@ -1101,7 +1140,7 @@ class LLMService:
         except Exception as e:
             logger.warning(f"Error parsing Codex SSE response: {e}")
 
-        return content, tokens
+        return content, tokens, truncated
 
     # -------------------------------------------------------------------------
     # Dynamic Model Fetching

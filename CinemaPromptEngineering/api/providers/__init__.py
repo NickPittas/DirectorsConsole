@@ -35,6 +35,7 @@ from .system_prompts import (
     MODEL_ID_ALIASES,
     is_video_model,
 )
+from .prompt_profiles import EnhancementAsset, EnhancementContext, profile_metadata
 
 __all__ = [
     # Models
@@ -68,4 +69,7 @@ __all__ = [
     "TARGET_MODELS",
     "MODEL_ID_ALIASES",
     "is_video_model",
+    "EnhancementAsset",
+    "EnhancementContext",
+    "profile_metadata",
 ]

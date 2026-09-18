@@ -23,6 +23,47 @@ const API_BASE = import.meta.env.PROD && import.meta.env.VITE_BUILD_MODE === 'co
   ? '../api'
   : '';
 
+export type EnhancementTask = 't2v' | 'i2v' | 'ref2v';
+export type EnhancementAssetKind = 'image' | 'video' | 'audio';
+export type EnhancementAssetRole = 'first_frame' | 'last_frame' | 'reference_image' | 'reference_video' | 'reference_audio';
+
+export interface EnhancementContext {
+  task: EnhancementTask;
+  referenceDialect?: string;
+  durationSeconds?: number;
+  assets: Array<{
+    bindingId: string;
+    kind: EnhancementAssetKind;
+    role: EnhancementAssetRole;
+    ordinal: number;
+    label?: string;
+    description?: string;
+    referenceName?: string;
+  }>;
+  referenceOrderConfirmed: boolean;
+}
+
+export interface PromptEnhancementProfileDialect {
+  id: string;
+  label: string;
+  tasks: string[];
+  reference_style: string;
+  requires_order_confirmation: boolean;
+}
+
+export interface PromptEnhancementProfile {
+  target_model: string;
+  label: string;
+  tasks: string[];
+  default_dialect: string;
+  dialects: PromptEnhancementProfileDialect[];
+  source_urls: string[];
+}
+
+export interface PromptEnhancementProfilesResponse {
+  profiles: PromptEnhancementProfile[];
+}
+
 class ApiClient {
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -510,6 +551,11 @@ class ApiClient {
   // LLM PROMPT ENHANCEMENT
   // ===========================================================================
 
+  /** Fetch the backend-owned prompt target and dialect catalog. */
+  async getPromptEnhancementProfiles(): Promise<PromptEnhancementProfilesResponse> {
+    return this.fetch('/prompt-enhancement/profiles');
+  }
+
   /** Enhance a user prompt using an LLM with cinematic context */
   async enhancePrompt(options: {
     userPrompt: string;
@@ -518,6 +564,7 @@ class ApiClient {
     targetModel: string;
     projectType: 'live_action' | 'animation';
     config: LiveActionConfig | AnimationConfig;
+    enhancementContext?: EnhancementContext;
     credentials: {
       apiKey?: string;
       endpoint?: string;
@@ -542,6 +589,23 @@ class ApiClient {
         target_model: options.targetModel,
         project_type: options.projectType,
         config: options.config,
+        ...(options.enhancementContext ? {
+          enhancement_context: {
+            task: options.enhancementContext.task,
+            ...(options.enhancementContext.referenceDialect ? { reference_dialect: options.enhancementContext.referenceDialect } : {}),
+            ...(options.enhancementContext.durationSeconds !== undefined ? { duration_seconds: options.enhancementContext.durationSeconds } : {}),
+            assets: options.enhancementContext.assets.map(asset => ({
+              binding_id: asset.bindingId,
+              kind: asset.kind,
+              role: asset.role,
+              ordinal: asset.ordinal,
+              ...(asset.label ? { label: asset.label } : {}),
+              ...(asset.description ? { description: asset.description } : {}),
+              ...(asset.referenceName ? { reference_name: asset.referenceName } : {}),
+            })),
+            reference_order_confirmed: options.enhancementContext.referenceOrderConfirmed,
+          },
+        } : {}),
         credentials: {
           api_key: options.credentials.apiKey,
           endpoint: options.credentials.endpoint,

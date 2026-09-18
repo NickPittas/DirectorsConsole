@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import type { EnhancementPreferences } from './prompt-enhancement';
 
 // ============================================================================
 // Types
@@ -999,6 +1000,7 @@ export class ProjectManager {
       renderNodes?: unknown[];
       comfyUrl?: string;
       cameraAngles?: Record<string, unknown>;
+      enhancementPreferences?: EnhancementPreferences;
       deletedImages?: string[];
     },
     settingsOverride?: ProjectSettings,
@@ -1057,6 +1059,7 @@ export class ProjectManager {
           notes: p.notes,
           workflowId: p.workflowId,
           parameterValues: p.parameterValues,
+          enhancementPreferences: p.enhancementPreferences,
           nodeId: p.nodeId,
           imageRatings, // Per-image star ratings keyed by savedPath
         };
@@ -1182,6 +1185,7 @@ export class ProjectManager {
             render_nodes: additionalState?.renderNodes || null,
             comfy_url: additionalState?.comfyUrl || null,
             camera_angles: additionalState?.cameraAngles || null,
+            enhancement_preferences: additionalState?.enhancementPreferences || null,
             deleted_images: additionalState?.deletedImages || [],
             saved_at: new Date().toISOString(),
           },
@@ -1219,6 +1223,7 @@ export class ProjectManager {
       render_nodes?: unknown[];
       comfy_url?: string;
       camera_angles?: Record<string, unknown>;
+      enhancement_preferences?: EnhancementPreferences;
       deleted_images?: string[];
       saved_at: string;
     };
