@@ -1002,15 +1002,15 @@ for payload in json.load(sys.stdin):
         assert '<Picture 1>' in session.calls[0]['json']['messages'][1]['content']
 print('backend bridge passed')
 `;
-  const pythonCommand = process.env.PYTHON || 'uv';
-  const pythonArgs = pythonCommand === 'uv'
-    ? ['run', '--no-project', '--python', '3.11', '--with-requirements', 'requirements-dev.txt', 'python', '-c', backendScript]
-    : ['-c', backendScript];
-  const backendBridge = spawnSync(pythonCommand, pythonArgs, {
+  const pythonCommand = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  const backendBridge = spawnSync(pythonCommand, ['-c', backendScript], {
     cwd: root,
     env: { ...process.env, PYTHONPATH: path.join(root, 'CinemaPromptEngineering') },
     input: JSON.stringify([mountedT2vPayload, mountedRef2vPayload]), encoding: 'utf8',
   });
+  if (backendBridge.error) {
+    throw new Error(`Could not start Python backend bridge with ${pythonCommand}: ${backendBridge.error.message}`);
+  }
   assert.equal(backendBridge.status, 0, backendBridge.stderr || backendBridge.stdout);
   assert.match(backendBridge.stdout, /backend bridge passed/);
   assert.equal(mountedI2vPayload.enhancement_context.task, 'i2v');

@@ -64,7 +64,8 @@ def main() -> int:
     failed: list[str] = []
     for name, command, cwd in CHECKS:
         print(f"\n== {name} ==", flush=True)
-        result = subprocess.run(command, cwd=cwd, check=False)
+        env = {**os.environ, "PYTHON": sys.executable} if name.startswith("Node regression:") else None
+        result = subprocess.run(command, cwd=cwd, check=False, env=env)
         if result.returncode:
             failed.append(f"{name} (exit {result.returncode})")
 
