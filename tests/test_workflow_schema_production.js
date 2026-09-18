@@ -221,6 +221,63 @@ function compile(filename, requireImpl = {}, jsx = false) {
   return module.exports;
 }
 
+function loadFunction(functionSource, globals = {}, jsx = false) {
+  const filename = path.join(src, 'extracted.tsx');
+  const result = typescript.transpileModule(`module.exports = ${functionSource};`, {
+    fileName: filename,
+    compilerOptions: {
+      target: typescript.ScriptTarget.ES2020,
+      module: typescript.ModuleKind.CommonJS,
+      ...(jsx ? { jsx: typescript.JsxEmit.React } : {}),
+    },
+    reportDiagnostics: true,
+  });
+  const module = { exports: {} };
+  vm.runInNewContext(result.outputText, {
+    module,
+    exports: module.exports,
+    console,
+    setTimeout,
+    clearTimeout,
+    Promise,
+    ...globals,
+  }, { filename });
+  return module.exports;
+}
+
+function findJsxAttribute(source, filename, elementName, attributeName) {
+  const tree = typescript.createSourceFile(filename, source, typescript.ScriptTarget.Latest, true, typescript.ScriptKind.TSX);
+  let initializer;
+  function visit(node) {
+    if (initializer) return;
+    const opening = typescript.isJsxElement(node) ? node.openingElement
+      : typescript.isJsxSelfClosingElement(node) ? node : undefined;
+    if (opening && opening.tagName.getText(tree) === elementName) {
+      const attribute = opening.attributes.properties.find(property =>
+        typescript.isJsxAttribute(property) && property.name.getText(tree) === attributeName);
+      if (attribute?.initializer && typescript.isJsxExpression(attribute.initializer) && attribute.initializer.expression) {
+        initializer = attribute.initializer.expression;
+      }
+    }
+    typescript.forEachChild(node, visit);
+  }
+  visit(tree);
+  return initializer ? source.slice(initializer.getStart(tree), initializer.end) : undefined;
+}
+
+function findFunctionDeclaration(source, filename, name) {
+  const tree = typescript.createSourceFile(filename, source, typescript.ScriptTarget.Latest, true, typescript.ScriptKind.TSX);
+  let declaration;
+  function visit(node) {
+    if (declaration) return;
+    if (typescript.isFunctionDeclaration(node) && node.name?.getText(tree) === name) declaration = node;
+    typescript.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert.ok(declaration, `${name} was not found`);
+  return source.slice(declaration.getStart(tree), declaration.end);
+}
+
 async function flush() {
   await new Promise(resolve => setImmediate(resolve));
   await new Promise(resolve => setImmediate(resolve));
@@ -250,6 +307,57 @@ async function changeInput(element, value) {
   await flush();
 }
 
+function mutateOnce(source, needle, replacement) {
+  assert.equal(source.split(needle).length - 1, 1, `mutation needle must be unique: ${needle}`);
+  return source.replace(needle, replacement);
+}
+
+function exerciseActualStoryboardSave(source, options, workflow, parsed, baseConfig, typedValue) {
+  const fileName = path.join(src, 'StoryboardUI.tsx');
+  const saveSource = findJsxAttribute(source, fileName, 'WorkflowEditor', 'onSave');
+  assert.ok(saveSource, 'StoryboardUI WorkflowEditor onSave registration was not found');
+
+  const editingWorkflow = { id: 'workflow-main', name: 'Main', workflow, parsed, config: [baseConfig] };
+  const parameterValuesRef = { current: { steps: typedValue, stale_old_name: 999 } };
+  let parameterValues = { ...parameterValuesRef.current };
+  let panels = [
+    { id: 'same-a', workflowId: editingWorkflow.id, parameterValues: { steps: 31 }, imageHistory: [{ id: 'a' }] },
+    { id: 'same-b', workflowId: editingWorkflow.id, parameterValues: { steps: 32 }, imageHistory: [{ id: 'b' }] },
+    { id: 'other', workflowId: 'other-workflow', parameterValues: { steps: 77 }, imageHistory: [{ id: 'other' }] },
+  ];
+  const otherPanelBefore = JSON.parse(JSON.stringify(panels[2]));
+  let savedConfig;
+  let workflows = [editingWorkflow];
+  let editorClosed = false;
+  const skipParameterReset = { current: false };
+  const selectedPanelIdRef = { current: 'same-a' };
+  const actualSave = loadFunction(saveSource, {
+    editingWorkflow,
+    parameterValuesRef,
+    reconcileParameterValues: options.reconcileParameterValues,
+    skipParameterReset,
+    setParameterValues: value => { parameterValues = value; },
+    setPanels: updater => { panels = updater(panels); },
+    selectedPanelIdRef,
+    setWorkflows: updater => { workflows = updater(workflows); },
+    setShowWorkflowEditor: value => { editorClosed = value; },
+    addLog: () => {},
+  });
+  const config = [{ ...baseConfig, name: 'renamed_steps', display_name: 'Renamed Steps', exposed: true }];
+  actualSave(config);
+
+  assert.equal(skipParameterReset.current, true);
+  assert.equal(parameterValues.renamed_steps, typedValue, 'sidebar controlled value must follow the renamed binding');
+  assert.equal(parameterValuesRef.current.renamed_steps, typedValue, 'generation ref must use the same renamed binding');
+  assert.equal(Object.hasOwn(parameterValues, 'steps'), false);
+  assert.equal(JSON.stringify(panels[0].parameterValues), JSON.stringify({ renamed_steps: 31 }));
+  assert.equal(JSON.stringify(panels[1].parameterValues), JSON.stringify({ renamed_steps: 32 }));
+  assert.equal(JSON.stringify(panels[2]), JSON.stringify(otherPanelBefore), 'another workflow panel must remain untouched');
+  assert.equal(workflows[0].config[0].name, 'renamed_steps');
+  assert.equal(editorClosed, false);
+  return { config, parameterValues, parameterValuesRef, panels };
+}
+
 async function main() {
   const document = installDom();
   const React = frontendRequire('react');
@@ -262,10 +370,11 @@ async function main() {
     '../data/cameraAngleData': { ANGLE_LORA_NAME: '__test_angle__' },
   });
   const parser = new parserModule.WorkflowParser();
+  const runtimeNodeDefinitions = {};
   const editor = compile(path.join(src, 'components/WorkflowEditor.tsx'), {
     'react/jsx-runtime': frontendRequire('react/jsx-runtime'),
     '../services/workflow-parser': { WorkflowParser: parserModule.WorkflowParser },
-    '../services/node-definitions': { nodeDefinitions: {} },
+    '../services/node-definitions': { nodeDefinitions: runtimeNodeDefinitions },
     '../services/workflow-editor-options': options,
     './WorkflowEditor.css': {},
   }, true);
@@ -275,7 +384,7 @@ async function main() {
     '../services/workflow-editor-options': options,
     './ImageDropZone': { ImageDropZone: () => null },
     '../data/cameraAngleData': { parseAngleFromPrompt: () => null, removeAnglePrefix: value => value },
-    './CameraAngleSelector': () => null,
+    './CameraAngleSelector': { default: () => null },
     '@/store': { useCinemaStore: () => ({ cpePromptForStoryboard: null, setCpePromptForStoryboard() {} }) },
     './ParameterWidgets.css': {},
   }, true);
@@ -300,6 +409,49 @@ async function main() {
     description: 'preserve me', constraints: { min: 1, max: 30, step: 1 }, order: 0, exposed: false,
     category: 'parameter', auto_detected: true, user_modified: false,
   };
+  const parameterContainer = document.createElement('div');
+  document.body.appendChild(parameterContainer);
+  let liveParameterValues = { steps: 21, megapixels: 1.5, enabled: false, sampler: 7 };
+  const parameterRoot = createRoot(parameterContainer);
+  await act(async () => parameterRoot.render(React.createElement(widgets.ParameterPanel, {
+    parameters: parsed.parameters,
+    values: liveParameterValues,
+    onChange: (name, value) => { liveParameterValues = { ...liveParameterValues, [name]: value }; },
+  })));
+  await flush();
+  await changeInput(parameterContainer.querySelector('input[type="number"]'), 25);
+  assert.equal(liveParameterValues.steps, 25, 'real parameter input edit must update the typed value');
+
+  const storyboardFile = path.join(src, 'StoryboardUI.tsx');
+  const storyboardSource = fs.readFileSync(storyboardFile, 'utf8');
+  const actualTransaction = exerciseActualStoryboardSave(
+    storyboardSource,
+    options,
+    workflow,
+    parsed,
+    baseConfig,
+    liveParameterValues.steps,
+  );
+  const generatedPayload = parser.buildWorkflow(
+    workflow,
+    actualTransaction.parameterValuesRef.current,
+    {},
+    {},
+    actualTransaction.config,
+  );
+  assert.equal(generatedPayload['1'].inputs.steps, 25, 'generation must use the typed renamed value');
+  const renamedParameters = parsed.parameters.map(parameter =>
+    parameter.name === 'steps' ? { ...parameter, name: 'renamed_steps', display_name: 'Renamed Steps' } : parameter,
+  );
+  await act(async () => parameterRoot.render(React.createElement(widgets.ParameterPanel, {
+    parameters: renamedParameters,
+    values: actualTransaction.parameterValues,
+    onChange: () => {},
+  })));
+  await flush();
+  assert.equal(parameterContainer.querySelector('input[type="number"]').value, '25', 'renamed control must re-render with its typed value');
+  await act(async () => parameterRoot.unmount());
+  document.body.removeChild(parameterContainer);
 
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -442,6 +594,126 @@ async function main() {
   assert.equal(apiValues.renamed_steps, 25);
   assert.equal(Object.hasOwn(apiValues, 'steps'), false);
   assert.equal(built['1'].inputs.steps, 25);
+
+  // Combined restored FastVideo state: only prompt/megapixels/fps/steps are exposed,
+  // managed schema arrives asynchronously, and a removed binding stays removed.
+  await act(async () => rootNode.unmount());
+  container.textContent = '';
+  const fastWorkflow = {
+    '1': {
+      class_type: 'FastVideo',
+      inputs: { prompt: 'restored prompt', megapixels: 1.5, fps: 24, steps: 8 },
+    },
+  };
+  const fastSchema = { FastVideo: { input: { required: {
+    prompt: ['STRING', { default: 'restored prompt' }],
+    megapixels: ['FLOAT', { default: 1.5, min: 0.1, max: 3, step: 0.1 }],
+    fps: ['INT', { default: 24, min: 1, max: 120, step: 1 }],
+    steps: ['INT', { default: 8, min: 1, max: 30, step: 1 }],
+  } } } };
+  const fastParsed = parser.parseWorkflow(fastWorkflow, fastSchema);
+  assert.equal(
+    JSON.stringify(fastParsed.parameters.map(parameter => parameter.name).sort()),
+    JSON.stringify(['fps', 'megapixels', 'prompt', 'steps']),
+  );
+  const fastConfig = fastParsed.parameters.map((parameter, index) => ({
+    ...parameter,
+    order: index,
+    exposed: true,
+    category: 'parameter',
+    auto_detected: true,
+    user_modified: false,
+  }));
+  let resolveDefinitions;
+  const definitionsArrived = new Promise(resolve => { resolveDefinitions = resolve; });
+  runtimeNodeDefinitions.fetchDefinitions = () => definitionsArrived;
+  runtimeNodeDefinitions.getLoras = () => Promise.resolve([]);
+  const managedContainer = document.createElement('div');
+  const managedParameterContainer = document.createElement('div');
+  document.body.appendChild(managedContainer);
+  document.body.appendChild(managedParameterContainer);
+  const managedValues = { prompt: 'restored prompt', megapixels: 1.5, fps: 24, steps: 8 };
+  const managedParameterRoot = createRoot(managedParameterContainer);
+  await act(async () => managedParameterRoot.render(React.createElement(widgets.ParameterPanel, {
+    parameters: fastParsed.parameters,
+    values: managedValues,
+    onChange: (name, value) => { managedValues[name] = value; },
+  })));
+  await flush();
+  await changeInput(managedParameterContainer.querySelector('textarea'), 'edited prompt');
+  const managedNumbers = managedParameterContainer.querySelectorAll('input[type="number"]');
+  await changeInput(managedNumbers[0], 2.25);
+  await changeInput(managedNumbers[1], 30);
+  await changeInput(managedNumbers[2], 12);
+  assert.deepEqual(managedValues, { prompt: 'edited prompt', megapixels: 2.25, fps: 30, steps: 12 });
+
+  let savedFastConfig;
+  let managedRoot = createRoot(managedContainer);
+  await act(async () => managedRoot.render(React.createElement(editor.WorkflowEditor, {
+    workflow: fastWorkflow,
+    parsedWorkflow: fastParsed,
+    initialConfig: fastConfig,
+    comfyUrl: 'http://managed-node:8188',
+    onSave: config => { savedFastConfig = config; },
+    onCancel() {},
+  })));
+  await flush();
+  assert.equal(managedContainer.querySelectorAll('.parameter-config-card').length, 4);
+  await act(async () => {
+    resolveDefinitions(fastSchema);
+    await definitionsArrived;
+  });
+  await flush();
+  assert.equal(managedContainer.querySelectorAll('.parameter-config-card').length, 4, 'schema arrival must preserve visibility');
+  assert.deepEqual(managedValues, { prompt: 'edited prompt', megapixels: 2.25, fps: 30, steps: 12 });
+  await click(textButton(document, 'Save Configuration'));
+  assert.equal(savedFastConfig.length, 4);
+  const fastPayload = parser.buildWorkflow(fastWorkflow, managedValues, {}, {}, savedFastConfig);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(fastPayload['1'].inputs).filter(([name]) => ['prompt', 'megapixels', 'fps', 'steps'].includes(name))),
+    managedValues,
+  );
+
+  await act(async () => managedRoot.unmount());
+  managedContainer.textContent = '';
+  managedRoot = createRoot(managedContainer);
+  const removedFastConfig = savedFastConfig.filter(config => config.name !== 'fps');
+  await act(async () => managedRoot.render(React.createElement(editor.WorkflowEditor, {
+    workflow: fastWorkflow,
+    parsedWorkflow: fastParsed,
+    initialConfig: removedFastConfig,
+    comfyUrl: 'http://managed-node:8188',
+    onSave() {},
+    onCancel() {},
+  })));
+  await flush();
+  assert.equal(managedContainer.querySelectorAll('.parameter-config-card').length, 3);
+  assert.equal(Array.from(managedContainer.querySelectorAll('.config-name')).some(input => input.value === 'Fps'), false);
+  await act(async () => managedRoot.unmount());
+  await act(async () => managedParameterRoot.unmount());
+  document.body.removeChild(managedContainer);
+  document.body.removeChild(managedParameterContainer);
+
+  const sidebarMutation = mutateOnce(
+    storyboardSource,
+    `                parameterValuesRef.current = reconciledValues;\n                setParameterValues(reconciledValues);`,
+    '                // mutation: sidebar state and generation ref omitted',
+  );
+  assert.throws(
+    () => exerciseActualStoryboardSave(sidebarMutation, options, workflow, parsed, baseConfig, 25),
+    /sidebar controlled value|generation ref/,
+  );
+  console.log('Sidebar/ref omission mutation failed as expected');
+  const panelMutation = mutateOnce(
+    storyboardSource,
+    '                  if (!belongsToWorkflow || !panel.parameterValues) return panel;',
+    '                  if (true) return panel;',
+  );
+  assert.throws(
+    () => exerciseActualStoryboardSave(panelMutation, options, workflow, parsed, baseConfig, 25),
+    /another workflow panel|renamed_steps/,
+  );
+  console.log('All-panel reconciliation mutation failed as expected');
 
   await act(async () => rootNode.unmount());
   console.log('Production workflow schema controls regression passed');

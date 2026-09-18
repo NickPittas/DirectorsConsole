@@ -53,6 +53,44 @@ function findEffect(source, fileName, marker) {
   return source.slice(found.getStart(tree), found.end);
 }
 
+function findStableEffect(source, fileName, markers) {
+  const tree = parse(source, fileName);
+  let found;
+  function visit(node) {
+    if (found) return;
+    if (typescript.isCallExpression(node)
+      && node.expression.getText(tree) === 'useEffect'
+      && node.arguments.length > 0) {
+      const callback = source.slice(node.arguments[0].getStart(tree), node.arguments[0].end);
+      if (markers.every(marker => callback.includes(marker))) found = node.arguments[0];
+    }
+    typescript.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert.ok(found, `stable useEffect owner was not found for ${markers.join(', ')}`);
+  return source.slice(found.getStart(tree), found.end);
+}
+
+function findJsxAttribute(source, fileName, elementName, attributeName) {
+  const tree = parse(source, fileName);
+  let expression;
+  function visit(node) {
+    if (expression) return;
+    const opening = typescript.isJsxElement(node) ? node.openingElement
+      : typescript.isJsxSelfClosingElement(node) ? node : undefined;
+    if (opening && opening.tagName.getText(tree) === elementName) {
+      const attribute = opening.attributes.properties.find(property =>
+        typescript.isJsxAttribute(property) && property.name.getText(tree) === attributeName);
+      if (attribute?.initializer && typescript.isJsxExpression(attribute.initializer) && attribute.initializer.expression) {
+        expression = attribute.initializer.expression;
+      }
+    }
+    typescript.forEachChild(node, visit);
+  }
+  visit(tree);
+  return expression ? source.slice(expression.getStart(tree), expression.end) : undefined;
+}
+
 function findFunctionDeclaration(source, fileName, name) {
   const tree = parse(source, fileName);
   let found;
@@ -290,7 +328,7 @@ async function testNewProjectCompletion(source = read('CinemaPromptEngineering/f
   const records = new Map([['unsaved:old', oldRecord]]);
   let activeIdentity = 'unsaved:old';
   const events = [];
-  const handler = loadFunction(findVariable(source, fileName, 'handleNewProject'), {
+  const handlerGlobals = {
     panels: [{ image: null, images: [], notes: '' }],
     sessionDraftController: { hasPendingChanges: () => false },
     projectSettings: { orchestratorUrl: 'http://orchestrator:9820' },
@@ -314,9 +352,47 @@ async function testNewProjectCompletion(source = read('CinemaPromptEngineering/f
     useCinemaStore: { getState: () => ({ resetSession: () => events.push('resetCinema') }) },
     setShowProjectSettings: value => events.push(['showSettings', value]),
     showError: value => events.push(['error', value]),
-  });
+  };
+  const handler = loadFunction(findVariable(source, fileName, 'handleNewProject'), handlerGlobals);
+  const registration = findJsxAttribute(source, fileName, 'MainMenu', 'onNewProject');
+  const registeredHandler = registration
+    ? loadFunction(registration, { handleNewProject: handler })
+    : async () => {};
 
-  await handler();
+  const menuSource = read('CinemaPromptEngineering/frontend/src/storyboard/components/MainMenu.tsx');
+  let menuHook = 0;
+  const icon = () => null;
+  const MainMenu = loadFunction(
+    findFunctionDeclaration(menuSource, 'CinemaPromptEngineering/frontend/src/storyboard/components/MainMenu.tsx', 'MainMenu').replace(/^export\s+/, ''),
+    {
+      React: { createElement },
+      useState: initial => [menuHook++ === 0 ? true : initial, () => {}],
+      useRef: initial => ({ current: initial }),
+      useEffect: () => {},
+      useCallback: callback => callback,
+      navigator: { platform: 'Linux' },
+      document: { addEventListener() {}, removeEventListener() {} },
+      Menu: icon, Save: icon, FolderInput: icon, Settings: icon, Server: icon,
+      ChevronDown: icon, ChevronRight: icon, FilePlus: icon, SaveAll: icon,
+      RefreshCw: icon, OctagonX: icon, Printer: icon, ArrowRightLeft: icon,
+      Clock: icon, X: icon,
+      getRecentProjects: () => [],
+      removeRecentProject: () => {},
+      clearRecentProjects: () => {},
+    },
+    true,
+  );
+  const menu = MainMenu({
+    projectName: 'Untitled Project', nodeCount: 0,
+    onProjectSettings: () => {}, onSaveProject: () => {}, onLoadProject: () => {},
+    onManageNodes: () => {}, onNewProject: registeredHandler,
+  });
+  const newButton = findRenderedElement(
+    menu,
+    element => element.type === 'button' && renderedText(element).includes('New Project'),
+  );
+  assert.equal(typeof newButton?.props.onClick, 'function', 'rendered MainMenu New action must be wired');
+  await newButton.props.onClick();
   assert.equal(activeIdentity, 'unsaved:fresh', 'completed New must activate a fresh recovery identity');
   assert.deepEqual(records.get('unsaved:old'), oldRecord, 'completed New must preserve the old archive');
   assert.deepEqual(events.find(event => Array.isArray(event) && event[0] === 'activate'), ['activate', 'unsaved:fresh']);
@@ -324,6 +400,13 @@ async function testNewProjectCompletion(source = read('CinemaPromptEngineering/f
 
 function createElement(type, props, ...children) {
   return { type, props: { ...(props || {}), children: children.length === 1 ? children[0] : children } };
+}
+
+function renderedText(node) {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  const children = node.props?.children;
+  return (Array.isArray(children) ? children : [children]).map(renderedText).join('');
 }
 
 function findRenderedElement(node, predicate) {
@@ -421,7 +504,9 @@ async function testAppMountHydration(source = read('CinemaPromptEngineering/fron
     clearActiveDraftPointer: async () => {},
   });
   const cleanupCalls = [];
-  const effect = loadFunction(findEffect(source, fileName, 'void hydrate()'), {
+  const effectSource = findStableEffect(source, fileName, ['isOAuthCallback', 'installSessionFlushHandlers']);
+  assert.match(effectSource, /useEffect|\(\)\s*=>/);
+  const effect = loadFunction(effectSource, {
     isOAuthCallback: false,
     hydrate,
     installSessionFlushHandlers: () => {
@@ -457,7 +542,12 @@ async function testCpeMessageMount(source = read('CinemaPromptEngineering/fronte
   }
   const window = new MockWindow();
   const config = { camera: { body: 'RecoveredCamera' } };
-  const effect = loadFunction(findEffect(source, fileName, "window.addEventListener('message', handler)"), {
+  const effectSource = findStableEffect(source, fileName, [
+    'INIT_CONFIG',
+    'window.parent.postMessage',
+    "window.removeEventListener('message', handler)",
+  ]);
+  const effect = loadFunction(effectSource, {
     window,
     suppressPromptReset: { current: false },
     suppressUserPromptSync: { current: false },
@@ -619,6 +709,12 @@ async function main() {
       '      await activateSessionIdentity(sessionDraftController, newIdentity, { discard });',
       '      // mutation: activation removed',
     ),
+    testNewProjectCompletion,
+  );
+  await expectMutationFailure(
+    'A MainMenu New registration',
+    read(storyboardFile),
+    source => mutateOnce(source, '          onNewProject={handleNewProject}', '          onNewProject={() => {}}'),
     testNewProjectCompletion,
   );
   await expectMutationFailure(
