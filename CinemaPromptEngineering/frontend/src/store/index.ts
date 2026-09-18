@@ -101,10 +101,14 @@ interface CinemaStore {
   validationResult: ValidationResult | null;
   setValidationResult: (result: ValidationResult | null) => void;
 
-  // Generated prompt
+  // Generated and user-entered prompts
   generatedPrompt: string;
   negativePrompt: string | null;
+  userPrompt: string;
+  enhancedPrompt: string;
   setGeneratedPrompt: (prompt: string, negative?: string | null) => void;
+  setUserPrompt: (prompt: string) => void;
+  setEnhancedPrompt: (prompt: string) => void;
 
   // Target model
   targetModel: string;
@@ -127,7 +131,9 @@ interface CinemaStore {
   resetConfig: () => void;
 
   // Session recovery (catalogs and provider credentials are intentionally excluded)
+  sessionHydrated: boolean;
   hydrateSession: (draft: CinemaDraftState) => void;
+  resetSession: () => void;
 
   // CPE prompt for Storyboard sharing
   cpePromptForStoryboard: string | null;
@@ -180,8 +186,12 @@ export const useCinemaStore = create<CinemaStore>((set) => ({
   // Generated prompt
   generatedPrompt: '',
   negativePrompt: null,
+  userPrompt: '',
+  enhancedPrompt: '',
   setGeneratedPrompt: (prompt, negative = null) =>
     set({ generatedPrompt: prompt, negativePrompt: negative }),
+  setUserPrompt: (prompt) => set({ userPrompt: prompt }),
+  setEnhancedPrompt: (prompt) => set({ enhancedPrompt: prompt }),
 
   // Target model
   targetModel: 'generic',
@@ -234,17 +244,36 @@ export const useCinemaStore = create<CinemaStore>((set) => ({
   cpePromptForStoryboard: null,
   setCpePromptForStoryboard: (prompt) => set({ cpePromptForStoryboard: prompt }),
 
+  sessionHydrated: false,
   hydrateSession: (draft) => set({
     projectType: draft.projectType as ProjectType,
     liveActionConfig: draft.liveActionConfig as LiveActionConfig,
     animationConfig: draft.animationConfig as AnimationConfig,
     generatedPrompt: draft.generatedPrompt || '',
     negativePrompt: draft.negativePrompt ?? null,
+    userPrompt: draft.userPrompt ?? '',
+    enhancedPrompt: draft.enhancedPrompt ?? '',
     cpePromptForStoryboard: draft.cpePromptForStoryboard ?? null,
     targetModel: draft.targetModel || 'generic',
     selectedLiveActionPreset: draft.selectedLiveActionPreset as FilmPreset | null,
     selectedAnimationPreset: draft.selectedAnimationPreset as AnimationPreset | null,
     validationResult: null,
+    sessionHydrated: true,
+  }),
+  resetSession: () => set({
+    projectType: 'live_action',
+    liveActionConfig: defaultLiveActionConfig,
+    animationConfig: defaultAnimationConfig,
+    generatedPrompt: '',
+    negativePrompt: null,
+    userPrompt: '',
+    enhancedPrompt: '',
+    cpePromptForStoryboard: null,
+    targetModel: 'generic',
+    selectedLiveActionPreset: null,
+    selectedAnimationPreset: null,
+    validationResult: null,
+    sessionHydrated: false,
   }),
 }));
 
@@ -258,6 +287,8 @@ useCinemaStore.subscribe((state, previous) => {
       animationConfig: state.animationConfig,
       generatedPrompt: state.generatedPrompt,
       negativePrompt: state.negativePrompt,
+      userPrompt: state.userPrompt,
+      enhancedPrompt: state.enhancedPrompt,
       cpePromptForStoryboard: state.cpePromptForStoryboard,
       targetModel: state.targetModel,
       selectedLiveActionPreset: state.selectedLiveActionPreset,

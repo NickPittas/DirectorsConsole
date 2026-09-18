@@ -2087,7 +2087,11 @@ function App() {
     setValidationResult,
     generatedPrompt,
     negativePrompt,
+    userPrompt,
+    enhancedPrompt,
     setGeneratedPrompt,
+    setUserPrompt,
+    setEnhancedPrompt,
     targetModel,
     setTargetModel,
     // Preset state
@@ -2218,7 +2222,6 @@ function App() {
   }, [remoteOptions]);
 
   // LLM Enhancement state
-  const [userPrompt, setUserPrompt] = useState('');
   const suppressUserPromptSync = useRef(false);
   // Load LLM settings from localStorage (persisted in Settings)
   const [selectedLlmProvider, setSelectedLlmProvider] = useState<string>(() => {
@@ -2234,12 +2237,13 @@ function App() {
   const [configuredProviders, setConfiguredProviders] = useState<ConfiguredProvider[]>([]);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
-  const [enhancedPrompt, setEnhancedPrompt] = useState<string>('');
   const [enhanceWarnings, setEnhanceWarnings] = useState<string[]>([]);
   
   // Target AI models (fetched from API)
   const [availableTargetModels, setAvailableTargetModels] = useState<Array<{id: string, name: string, category: string}>>([]);
   const [isLoadingTargetModels, setIsLoadingTargetModels] = useState(false);
+  const [targetModelWarning, setTargetModelWarning] = useState<string | null>(null);
+  const sessionHydrated = useCinemaStore(state => state.sessionHydrated);
 
   const isImageModel = useMemo(() => {
     const apiModel = availableTargetModels.find(model => model.id === targetModel);
@@ -2372,7 +2376,7 @@ function App() {
       window.parent.postMessage({ type: 'READY' }, '*');
     }
     return () => window.removeEventListener('message', handler);
-  }, [setProjectType, setLiveActionConfig, setAnimationConfig, setGeneratedPrompt]);
+  }, [setProjectType, setLiveActionConfig, setAnimationConfig, setGeneratedPrompt, setUserPrompt, setEnhancedPrompt]);
 
   // Never auto-clear prompts; keep node and web in sync
   const suppressPromptReset = useRef(false);
@@ -2398,33 +2402,34 @@ function App() {
     }
   }, [isSettingsOpen]); // Reload when settings panel closes
 
-  // Fetch target AI models on mount and initialize from localStorage
+  // Fetch target AI models on mount. A validated recovery selection wins over
+  // localStorage; only ordinary sessions use the saved local preference.
   useEffect(() => {
-    // First, load saved targetModel from localStorage
-    const savedTargetModel = loadTargetModel();
-    if (savedTargetModel) {
-      setTargetModelRef.current(savedTargetModel);
-    }
-    
-    // Then fetch available models from API
+    const savedTargetModel = sessionHydrated ? null : loadTargetModel();
+    if (savedTargetModel) setTargetModelRef.current(savedTargetModel);
+
     setIsLoadingTargetModels(true);
     api.getTargetModels()
       .then(models => {
         setAvailableTargetModels(models);
-        // Validate saved model is still available, otherwise use first available
-        const currentModel = savedTargetModel || targetModelRef.current;
+        const currentModel = targetModelRef.current;
         if (models.length > 0 && !models.find(m => m.id === currentModel)) {
-          setTargetModelRef.current(models[0].id);
+          if (sessionHydrated) {
+            setTargetModelWarning(`Recovered target model "${currentModel}" is unavailable in this catalog.`);
+          } else {
+            setTargetModelRef.current(models[0].id);
+          }
+        } else {
+          setTargetModelWarning(null);
         }
       })
       .catch(err => {
         console.error('Failed to fetch target models:', err);
-        // Keep using static ENUMS as fallback - already populated in dropdown
       })
       .finally(() => {
         setIsLoadingTargetModels(false);
       });
-  }, []);
+  }, [sessionHydrated]);
 
   // Save preset panel state to localStorage (consolidated key)
   useEffect(() => {
@@ -2639,7 +2644,7 @@ function App() {
     } finally {
       setIsEnhancing(false);
     }
-  }, [userPrompt, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig]);
+  }, [userPrompt, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, setEnhancedPrompt]);
 
   const getSeverityClass = (severity: RuleSeverity) => {
     switch (severity) {
@@ -2666,9 +2671,15 @@ function App() {
         <select 
           className="toolbar-model"
           value={targetModel} 
-          onChange={(e) => setTargetModel(e.target.value)}
+          onChange={(e) => {
+            setTargetModelWarning(null);
+            setTargetModel(e.target.value);
+          }}
           disabled={isLoadingTargetModels}
         >
+          {targetModelWarning && !availableTargetModels.some(model => model.id === targetModel) && (
+            <option value={targetModel}>{targetModel} (unavailable)</option>
+          )}
           {availableTargetModels.length > 0 ? (
             <>
               {/* Group by category */}
@@ -2716,6 +2727,11 @@ function App() {
             </>
           )}
         </select>
+        {targetModelWarning && (
+          <span role="status" style={{ color: 'var(--text-warning, #f59e0b)', fontSize: '0.75rem' }}>
+            {targetModelWarning}
+          </span>
+        )}
         <button className="toolbar-btn primary" onClick={handleGenerate} disabled={isGenerating}>
           {isGenerating ? 'Generating...' : 'Generate'}
         </button>

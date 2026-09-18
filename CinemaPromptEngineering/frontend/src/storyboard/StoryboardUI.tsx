@@ -52,10 +52,12 @@ import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
 import {
+  activateSessionIdentity,
   recoverInterruptedPanels,
   sessionDraftController,
   type StoryboardDraftState,
 } from './services/session-recovery';
+import { useCinemaStore } from '../store';
 import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
 import { api } from '../api/client';
 import {
@@ -399,6 +401,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const canvasRef = useRef<HTMLDivElement>(null);
   const skipParameterReset = useRef(false);
   const restoredParametersPendingRef = useRef(Boolean(initialSession));
+  const skipInitialSessionDraftWrite = useRef(Boolean(initialSession));
   const generationStartTimes = useRef<Map<number, number>>(new Map());
   
   // ---------------------------------------------------------------------------
@@ -1189,6 +1192,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
   // Session recovery stores work state only; catalogs, logs, active jobs, and provider credentials stay out.
   useEffect(() => {
+    if (skipInitialSessionDraftWrite.current) {
+      skipInitialSessionDraftWrite.current = false;
+      return;
+    }
     sessionDraftController.update({
       storyboard: {
         activeTab,
@@ -4053,7 +4060,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   
   // Save project handler
-  const handleSaveProject = useCallback(async () => {
+  const handleSaveProject = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     await sessionDraftController.flush();
     const result = await saveProjectAndRecordRecent(
       projectSettings.name || 'Untitled',
@@ -4063,22 +4070,30 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         parameterValues,
         {
           selectedWorkflowId: selectedWorkflowId || undefined,
-          renderNodes: renderNodes,
-          comfyUrl: comfyUrl,
-          cameraAngles: cameraAngles,
-        }
+          renderNodes,
+          comfyUrl,
+          cameraAngles,
+        },
       ),
     );
-    if (result.success) {
-      if (result.savedPath) {
-        projectManager.setProject({ projectFilePath: result.savedPath });
-        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
-        sessionDraftController.clearFailure();
-      }
-      showInfo(`Project saved to ${result.savedPath}`);
-    } else {
-      showError(`Failed to save project: ${result.error}`);
+    if (!result.success || !result.savedPath) {
+      const error = result.error || 'The project was not saved.';
+      showError(`Failed to save project: ${error}`);
+      return { success: false, error };
     }
+
+    const targetSettings = { ...projectManager.getProject(), projectFilePath: result.savedPath };
+    try {
+      await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetSettings));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showError(`Saved project, but recovery identity did not switch: ${message}`);
+      return { success: false, error: message };
+    }
+    projectManager.setProject({ projectFilePath: result.savedPath });
+    sessionDraftController.clearFailure();
+    showInfo(`Project saved to ${result.savedPath}`);
+    return { success: true };
   }, [panels, parameterValues, selectedWorkflowId, renderNodes, comfyUrl, cameraAngles, projectSettings.name, showInfo, showError]);
 
   // Save project as handler - opens file browser dialog for new location/name
@@ -4100,43 +4115,49 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const handleSaveFromDialog = async (folderPath: string, projectName: string) => {
     await sessionDraftController.flush();
     const previousSettings = projectManager.getProject();
-    // Stage Save As locally; identity changes only after the file is confirmed saved.
-    const newSettings = {
+    const targetSettings: ProjectSettings = {
       ...previousSettings,
       name: projectName,
       path: folderPath,
       projectFilePath: undefined,
+      created: new Date(),
+      lastModified: new Date(),
     };
-    projectManager.setProject(newSettings);
 
-    // Save the project
     const result = await saveProjectAndRecordRecent(
       projectName,
       () => projectManager.saveProjectState(
         panels,
-        undefined, // Workflows are NOT saved in projects — they belong to the application
+        undefined,
         parameterValues,
         {
           selectedWorkflowId: selectedWorkflowId || undefined,
-          renderNodes: renderNodes,
-          comfyUrl: comfyUrl,
-          cameraAngles: cameraAngles,
-        }
+          renderNodes,
+          comfyUrl,
+          cameraAngles,
+        },
+        targetSettings,
       ),
     );
 
-    if (result.success) {
-      projectManager.setProject({ projectFilePath: result.savedPath });
-      setProjectSettings(projectManager.getProject());
-      sessionDraftController.setIdentity(projectManager.getSessionIdentity());
-      sessionDraftController.clearFailure();
-      showInfo(`Project saved to ${result.savedPath}`);
-      setFileBrowserMode(null);
-    } else {
-      projectManager.restoreFromSession(previousSettings);
-      setProjectSettings(previousSettings);
-      showError(`Failed to save project: ${result.error}`);
+    if (!result.success || !result.savedPath) {
+      showError(`Failed to save project: ${result.error || 'The project was not saved.'}`);
+      return;
     }
+
+    const savedSettings: ProjectSettings = { ...targetSettings, projectFilePath: result.savedPath };
+    try {
+      await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(savedSettings));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showError(`Failed to switch recovery identity after Save As: ${message}`);
+      return;
+    }
+    projectManager.restoreFromSession(savedSettings);
+    setProjectSettings(savedSettings);
+    sessionDraftController.clearFailure();
+    showInfo(`Project saved to ${result.savedPath}`);
+    setFileBrowserMode(null);
   };
 
   // Phase 3: New load handler with folder scanning
@@ -4166,7 +4187,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     try {
       const result = await loadProjectAndRecordRecent(
         projectPath,
-        () => projectManager.loadProjectState(projectPath),
+        () => projectManager.loadProjectState(projectPath, { commitSettings: false }),
       );
       
       if (!result.success || !result.state) {
@@ -4174,19 +4195,17 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         return;
       }
       
-      // loadProjectState overwrites currentProject with saved settings.
-      // Override path (derived from the actual file location on THIS machine)
-      // and orchestratorUrl (keep the current session's value) so that
-      // scanProjectPanels hits the correct server and path.
-      projectManager.setProject({
+      // Keep loaded settings local until both the file read and filesystem scan succeed.
+      const loadedSettings = result.state.project_settings || previousProjectSettings;
+      const targetProjectSettings: ProjectSettings = {
+        ...previousProjectSettings,
+        ...loadedSettings,
         path: projectDir,
         projectFilePath: projectPath,
         orchestratorUrl: currentOrchestratorUrl,
-      });
-      
-      // Update React state immediately so file browser remembers path
-      // even if scanning fails below
-      setProjectSettings(projectManager.getProject());
+        created: new Date(loadedSettings.created || Date.now()),
+        lastModified: new Date(loadedSettings.lastModified || Date.now()),
+      };
 
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
@@ -4195,11 +4214,9 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       // NEW APPROACH: Scan project for all panel folders
       setLoadingProgress({ progress: 10, currentFile: 'Scanning project panels...' });
       
-      const scanResult = await projectManager.scanProjectPanels();
+      const scanResult = await projectManager.scanProjectPanels(targetProjectSettings);
       
       if (!scanResult.success) {
-        projectManager.restoreFromSession(previousProjectSettings);
-        setProjectSettings(previousProjectSettings);
         console.error('[Load] Failed to scan project panels:', scanResult.error);
         showError(`Failed to scan project: ${scanResult.error}`);
         // A failed switch must leave the previous project and its in-memory work untouched.
@@ -4210,7 +4227,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
       // Build panels from scanned folders
       // Each folder becomes a panel, named after the folder
-      const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+      const orchestratorUrl = targetProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
       const restoredPanels: Panel[] = [];
       const usedIds = new Set<number>();
 
@@ -4369,7 +4386,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       setLoadingProgress({ progress: 70, currentFile: 'Finalizing panels...' });
 
       // The filesystem load is now complete; only now make project B active.
-      sessionDraftController.setIdentity(projectManager.getSessionIdentity());
+      try {
+        await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetProjectSettings));
+      } catch (error) {
+        throw new Error(`Recovery identity could not switch: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      projectManager.restoreFromSession(targetProjectSettings);
+      setProjectSettings(targetProjectSettings);
       setPanels(restoredPanels);
       
       // Workflows are NOT restored from project files — they are managed
@@ -4448,12 +4471,12 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const previousProjectSettings = projectManager.getProject();
     setIsLoadingProject(true);
     try {
-      // Remember the current orchestrator URL before loadProjectState overwrites it
+      // Remember the current orchestrator URL before loading staged settings.
     const currentOrchestratorUrl = previousProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
     
     const result = await loadProjectAndRecordRecent(
       projectPath,
-      () => projectManager.loadProjectState(projectPath),
+      () => projectManager.loadProjectState(projectPath, { commitSettings: false }),
     );
     
     if (result.success && result.state) {
@@ -4461,14 +4484,16 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       const lastSlash = Math.max(projectPath.lastIndexOf('/'), projectPath.lastIndexOf('\\'));
       const projectDir = lastSlash > 0 ? projectPath.substring(0, lastSlash) : projectPath;
       
-      // Override path (derived from actual file location) and orchestratorUrl
-      // (keep current session value) so scanProjectPanels works correctly
-      projectManager.setProject({
+      const loadedSettings = result.state.project_settings || previousProjectSettings;
+      const targetProjectSettings: ProjectSettings = {
+        ...previousProjectSettings,
+        ...loadedSettings,
         path: projectDir,
         projectFilePath: projectPath,
         orchestratorUrl: currentOrchestratorUrl,
-      });
-      setProjectSettings(projectManager.getProject());
+        created: new Date(loadedSettings.created || Date.now()),
+        lastModified: new Date(loadedSettings.lastModified || Date.now()),
+      };
       
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
@@ -4476,11 +4501,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       
       // Scan the filesystem for current folder/image state
       // This handles renamed folders and images since the project was last saved
-      const scanResult = await projectManager.scanProjectPanels();
+      const scanResult = await projectManager.scanProjectPanels(targetProjectSettings);
+      await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetProjectSettings));
+      projectManager.restoreFromSession(targetProjectSettings);
+      setProjectSettings(targetProjectSettings);
       
       if (scanResult.success && scanResult.panels.length > 0) {
         // Re-initialize panels from filesystem scan, merging saved metadata
-        const orchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+        const orchestratorUrl = targetProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
         const restoredPanels: Panel[] = [];
         const usedIds = new Set<number>();
         
@@ -4613,7 +4641,6 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         }
         
         restoredPanels.sort((a, b) => a.id - b.id);
-        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
         setPanels(restoredPanels);
       } else {
         // Fallback: no scan results, restore from save file with deduplicated IDs
@@ -4634,7 +4661,6 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             parallelJobs: undefined,
           };
         });
-        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
         setPanels(restoredPanels);
       }
       // Workflows are NOT restored from project files — they are managed
@@ -4841,23 +4867,33 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
   const handleCancelGenerations = () => cancelGenerations();
 
-  // New project handler
+  // New project handler. Save, discard, and cancel are separate outcomes;
+  // failed Save must never continue into a destructive reset.
   const handleNewProject = useCallback(async () => {
-    // 1. Check if current project has content (panels with images or notes)
-    const hasContent = panels.some(p => p.image || p.images.length > 0 || p.notes.trim() !== '');
-    
-    // 2. If there's content, prompt to save
-    if (hasContent) {
-      const shouldProceed = window.confirm(
-        'You have unsaved work. Would you like to save before creating a new project?\n\n' +
-        'Click OK to save first, or Cancel to discard changes.'
+    const hasWork = panels.some(p => p.image || p.images.length > 0 || p.notes.trim() !== '')
+      || sessionDraftController.hasPendingChanges();
+    let discard = false;
+    if (hasWork) {
+      const save = window.confirm(
+        'Save & New? Click OK to save the current project. Click Cancel to choose Discard & New or Cancel.',
       );
-      if (shouldProceed) {
-        await handleSaveProject();
+      if (save) {
+        const result = await handleSaveProject();
+        if (!result.success) return;
+      } else {
+        discard = window.confirm('Discard & New? Click OK to discard this work, or Cancel to keep the current project.');
+        if (!discard) return;
       }
     }
-    
-    // 3. Reset state to defaults
+
+    const newIdentity = projectManager.createUnsavedIdentity();
+    try {
+      await activateSessionIdentity(sessionDraftController, newIdentity, { discard });
+    } catch (error) {
+      showError(`New project was cancelled: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+
     const defaultPanels: Panel[] = Array.from({ length: 6 }, (_, i) => ({
       id: i + 1,
       image: null,
@@ -4878,29 +4914,27 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       prompt: '',
       seed: -1,
     }));
-    
+
+    const newSettings: ProjectSettings = {
+      name: 'Untitled Project',
+      path: '',
+      projectFilePath: undefined,
+      namingTemplate: '{project}_Panel{panel}_{version}',
+      autoSave: true,
+      orchestratorUrl: projectSettings.orchestratorUrl,
+      created: new Date(),
+      lastModified: new Date(),
+    };
+    projectManager.rotateUnsavedIdentity(newIdentity);
+    projectManager.setProject(newSettings);
+    setProjectSettings(newSettings);
     setPanels(defaultPanels);
     setParameterValues({});
     parameterValuesRef.current = {};
     setSelectedWorkflowId(null);
-    
-    // 4. Reset project settings to defaults
-    const newSettings: ProjectSettings = {
-      name: 'Untitled Project',
-      path: '',
-      namingTemplate: '{project}_Panel{panel}_{version}',
-      autoSave: true,
-      orchestratorUrl: projectSettings.orchestratorUrl, // Keep existing orchestrator URL
-      created: new Date(),
-      lastModified: new Date(),
-    };
-    setProjectSettings(newSettings);
-    projectManager.setProject(newSettings);
-    
-    // 5. Open project settings modal for user to configure
+    useCinemaStore.getState().resetSession();
     setShowProjectSettings(true);
-    
-  }, [panels, handleSaveProject, projectSettings.orchestratorUrl, setProjectSettings]);
+  }, [panels, handleSaveProject, projectSettings.orchestratorUrl, setProjectSettings, showError]);
 
   // ---------------------------------------------------------------------------
   // Effects - Global keyboard shortcuts

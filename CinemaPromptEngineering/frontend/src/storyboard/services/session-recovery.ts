@@ -1,5 +1,6 @@
 import {
   readActiveDraft,
+  clearActiveDraftPointer,
   saveDraft,
   SessionDraftStorageError,
   type VersionedDraftRecord,
@@ -31,6 +32,9 @@ export interface CinemaDraftState {
   animationConfig: unknown;
   generatedPrompt: string;
   negativePrompt: string | null;
+  /** User-entered and AI-enhanced CPE text is work state, not provider configuration. */
+  userPrompt?: string;
+  enhancedPrompt?: string;
   cpePromptForStoryboard?: string | null;
   targetModel: string;
   selectedLiveActionPreset: unknown;
@@ -86,6 +90,8 @@ export function isSessionDraftData(value: unknown): value is SessionDraftData {
     && isRecord(value.cinema.animationConfig)
     && typeof value.cinema.generatedPrompt === 'string'
     && (value.cinema.negativePrompt === null || typeof value.cinema.negativePrompt === 'string')
+    && (value.cinema.userPrompt === undefined || typeof value.cinema.userPrompt === 'string')
+    && (value.cinema.enhancedPrompt === undefined || typeof value.cinema.enhancedPrompt === 'string')
     && typeof value.cinema.targetModel === 'string';
 }
 
@@ -167,7 +173,9 @@ export async function readRecoverableActiveDraft(): Promise<VersionedDraftRecord
   try {
     const record = await readActiveDraft<SessionDraftData>();
     if (record && !isSessionDraftData(record.data)) {
-      throw new SessionDraftStorageError('Stored session draft is corrupt: recovery payload is invalid.');
+      const error = new SessionDraftStorageError('Stored session draft is corrupt: recovery payload is invalid.');
+      error.activeIdentity = record.identity;
+      throw error;
     }
     return record;
   } catch (error) {
@@ -178,12 +186,27 @@ export async function readRecoverableActiveDraft(): Promise<VersionedDraftRecord
   }
 }
 
+export interface IdentityTransitionOptions {
+  /** Explicit Discard & New/Start new skips the old payload write. */
+  discard?: boolean;
+}
+
+export async function activateSessionIdentity(
+  controller: Pick<SessionDraftController, 'transitionIdentity'>,
+  identity: string,
+  options: IdentityTransitionOptions = {},
+): Promise<void> {
+  await controller.transitionIdentity(identity, options);
+  await clearActiveDraftPointer();
+}
+
 export class SessionDraftController {
   private identity: string | null = null;
   private data: SessionDraftData | null = null;
   private ready = false;
   private dirty = false;
   private revision = 0;
+  private generation = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private queue: Promise<void> = Promise.resolve();
   private status: RecoveryStatus = { state: 'idle' };
@@ -203,6 +226,8 @@ export class SessionDraftController {
   }
 
   hydrate(identity: string, data: SessionDraftData | null): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.generation += 1;
     this.identity = identity;
     this.data = data;
     this.ready = true;
@@ -211,10 +236,55 @@ export class SessionDraftController {
     this.setStatus({ state: data ? 'saved' : 'idle' });
   }
 
-  setIdentity(identity: string): void {
-    this.identity = identity;
-    this.revision += 1;
-    this.dirty = false;
+  /**
+   * Change identities only after all writes for the old identity have settled.
+   * Generation checks happen immediately before saveDraft so stale queued work
+   * cannot activate an old pointer after the transition.
+   */
+  transitionIdentity(identity: string, options: IdentityTransitionOptions = {}): Promise<void> {
+    if (!identity.trim()) return Promise.reject(new Error('Session identity must be non-empty.'));
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    const oldIdentity = this.identity;
+    const oldGeneration = this.generation;
+    const transition = this.queue.then(async () => {
+      if (identity === this.identity) return;
+
+      if (!options.discard && this.dirty && this.data && oldIdentity) {
+        // A save can overlap updates. Keep taking the latest revision until the
+        // old identity is stable, so setIdentity never drops dirty work.
+        while (this.identity === oldIdentity && this.dirty && this.data) {
+          const revision = this.revision;
+          const snapshot = this.data;
+          const prepared = await prepareSessionDraft(snapshot);
+          if (oldGeneration !== this.generation || oldIdentity !== this.identity) return;
+          try {
+            await saveDraft({ version: 1, identity: oldIdentity, updatedAt: Date.now(), data: prepared }, { activate: true });
+          } catch (error) {
+            if (oldGeneration === this.generation && oldIdentity === this.identity) {
+              this.setStatus({ state: 'failed', message: 'Autosave unavailable — save manually.' });
+            }
+            throw error;
+          }
+          if (revision === this.revision && oldIdentity === this.identity) {
+            this.dirty = false;
+            this.setStatus({ state: 'saved' });
+          }
+        }
+      }
+
+      this.generation += 1;
+      this.identity = identity;
+      this.revision += 1;
+      this.dirty = false;
+      if (this.status.state === 'failed') this.setStatus({ state: 'idle' });
+    });
+    this.queue = transition.catch(() => undefined);
+    return transition;
+  }
+
+  /** Compatibility entry point; callers that need ordering should await it. */
+  setIdentity(identity: string): Promise<void> {
+    return this.transitionIdentity(identity);
   }
 
   update(patch: Partial<SessionDraftData>): void {
@@ -240,24 +310,30 @@ export class SessionDraftController {
     if (!this.ready || !this.dirty || !this.data || !this.identity) return this.queue;
     const revision = this.revision;
     const identity = this.identity;
+    const generation = this.generation;
     const snapshot = this.data;
     this.setStatus({ state: 'saving' });
-    this.queue = this.queue.then(async () => {
+    const write = this.queue.then(async () => {
+      // This check is deliberately before materialization and saveDraft. A
+      // stale queued task must never activate the previous identity.
+      if (generation !== this.generation || identity !== this.identity) return;
       try {
         const prepared = await prepareSessionDraft(snapshot);
+        if (generation !== this.generation || identity !== this.identity) return;
         await saveDraft({ version: 1, identity, updatedAt: Date.now(), data: prepared }, { activate: true });
-        if (revision === this.revision && identity === this.identity) {
+        if (revision === this.revision && identity === this.identity && generation === this.generation) {
           this.dirty = false;
           this.setStatus({ state: 'saved' });
         }
       } catch {
         // The adapter keeps the prior transaction intact. Keep dirty state so a retry can succeed.
-        if (revision === this.revision && identity === this.identity) {
+        if (revision === this.revision && identity === this.identity && generation === this.generation) {
           this.setStatus({ state: 'failed', message: 'Autosave unavailable — save manually.' });
         }
       }
     });
-    return this.queue;
+    this.queue = write.catch(() => undefined);
+    return write;
   }
 }
 

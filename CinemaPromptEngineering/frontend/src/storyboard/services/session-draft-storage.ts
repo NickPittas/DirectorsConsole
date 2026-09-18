@@ -25,6 +25,8 @@ export interface SaveDraftOptions {
 
 export class SessionDraftStorageError extends Error {
   readonly cause?: unknown;
+  /** Identity is available when a valid pointer led to a bad draft record. */
+  activeIdentity?: string;
 
   constructor(message: string, cause?: unknown) {
     super(message);
@@ -55,9 +57,13 @@ function describeCause(cause: unknown): string {
   return cause instanceof Error && cause.message ? ` (${cause.message})` : '';
 }
 
-function operationError(operation: string, cause: unknown): SessionDraftStorageError {
-  if (cause instanceof SessionDraftStorageError) return cause;
-  return new SessionDraftStorageError(`Session draft ${operation} failed${describeCause(cause)}`, cause);
+function operationError(operation: string, cause: unknown, activeIdentity?: string): SessionDraftStorageError {
+  const error = cause instanceof SessionDraftStorageError
+    ? cause
+    : new SessionDraftStorageError(`Session draft ${operation} failed${describeCause(cause)}`, cause);
+  const identity = activeIdentity || (cause as { activeIdentity?: string } | null)?.activeIdentity;
+  if (identity) error.activeIdentity = identity;
+  return error;
 }
 
 function requireIdentity(identity: string): void {
@@ -305,12 +311,15 @@ export function readActiveDraft<T>(): Promise<VersionedDraftRecord<T> | null> {
       };
       recordRequest.onsuccess = (): void => {
         if (recordRequest.result === undefined) {
-          abort(new Error('active session draft pointer references a missing draft record'));
+          const error = new Error('active session draft pointer references a missing draft record') as Error & { activeIdentity?: string };
+          error.activeIdentity = pointer.identity;
+          abort(error);
           return;
         }
         try {
           setResult(validateDraftRecord<T>(recordRequest.result, pointer.identity));
         } catch (cause) {
+          if (cause instanceof SessionDraftStorageError) cause.activeIdentity = pointer.identity;
           abort(cause);
         }
       };
@@ -335,5 +344,12 @@ export function deleteDraft(identity: string): Promise<void> {
         abort(cause);
       }
     };
+  });
+}
+
+/** Clear only the active pointer; archived draft records remain untouched. */
+export function clearActiveDraftPointer(): Promise<void> {
+  return runTransaction<void>('clear active pointer', 'readwrite', (store) => {
+    store.delete(ACTIVE_POINTER_KEY);
   });
 }

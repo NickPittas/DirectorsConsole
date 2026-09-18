@@ -13,7 +13,7 @@ import {
   type SessionDraftData,
   type StoryboardDraftState,
 } from './storyboard/services/session-recovery';
-import { deleteDraft } from './storyboard/services/session-draft-storage';
+import { clearActiveDraftPointer, deleteDraft } from './storyboard/services/session-draft-storage';
 import OAuthCallback from '@/components/OAuthCallback';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './App.css';
@@ -161,6 +161,8 @@ function blankSessionData(): SessionDraftData {
       animationConfig: cinema.animationConfig,
       generatedPrompt: cinema.generatedPrompt,
       negativePrompt: cinema.negativePrompt,
+      userPrompt: cinema.userPrompt,
+      enhancedPrompt: cinema.enhancedPrompt,
       cpePromptForStoryboard: cinema.cpePromptForStoryboard,
       targetModel: cinema.targetModel,
       selectedLiveActionPreset: cinema.selectedLiveActionPreset,
@@ -187,28 +189,43 @@ function App() {
       const record = startNew ? null : await readRecoverableActiveDraft();
       let draft: SessionDraftData | undefined;
       let identity = projectManager.getSessionIdentity();
+      if (startNew) {
+        await clearActiveDraftPointer();
+        projectManager.rotateUnsavedIdentity();
+        projectManager.setProject({
+          name: 'Untitled Project',
+          path: '',
+          projectFilePath: undefined,
+          created: new Date(),
+          lastModified: new Date(),
+        });
+        identity = projectManager.getSessionIdentity();
+      }
       if (record) {
         draft = await restoreSessionDraft(record.data);
         const settings = draft.project.settings;
         projectManager.restoreFromSession(settings);
         identity = record.identity;
-      } else if (startNew) {
-        projectManager.rotateUnsavedIdentity();
       }
 
       const initial = draft || blankSessionData();
-      sessionDraftController.hydrate(identity, initial);
+      // Hydrate the CPE store before arming the draft controller so restore
+      // writes cannot be mistaken for user edits.
       if (draft) useCinemaStore.getState().hydrateSession(draft.cinema);
+      sessionDraftController.hydrate(identity, initial);
       setHydration({
         state: 'ready',
         draft,
         tab: draft?.app.activeTab || 'cinema',
         recordIdentity: record?.identity,
       });
-    } catch {
+    } catch (error) {
+      const recordIdentity = error && typeof error === 'object' && 'activeIdentity' in error
+        && typeof error.activeIdentity === 'string' ? error.activeIdentity : undefined;
       setHydration({
         state: 'error',
         tab: 'cinema',
+        recordIdentity,
         message: 'The saved session could not be validated. Retry storage or explicitly start a new session.',
       });
     }
@@ -227,18 +244,22 @@ function App() {
     return <main style={{ padding: 32 }}>Recovering session…</main>;
   }
   if (hydration.state === 'error') {
-    const discard = hydration.recordIdentity ? () => {
-      if (window.confirm('Discard the saved session snapshot? This cannot be undone.')) {
-        void deleteDraft(hydration.recordIdentity!)
+    const discard = () => {
+      const target = hydration.recordIdentity ? `snapshot ${hydration.recordIdentity}` : 'the malformed active pointer';
+      if (window.confirm(`Discard ${target}? This removes only the active recovery target.`)) {
+        const discardTarget = hydration.recordIdentity
+          ? deleteDraft(hydration.recordIdentity)
+          : clearActiveDraftPointer();
+        void discardTarget
           .then(() => hydrate(true))
           .catch(() => setHydration({
             state: 'error',
             tab: 'cinema',
             recordIdentity: hydration.recordIdentity,
-            message: 'The saved snapshot could not be discarded. Retry storage or start a new session.',
+            message: 'The recovery target could not be discarded. Retry storage or start a new session.',
           }));
       }
-    } : undefined;
+    };
     return <RecoveryGate
       message={hydration.message || 'Session recovery failed.'}
       onRetry={() => void hydrate()}

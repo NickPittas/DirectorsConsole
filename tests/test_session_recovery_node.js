@@ -55,7 +55,7 @@ async function main() {
     },
     cinema: {
       projectType: 'live_action', liveActionConfig: { camera: { body: 'Alexa' } }, animationConfig: {},
-      generatedPrompt: 'generated fixture', negativePrompt: null, targetModel: 'generic',
+      generatedPrompt: 'generated fixture', negativePrompt: null, userPrompt: 'user fixture', enhancedPrompt: 'enhanced fixture', targetModel: 'generic',
       selectedLiveActionPreset: null, selectedAnimationPreset: null,
     },
   };
@@ -70,6 +70,8 @@ async function main() {
   let active = await readActiveDraft();
   assert.equal(active.identity, 'unsaved:test-a');
   assert.equal(active.data.storyboard.parameterValues.prompt, 'changed fixture');
+  assert.equal(active.data.cinema.userPrompt, 'user fixture');
+  assert.equal(active.data.cinema.enhancedPrompt, 'enhanced fixture');
   assert.equal(active.data.storyboard.parameterValues.dataUrl, 'data:image/png;base64,AA==');
   assert.equal(active.data.storyboard.parameterValues.blob instanceof Blob, true);
   assert.equal(await active.data.storyboard.parameterValues.blob.text(), 'frame');
@@ -77,7 +79,7 @@ async function main() {
   assert.match(restored.storyboard.parameterValues.blob, /^blob:/);
   cleanupRestoredMedia();
 
-  controller.setIdentity('project:/tmp/B/project.json');
+  await controller.setIdentity('project:/tmp/B/project.json');
   controller.update({ project: { settings: { name: 'B', path: '/tmp/B' } } });
   await controller.flush();
   active = await readActiveDraft();

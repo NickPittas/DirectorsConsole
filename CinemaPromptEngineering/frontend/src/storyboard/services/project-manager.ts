@@ -228,16 +228,20 @@ export class ProjectManager {
   }
 
   /** Stable draft identity: a known project file is distinct from every unsaved project. */
-  getSessionIdentity(): string {
-    const filePath = this.currentProject.projectFilePath;
+  getSessionIdentity(settings: ProjectSettings = this.currentProject): string {
+    const filePath = settings.projectFilePath;
     if (filePath) return `project:${this.normalizePath(filePath)}`;
     return this.unsavedIdentity;
   }
 
-  rotateUnsavedIdentity(): string {
+  createUnsavedIdentity(): string {
     const cryptoApi = typeof globalThis.crypto !== 'undefined' ? globalThis.crypto : undefined;
     const suffix = cryptoApi?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    this.unsavedIdentity = `unsaved:${suffix}`;
+    return `unsaved:${suffix}`;
+  }
+
+  rotateUnsavedIdentity(identity = this.createUnsavedIdentity()): string {
+    this.unsavedIdentity = identity.startsWith('unsaved:') ? identity : this.createUnsavedIdentity();
     try { localStorage.setItem('storyboard_unsaved_identity', this.unsavedIdentity); } catch { /* storage is optional */ }
     return this.unsavedIdentity;
   }
@@ -964,10 +968,14 @@ export class ProjectManager {
       comfyUrl?: string;
       cameraAngles?: Record<string, unknown>;
       deletedImages?: string[];
-    }
+    },
+    settingsOverride?: ProjectSettings,
   ): Promise<{ success: boolean; savedPath?: string; error?: string }> {
-    const orchestratorUrl = this.currentProject.orchestratorUrl;
-    const folderPath = this.currentProject.path;
+    // Save As passes immutable target settings here; shared project state stays
+    // on the old identity until the write succeeds.
+    const settings = settingsOverride || this.currentProject;
+    const orchestratorUrl = settings.orchestratorUrl;
+    const folderPath = settings.path;
     
     if (!orchestratorUrl) {
       return { success: false, error: 'No Orchestrator URL configured' };
@@ -1124,13 +1132,13 @@ export class ProjectManager {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           folder_path: folderPath,
-          filename: `${this.sanitizeFilename(this.currentProject.name)}_project.json`,
+          filename: `${this.sanitizeFilename(settings.name)}_project.json`,
           state: {
             project_settings: {
-              ...this.currentProject,
-              created: this.currentProject.created instanceof Date 
-                ? this.currentProject.created.toISOString() 
-                : this.currentProject.created,
+              ...settings,
+              created: settings.created instanceof Date
+                ? settings.created.toISOString()
+                : settings.created,
               lastModified: new Date().toISOString(),
             },
             panels: sanitizedPanels,
@@ -1151,7 +1159,7 @@ export class ProjectManager {
       }
       
       const result = await response.json();
-      if (result.success) this.notifyListeners();
+      if (result.success && !settingsOverride) this.notifyListeners();
       return {
         success: result.success,
         savedPath: result.saved_path,
@@ -1166,7 +1174,7 @@ export class ProjectManager {
   /**
    * Load project state from filesystem.
    */
-  async loadProjectState(filePath: string): Promise<{
+  async loadProjectState(filePath: string, options: { commitSettings?: boolean } = {}): Promise<{
     success: boolean;
     state?: {
       project_settings: ProjectSettings;
@@ -1202,17 +1210,18 @@ export class ProjectManager {
       const result = await response.json();
       
       if (result.success && result.state) {
-        // Update current project settings
-        const settings = result.state.project_settings;
-        this.currentProject = {
-          ...DEFAULT_PROJECT,
-          ...settings,
-          orchestratorUrl: normalizeOrchestratorUrl(settings.orchestratorUrl || ''),
-          created: new Date(settings.created),
-          lastModified: new Date(settings.lastModified),
-        };
-        this.saveToStorage();
-        this.notifyListeners();
+        if (options.commitSettings !== false) {
+          const settings = result.state.project_settings;
+          this.currentProject = {
+            ...DEFAULT_PROJECT,
+            ...settings,
+            orchestratorUrl: normalizeOrchestratorUrl(settings.orchestratorUrl || ''),
+            created: new Date(settings.created),
+            lastModified: new Date(settings.lastModified),
+          };
+          this.saveToStorage();
+          this.notifyListeners();
+        }
         
         return {
           success: true,
@@ -1378,12 +1387,13 @@ export class ProjectManager {
    * Each subfolder is treated as a panel, and all images in it belong to that panel.
    * No naming pattern required - just scans all subfolders with images.
    */
-  async scanProjectPanels(): Promise<{
+  async scanProjectPanels(settingsOverride?: ProjectSettings): Promise<{
     success: boolean;
     panels: PanelFolderInfo[];
     error?: string;
   }> {
-    const orchestratorUrl = this.currentProject.orchestratorUrl;
+    const settings = settingsOverride || this.currentProject;
+    const orchestratorUrl = settings.orchestratorUrl;
     
     if (!orchestratorUrl) {
       return { 
@@ -1393,16 +1403,16 @@ export class ProjectManager {
       };
     }
 
-    if (!this.currentProject.path) {
-      return { 
-        success: false, 
+    if (!settings.path) {
+      return {
+        success: false,
         panels: [],
-        error: 'No project path configured' 
+        error: 'No project path configured'
       };
     }
 
     try {
-      const normalizedPath = this.normalizePath(this.currentProject.path);
+      const normalizedPath = this.normalizePath(settings.path);
       
       console.log('[ProjectManager] scanProjectPanels - path:', normalizedPath);
 
