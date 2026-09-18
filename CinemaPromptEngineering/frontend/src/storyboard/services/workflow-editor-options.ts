@@ -1,5 +1,49 @@
 import type { ComfyUIWorkflow, ComfyUINode, QwenWorkflowFormat } from './workflow-parser';
 
+export interface InputBinding {
+  node_id: string;
+  input_name: string;
+}
+
+/** One canonical, collision-safe identity for a workflow input. */
+export function bindingKey(binding: InputBinding): string {
+  return `${String(binding.node_id)}\u0000${binding.input_name}`;
+}
+
+export interface NamedInputBinding extends InputBinding {
+  name: string;
+}
+
+/** Migrate renamed controls by binding, preferring an already-edited new key. */
+export function reconcileParameterValues(
+  values: Record<string, unknown>,
+  previousConfigs: readonly NamedInputBinding[],
+  nextConfigs: readonly NamedInputBinding[],
+): Record<string, unknown> {
+  const previousByBinding = new Map(previousConfigs.map(config => [bindingKey(config), config]));
+  const currentNames = new Set(nextConfigs.map(config => config.name));
+  const reconciled = { ...values };
+
+  for (const config of nextConfigs) {
+    const previous = previousByBinding.get(bindingKey(config));
+    const aliases = [config.name, previous?.name, `${config.input_name}_${config.node_id}`]
+      .filter((name): name is string => Boolean(name));
+    const source = aliases.find(name => Object.prototype.hasOwnProperty.call(values, name));
+    if (source && source !== config.name) reconciled[config.name] = values[source];
+    for (const alias of aliases) {
+      if (alias !== config.name && !currentNames.has(alias)) delete reconciled[alias];
+    }
+  }
+
+  return reconciled;
+}
+
+export function isLinkReference(value: unknown, knownNodeIds: Set<string>): value is [string, number] {
+  return Array.isArray(value) && value.length === 2 &&
+    typeof value[0] === 'string' && knownNodeIds.has(value[0]) &&
+    typeof value[1] === 'number' && Number.isInteger(value[1]);
+}
+
 /** Find the source node without converting or mutating the imported workflow. */
 export function findWorkflowNode(
   workflow: ComfyUIWorkflow | QwenWorkflowFormat | null,
@@ -32,19 +76,22 @@ export function listWorkflowNodes(
     .map(([nodeId, node]) => [nodeId, node as ComfyUINode]);
 }
 
-/** Read an input from either API format or the graph widget used by CheckpointLoaderSimple. */
-export function getWorkflowNodeInput(
-  node: ComfyUINode | null,
-  inputName: string,
-): unknown {
+/** Read an input from API format, plus the one proven graph widget mapping. */
+export function getWorkflowNodeInput(node: ComfyUINode | null, inputName: string): unknown {
   if (!node) return undefined;
-  if (node.inputs && Object.prototype.hasOwnProperty.call(node.inputs, inputName)) {
-    return node.inputs[inputName];
-  }
+  if (node.inputs && Object.prototype.hasOwnProperty.call(node.inputs, inputName)) return node.inputs[inputName];
   if (getWorkflowNodeClassType(node) === 'CheckpointLoaderSimple' && inputName === 'ckpt_name') {
     return node.widgets_values?.[0];
   }
   return undefined;
+}
+
+export function hasWorkflowBinding(
+  workflow: ComfyUIWorkflow | QwenWorkflowFormat | null,
+  binding: InputBinding,
+): boolean {
+  const node = findWorkflowNode(workflow, binding.node_id);
+  return Boolean(node && getWorkflowNodeInput(node, binding.input_name) !== undefined);
 }
 
 export interface EnumConfigState {
@@ -53,32 +100,29 @@ export interface EnumConfigState {
   input_name: string;
   default: unknown;
   user_modified?: boolean;
-  constraints?: { options?: string[]; [key: string]: unknown };
+  constraints?: { options?: unknown[]; [key: string]: unknown };
 }
 
-/**
- * Merge live options for an editor config while preserving imported and edited values.
- * The imported value is the offline default unless the user has already edited it.
- */
+/** Merge live options without coercing typed enum values or user edits. */
 export function resolveEnumConfig(
   workflow: ComfyUIWorkflow | QwenWorkflowFormat | null,
   config: EnumConfigState,
-  liveOptions: string[] = [],
+  liveOptions: unknown[] = [],
 ): EnumConfigState {
   const node = findWorkflowNode(workflow, config.node_id);
   const importedValue = getWorkflowNodeInput(node, config.input_name);
   const hasImportedValue = importedValue !== undefined && importedValue !== null && importedValue !== '';
   const currentValue = config.default;
-  const edited = Boolean(config.user_modified) || (
-    hasImportedValue && currentValue !== importedValue
-  );
+  const edited = Boolean(config.user_modified) || (hasImportedValue && !Object.is(currentValue, importedValue));
   const selectedValue = edited ? currentValue : importedValue ?? currentValue;
-  const options = [...new Set([
-    ...(hasImportedValue ? [String(importedValue)] : []),
-    ...(selectedValue !== undefined && selectedValue !== null && selectedValue !== '' ? [String(selectedValue)] : []),
-    ...liveOptions,
-  ])];
-
+  const options: unknown[] = [];
+  const add = (value: unknown) => {
+    if (value === undefined || value === null || value === '') return;
+    if (!options.some(option => Object.is(option, value))) options.push(value);
+  };
+  add(importedValue);
+  add(selectedValue);
+  liveOptions.forEach(add);
   return {
     ...config,
     type: 'enum',

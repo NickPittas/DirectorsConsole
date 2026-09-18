@@ -6,6 +6,22 @@
  */
 
 import { ANGLE_LORA_NAME } from '../data/cameraAngleData';
+import {
+  getNodeInputSpec,
+  normalizeInputDefinition,
+  type ObjectInfo,
+  type NormalizedInputDefinition,
+} from './node-definitions';
+function listParserWorkflowNodes(workflow: ComfyUIWorkflow): Array<[string, ComfyUINode]> {
+  return Object.entries(workflow)
+    .filter(([nodeId, node]) => nodeId !== 'meta' && nodeId !== 'version' && typeof node === 'object' && node !== null)
+    .map(([nodeId, node]) => [nodeId, node as ComfyUINode]);
+}
+
+function isParserLinkReference(value: unknown, knownNodeIds: Set<string>): value is [string, number] {
+  return Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' &&
+    knownNodeIds.has(value[0]) && typeof value[1] === 'number' && Number.isInteger(value[1]);
+}
 
 // ============================================================================
 // Cross-platform path normalization for ComfyUI workflows
@@ -87,7 +103,7 @@ export function detectNodeOS(systemStats: any): TargetOS {
 export interface WorkflowParameter {
   name: string;
   display_name: string;
-  type: 'integer' | 'float' | 'seed' | 'enum' | 'boolean' | 'prompt' | 'image' | 'image_list' | 'video' | 'video_list' | 'media' | 'lora';
+  type: 'integer' | 'float' | 'seed' | 'enum' | 'boolean' | 'prompt' | 'string' | 'image' | 'image_list' | 'video' | 'video_list' | 'media' | 'lora';
   node_id: string;
   input_name: string;
   default: any;
@@ -95,12 +111,16 @@ export interface WorkflowParameter {
     min?: number;
     max?: number;
     step?: number;
-    options?: string[];
+    options?: unknown[];
     availableLoras?: string[];  // For lora type - list of available LoRAs from ComfyUI
     lora_name?: string;         // For lora type - current lora selection
     bypassed?: boolean;         // For lora type - bypass state
   };
   description: string;
+  /** Runtime schema state; offline imports deliberately remain editable. */
+  schemaStatus?: 'offline' | 'available' | 'remote' | 'unsupported';
+  schemaType?: string;
+  schema?: unknown;
 }
 
 export interface WorkflowImageInput {
@@ -241,11 +261,11 @@ export class WorkflowParser {
   /**
    * Parse a ComfyUI workflow and extract all parameters, inputs, and metadata
    */
-  parseWorkflow(workflow: ComfyUIWorkflow | QwenWorkflowFormat): ParsedWorkflow {
+  parseWorkflow(workflow: ComfyUIWorkflow | QwenWorkflowFormat, objectInfo?: ObjectInfo): ParsedWorkflow {
     // Normalize to standard format first
     const normalizedWorkflow = this.normalizeWorkflowFormat(workflow);
     
-    const parameters = this._extractParameters(normalizedWorkflow);
+    const parameters = this._extractSchemaParameters(normalizedWorkflow, objectInfo);
     const image_inputs = this._extractImageInputs(normalizedWorkflow);
     const loras = this._extractLoRAs(normalizedWorkflow);
     const outputs = this._extractOutputs(normalizedWorkflow);
@@ -363,212 +383,115 @@ export class WorkflowParser {
   }
 
   /**
-   * Extract parameters from workflow nodes
+   * Discover literal API inputs. Runtime schemas refine controls; they never
+   * manufacture values or expose graph-only widget state.
    */
-  private _extractParameters(workflow: ComfyUIWorkflow): WorkflowParameter[] {
-    let parameters: WorkflowParameter[] = [];
+  private _extractSchemaParameters(workflow: ComfyUIWorkflow, objectInfo?: ObjectInfo): WorkflowParameter[] {
+    const nodes = listParserWorkflowNodes(workflow);
+    const knownNodeIds = new Set(nodes.map(([nodeId]) => nodeId));
+    const parameters: WorkflowParameter[] = [];
+    const usedNames = new Set<string>();
+    const imageNodeIds = new Set(this._extractImageInputs(workflow).map(input => `${input.node_id}\u0000${input.input_name}`));
 
-    for (const [node_id, node] of Object.entries(workflow)) {
-      if (node_id === 'meta' || typeof node !== 'object' || node === null) {
-        continue;
-      }
+    for (const [nodeId, node] of nodes) {
+      const classType = node.class_type || node.type || '';
+      const inputs = this._normalizeNode(node).inputs;
+      const nodeDefinition = objectInfo?.[classType];
+      for (const [inputName, value] of Object.entries(inputs)) {
+        // Only actual API links are graph edges. Arrays containing literals stay
+        // visible as unsupported values instead of being silently discarded.
+        if (isParserLinkReference(value, knownNodeIds)) continue;
+        if (imageNodeIds.has(`${nodeId}\u0000${inputName}`)) continue;
+        if (classType.includes('LoraLoader') && ['lora_name', 'strength_model', 'strength_clip'].includes(inputName)) continue;
 
-      const typedNode = node as ComfyUINode;
-      const { class_type, inputs } = this._normalizeNode(typedNode);
-
-      // Detect KSampler - extract steps, cfg, seed, denoise
-      if (class_type === 'KSampler') {
-        if ('steps' in inputs) {
-          parameters.push({
-            name: 'steps',
-            display_name: 'Sampling Steps',
-            type: 'integer',
-            node_id,
-            input_name: 'steps',
-            default: inputs.steps ?? 20,
-            constraints: { min: 1, max: 150, step: 1 },
-            description: 'Number of sampling steps',
-          });
+        let schema = this._schemaForInput(nodeDefinition, inputName, inputs);
+        // A graph/API loader still has one authoritative imported choice when
+        // offline. Do not invent any additional model names.
+        if (!schema && classType === 'CheckpointLoaderSimple' && inputName === 'ckpt_name' && typeof value === 'string') {
+          schema = normalizeInputDefinition([[value], {}]);
         }
-
-        if ('cfg' in inputs) {
-          parameters.push({
-            name: 'cfg',
-            display_name: 'CFG Scale',
-            type: 'float',
-            node_id,
-            input_name: 'cfg',
-            default: inputs.cfg ?? 7.0,
-            constraints: { min: 0, max: 30, step: 0.1 },
-            description: 'Classifier-free guidance scale',
-          });
-        }
-
-        if ('seed' in inputs) {
-          parameters.push({
-            name: 'seed',
-            display_name: 'Seed',
-            type: 'seed',
-            node_id,
-            input_name: 'seed',
-            default: inputs.seed ?? -1,
-            description: 'Random seed for reproducibility',
-          });
-        }
-
-        if ('denoise' in inputs) {
-          parameters.push({
-            name: 'denoise',
-            display_name: 'Denoise Strength',
-            type: 'float',
-            node_id,
-            input_name: 'denoise',
-            default: inputs.denoise ?? 1.0,
-            constraints: { min: 0.1, max: 1.0, step: 0.05 },
-            description: 'Denoising strength (img2img)',
-          });
-        }
-      }
-      
-      // Detect QwenImageIntegratedKSampler - Qwen image editing sampler
-      if (class_type === 'QwenImageIntegratedKSampler') {
-        // Get widget values if available
-        const widgetValues = typedNode.widgets_values || [];
-        
-        // Prompt (index 0) - actual input name is 'positive_prompt'
+        const nameBase = inputName || `input_${parameters.length + 1}`;
+        const name = usedNames.has(nameBase) ? `${nameBase}_${nodeId}` : nameBase;
+        usedNames.add(name);
+        const inferred = this._parameterType(value, inputName, schema);
+        const options = schema?.options;
+        const constraints = {
+          ...(schema?.min !== undefined ? { min: schema.min } : {}),
+          ...(schema?.max !== undefined ? { max: schema.max } : {}),
+          ...(schema?.step !== undefined ? { step: schema.step } : {}),
+          ...(options ? { options } : {}),
+        };
+        const schemaStatus = schema?.availability || (objectInfo ? 'unsupported' : 'offline');
         parameters.push({
-          name: 'positive_prompt',
-          display_name: 'Prompt',
-          type: 'prompt',
-          node_id,
-          input_name: 'positive_prompt',
-          default: widgetValues[0] || inputs.positive_prompt || '',
-          description: 'Main prompt for image generation/editing',
+          name,
+          display_name: this._displayName(inputName),
+          type: inferred,
+          node_id: nodeId,
+          input_name: inputName,
+          default: value,
+          description: schema?.tooltip || `${this._displayName(inputName)} from ${classType || 'unknown'} node ${nodeId}`,
+          constraints: Object.keys(constraints).length > 0 ? constraints : undefined,
+          schemaStatus,
+          schemaType: schema?.type,
+          schema: schema?.raw,
         });
-        
-        // Negative prompt (index 1)
-        parameters.push({
-          name: 'negative_prompt',
-          display_name: 'Negative Prompt',
-          type: 'prompt',
-          node_id,
-          input_name: 'negative_prompt',
-          default: widgetValues[1] || inputs.negative_prompt || '',
-          description: 'What to avoid in generation',
-        });
-        
-        // Mode (index 2) - actual input name is 'generation_mode'
-        parameters.push({
-          name: 'generation_mode',
-          display_name: 'Mode',
-          type: 'enum',
-          node_id,
-          input_name: 'generation_mode',
-          default: widgetValues[2] || inputs.generation_mode || '图生图 image-to-image',
-          constraints: {
-            options: ['文生图 text-to-image', '图生图 image-to-image', '图像编辑 image-edit']
-          },
-          description: 'Generation mode',
-        });
-        
-        // Seed (index 6)
-        parameters.push({
-          name: 'seed',
-          display_name: 'Seed',
-          type: 'seed',
-          node_id,
-          input_name: 'seed',
-          default: widgetValues[6] || inputs.seed || -1,
-          description: 'Random seed',
-        });
-        
-        // Steps (index 8)
-        parameters.push({
-          name: 'steps',
-          display_name: 'Steps',
-          type: 'integer',
-          node_id,
-          input_name: 'steps',
-          default: widgetValues[8] || inputs.steps || 4,
-          constraints: { min: 1, max: 50, step: 1 },
-          description: 'Sampling steps',
-        });
-        
-        // Denoise (index 9)
-        parameters.push({
-          name: 'denoise',
-          display_name: 'Denoise',
-          type: 'float',
-          node_id,
-          input_name: 'denoise',
-          default: widgetValues[9] || inputs.denoise || 1.0,
-          constraints: { min: 0, max: 1, step: 0.05 },
-          description: 'Denoising strength',
-        });
-        
-        // CFG (index 13)
-        parameters.push({
-          name: 'cfg',
-          display_name: 'CFG Scale',
-          type: 'float',
-          node_id,
-          input_name: 'cfg',
-          default: widgetValues[13] || inputs.cfg || 3.0,
-          constraints: { min: 1, max: 20, step: 0.5 },
-          description: 'Classifier-free guidance',
-        });
-      }
-
-      // CheckpointLoaderSimple is a graph-format widget whose API input is ckpt_name.
-      // Parsing stays offline-safe; the editor merges URL-qualified live options later.
-      if (class_type === 'CheckpointLoaderSimple' && 'ckpt_name' in inputs) {
-        const importedModel = inputs.ckpt_name;
-        parameters.push({
-          name: 'ckpt_name',
-          display_name: 'Checkpoint',
-          type: 'enum',
-          node_id,
-          input_name: 'ckpt_name',
-          default: importedModel,
-          constraints: { options: importedModel ? [importedModel] : [] },
-          description: 'Checkpoint model used for generation',
-        });
-      }
-
-      // Detect EmptyLatentImage - extract width, height
-      if (class_type === 'EmptyLatentImage') {
-        if ('width' in inputs) {
-          parameters.push({
-            name: 'width',
-            display_name: 'Width',
-            type: 'integer',
-            node_id,
-            input_name: 'width',
-            default: inputs.width ?? 512,
-            constraints: { min: 256, max: 2048, step: 64 },
-            description: 'Output image width',
-          });
-        }
-
-        if ('height' in inputs) {
-          parameters.push({
-            name: 'height',
-            display_name: 'Height',
-            type: 'integer',
-            node_id,
-            input_name: 'height',
-            default: inputs.height ?? 512,
-            constraints: { min: 256, max: 2048, step: 64 },
-            description: 'Output image height',
-          });
-        }
       }
     }
 
-    // Handle prompt nodes separately for better detection
-    parameters = this._extractPromptParameters(workflow, parameters);
+    return this._extractPromptParameters(workflow, parameters);
+  }
 
-    return parameters;
+  private _schemaForInput(
+    nodeDefinition: { input?: any; inputs?: any } | undefined,
+    inputName: string,
+    values: Record<string, any>,
+  ): NormalizedInputDefinition | undefined {
+    const direct = getNodeInputSpec(nodeDefinition, inputName);
+    if (direct !== undefined) return normalizeInputDefinition(direct);
+    // Dynamic combo children are flattened by ComfyUI as parent.child.
+    const dot = inputName.indexOf('.');
+    if (dot < 1 || !nodeDefinition) return undefined;
+    const parent = inputName.slice(0, dot);
+    const childPath = inputName.slice(dot + 1);
+    const parentSpec = getNodeInputSpec(nodeDefinition, parent);
+    if (parentSpec === undefined) return undefined;
+    const parentSchema = normalizeInputDefinition(parentSpec);
+    const selected = values[parent];
+    const branch = parentSchema.config.options?.find((option: any) =>
+      option && typeof option === 'object' && !Array.isArray(option) && option.key === selected,
+    );
+    const childSpec = branch?.inputs && this._nestedInputSpec(branch.inputs, childPath);
+    if (childSpec !== undefined) return normalizeInputDefinition(childSpec);
+    const template = parentSchema.config.template?.input || parentSchema.config.template;
+    const templateSpec = template && this._nestedInputSpec(template, childPath);
+    return templateSpec === undefined ? undefined : normalizeInputDefinition(templateSpec);
+  }
+
+  private _nestedInputSpec(group: any, path: string): unknown {
+    const parts = path.split('.');
+    let current = group;
+    for (const part of parts) {
+      const direct = current?.required?.[part] ?? current?.optional?.[part] ?? current?.[part];
+      if (direct === undefined) return undefined;
+      current = direct;
+    }
+    return current;
+  }
+
+  private _parameterType(value: unknown, inputName: string, schema?: NormalizedInputDefinition): WorkflowParameter['type'] {
+    const type = schema?.type || '';
+    if (schema?.isEnum || type === 'COMBO') return 'enum';
+    if (['IMAGE', 'MASK'].includes(type)) return 'image';
+    if (type === 'VIDEO' || type === 'VIDEO_LIST') return 'video';
+    if (type === 'BOOLEAN' || typeof value === 'boolean') return 'boolean';
+    if (type === 'INT' || (typeof value === 'number' && Number.isInteger(value))) return 'integer';
+    if (type === 'FLOAT' || type === 'NUMBER' || typeof value === 'number') return 'float';
+    if (typeof value === 'string' && /(^|_)(prompt|text|positive|negative)($|_)/i.test(inputName)) return 'prompt';
+    return 'string';
+  }
+
+  private _displayName(inputName: string): string {
+    return inputName.replace(/[_.-]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
   }
 
   /**
@@ -613,7 +536,9 @@ export class WorkflowParser {
 
       if (class_type in promptClassTypes) {
         const input_name = promptClassTypes[class_type];
-        if (input_name in inputs) {
+        if (input_name in inputs && !parameters.some(parameter =>
+          parameter.node_id === node_id && parameter.input_name === input_name
+        )) {
           const text = String(inputs[input_name] ?? '');
           const meta_title = typedNode._meta?.title || '';
 
@@ -1090,82 +1015,72 @@ export class WorkflowParser {
     
     // Combine auto-detected parameters with custom configs
     // Custom configs take precedence for matching
-    const allParams = [...parsed.parameters];
-    
-    // Add custom param configs that aren't already in allParams
-    if (customParamConfigs) {
-      for (const config of customParamConfigs) {
-        if (!config.exposed) continue; // Only include exposed params
-        
-        const exists = allParams.some(p => 
-          p.node_id === config.node_id && p.input_name === config.input_name
-        );
-        if (!exists) {
-          allParams.push({
-            name: config.name,
-            display_name: config.name,
-            description: '',
-            type: 'enum' as const,
-            node_id: config.node_id,
-            input_name: config.input_name,
-            default: null,
-          });
-        }
+    const configuredBindings = new Set((customParamConfigs || []).filter(config => config.exposed)
+      .map(config => `${config.node_id}\u0000${config.input_name}`));
+    // Passing a config, including [], makes it authoritative. Omitting it is
+    // the backwards-compatible offline builder path.
+    const allParams = customParamConfigs === undefined
+      ? [...parsed.parameters]
+      : parsed.parameters.filter(param => configuredBindings.has(`${param.node_id}\u0000${param.input_name}`));
+    type SavedConfig = NonNullable<typeof customParamConfigs>[number];
+    const configByBinding = new Map<string, SavedConfig>();
+    const binding = (nodeId: string, inputName: string) => `${nodeId}\u0000${inputName}`;
+
+    // Saved configs identify the real binding. Values are resolved from the
+    // current config name first, then the parsed/legacy aliases.
+    for (const config of customParamConfigs || []) {
+      configByBinding.set(binding(config.node_id, config.input_name), config);
+      if (!config.exposed) continue;
+      if (!allParams.some(param => binding(param.node_id, param.input_name) === binding(config.node_id, config.input_name))) {
+        allParams.push({
+          name: config.name,
+          display_name: config.name,
+          description: '',
+          type: 'string',
+          node_id: config.node_id,
+          input_name: config.input_name,
+          default: null,
+        });
       }
     }
 
-    // Apply parameter values
-    // Support both naming conventions:
-    // - Direct: "positive_prompt" (matches p.name)
-    // - With node ID suffix: "positive_prompt_113" (matches p.name + "_" + p.node_id)
     console.log('[buildWorkflow] Applying parameters:', parameterValues);
-    console.log('[buildWorkflow] Available params:', allParams.map(p => ({ name: p.name, node_id: p.node_id, input_name: p.input_name })));
-    
-    for (const [paramName, value] of Object.entries(parameterValues)) {
-      // Try direct match first
-      let param = allParams.find(p => p.name === paramName);
-      
-      // If not found, try matching with node ID suffix (e.g., "positive_prompt_113")
-      if (!param) {
-        param = allParams.find(p => paramName === `${p.name}_${p.node_id}`);
-      }
-      
-      // Also try matching input_name with suffix (for image inputs stored as params)
-      if (!param) {
-        param = allParams.find(p => paramName === `${p.input_name}_${p.node_id}`);
-      }
+    for (const param of allParams) {
+      const config = configByBinding.get(binding(param.node_id, param.input_name));
+      const candidateNames = config
+        ? [config.name, param.name, `${param.input_name}_${param.node_id}`]
+        : [param.name, `${param.input_name}_${param.node_id}`];
+      const paramName = candidateNames.find(name => Object.prototype.hasOwnProperty.call(parameterValues, name));
+      if (paramName === undefined) continue;
+      const value = parameterValues[paramName];
 
-      if (param) {
-        console.log(`[buildWorkflow] Matched param "${paramName}" to node ${param.node_id}.${param.input_name}`);
-        const node = workflow[param.node_id] as ComfyUINode;
-        if (node) {
-          // For widgets_values array (Qwen format), we need to update by index
-          if (node.widgets_values && Array.isArray(node.widgets_values)) {
-            const widgetIndex = this._getWidgetIndex(node.class_type || '', param.input_name);
-            if (widgetIndex >= 0) {
-              node.widgets_values[widgetIndex] = value;
-            }
+      console.log(`[buildWorkflow] Matched param "${paramName}" to node ${param.node_id}.${param.input_name}`);
+      const node = workflow[param.node_id] as ComfyUINode;
+      if (node) {
+        // For widgets_values array (Qwen format), we need to update by index
+        if (node.widgets_values && Array.isArray(node.widgets_values)) {
+          const widgetIndex = this._getWidgetIndex(node.class_type || '', param.input_name);
+          if (widgetIndex >= 0) {
+            node.widgets_values[widgetIndex] = value;
           }
-          // Also set in inputs for standard format
-          if (!node.inputs) {
-            node.inputs = {};
-          }
-          
-          // Normalize Windows backslashes to forward slashes for model/UNET paths
-          // This fixes paths like "Qwen\model.safetensors" -> "Qwen/model.safetensors"
-          let normalizedValue = value;
-          if (param.input_name === 'unet_name' || param.input_name === 'ckpt_name' || 
-              param.input_name === 'model_name' || param.input_name === 'lora_name') {
-            if (typeof value === 'string' && value.includes('\\')) {
-              normalizedValue = value.replace(/\\/g, '/');
-              console.log(`[buildWorkflow] Normalized path for ${param.input_name}: ${value} -> ${normalizedValue}`);
-            }
-          }
-          
-          node.inputs[param.input_name] = normalizedValue;
         }
-      } else {
-        console.log(`[buildWorkflow] No match for param "${paramName}"`);
+        // Also set in inputs for standard format
+        if (!node.inputs) {
+          node.inputs = {};
+        }
+
+        // Normalize Windows backslashes to forward slashes for model/UNET paths
+        // This fixes paths like "Qwen\model.safetensors" -> "Qwen/model.safetensors"
+        let normalizedValue = value;
+        if (param.input_name === 'unet_name' || param.input_name === 'ckpt_name' ||
+            param.input_name === 'model_name' || param.input_name === 'lora_name') {
+          if (typeof value === 'string' && value.includes('\\')) {
+            normalizedValue = value.replace(/\\/g, '/');
+            console.log(`[buildWorkflow] Normalized path for ${param.input_name}: ${value} -> ${normalizedValue}`);
+          }
+        }
+
+        node.inputs[param.input_name] = normalizedValue;
       }
     }
 
@@ -1176,8 +1091,11 @@ export class WorkflowParser {
     
     for (const [inputName, imagePath] of Object.entries(imageInputs)) {
       const input = parsed.image_inputs.find(i => i.name === inputName);
+      const configuredImage = input && (customParamConfigs === undefined ||
+        (customParamConfigs || []).some(config => config.exposed &&
+          config.node_id === input.node_id && config.input_name === input.input_name));
 
-      if (input) {
+      if (input && configuredImage) {
         const node = workflow[input.node_id] as ComfyUINode;
         console.log(`[buildWorkflow] Processing image input "${inputName}" -> node ${input.node_id}.${input.input_name}, path=${imagePath}, node exists=${!!node}`);
         if (node) {
@@ -1220,6 +1138,9 @@ export class WorkflowParser {
     console.log(`[buildWorkflow] Processing ${parsed.loras.length} LoRAs, loraValues has ${Object.keys(loraValues).length} entries`);
     
     for (const lora of parsed.loras) {
+      if (customParamConfigs !== undefined && !(customParamConfigs || []).some(config =>
+        config.exposed && config.node_id === lora.node_id && config.input_name === lora.strength_inputs.model
+      )) continue;
       const node = workflow[lora.node_id] as ComfyUINode;
       if (!node) {
         console.warn(`[buildWorkflow] LoRA node ${lora.node_id} not found in workflow`);

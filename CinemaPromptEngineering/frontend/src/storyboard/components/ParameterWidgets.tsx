@@ -6,6 +6,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { WorkflowParameter } from '../services/workflow-parser';
+import { bindingKey } from '../services/workflow-editor-options';
 import { ImageDropZone } from './ImageDropZone';
 import { CameraAngle, parseAngleFromPrompt, removeAnglePrefix } from '../data/cameraAngleData';
 import CameraAngleSelector from './CameraAngleSelector';
@@ -54,15 +55,18 @@ export function IntegerWidget({ parameter, value, onChange, disabled }: Paramete
   }, [value, parameter.default]);
   
   const handleSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseInt(e.target.value);
+    const newValue = Number(e.target.value);
+    if (!Number.isFinite(newValue) || !Number.isInteger(newValue)) return;
     setLocalValue(newValue);
     onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
   
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseInt(e.target.value) || 0;
-    setLocalValue(newValue);
-    onChange(parameter.name, newValue);
+    const raw = e.target.value;
+    setLocalValue(raw);
+    if (raw.trim() === '') return;
+    const newValue = Number(raw);
+    if (Number.isFinite(newValue) && Number.isInteger(newValue)) onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
   
   const constraints = parameter.constraints || {};
@@ -118,9 +122,11 @@ export function FloatWidget({ parameter, value, onChange, disabled }: ParameterW
   }, [parameter.name, onChange]);
   
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseFloat(e.target.value) || 0;
-    setLocalValue(newValue);
-    onChange(parameter.name, newValue);
+    const raw = e.target.value;
+    setLocalValue(raw);
+    if (raw.trim() === '') return;
+    const newValue = Number(raw);
+    if (Number.isFinite(newValue)) onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
   
   const constraints = parameter.constraints || {};
@@ -170,9 +176,11 @@ export function SeedWidget({ parameter, value, onChange, disabled }: ParameterWi
   }, [value, parameter.default]);
   
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseInt(e.target.value) || -1;
-    setLocalValue(newValue);
-    onChange(parameter.name, newValue);
+    const raw = e.target.value;
+    setLocalValue(raw);
+    if (raw.trim() === '') return;
+    const newValue = Number(raw);
+    if (Number.isFinite(newValue) && Number.isInteger(newValue)) onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
   
   const handleRandomize = useCallback(() => {
@@ -235,70 +243,50 @@ function formatModelName(path: string): string {
   return dotIndex > 0 ? filename.substring(0, dotIndex) : filename;
 }
 
-function findMatchingModel(searchPath: string | undefined, options: string[]): string {
-  if (!searchPath) return options[0] || '';
-  const normalized = searchPath.replace(/\\/g, '/');
-  const match = options.find(opt => opt.replace(/\\/g, '/') === normalized);
-  return match || normalized;
-}
-
 export function EnumWidget({ parameter, value, onChange, disabled }: ParameterWidgetProps) {
   const options = useMemo(() => parameter.constraints?.options || [], [parameter.constraints?.options]);
-  const isModel = options.length > 0 && options.every(isModelPath);
-  
-  const [localValue, setLocalValue] = useState(() => {
-    if (isModel) {
-      return findMatchingModel(value ?? parameter.default, options);
-    }
-    return value ?? parameter.default;
-  });
-  
-  useEffect(() => {
-    if (isModel) {
-      setLocalValue(findMatchingModel(value ?? parameter.default, options));
-    } else {
-      setLocalValue(value ?? parameter.default);
-    }
-  }, [value, parameter.default, options, isModel]);
-  
+  const modelOptions = useMemo(
+    () => options.filter((option): option is string => typeof option === 'string'),
+    [options],
+  );
+  const isModel = modelOptions.length > 0 && modelOptions.every(isModelPath);
+  const selectedIndex = options.findIndex(option => Object.is(option, value ?? parameter.default));
+  const [localValue, setLocalValue] = useState(value ?? parameter.default);
+
+  useEffect(() => setLocalValue(value ?? parameter.default), [value, parameter.default, options]);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newValue = e.target.value;
+    const index = Number(e.target.value);
+    const newValue = options[index];
+    if (newValue === undefined) return;
     setLocalValue(newValue);
     onChange(parameter.name, newValue);
-  }, [parameter.name, onChange]);
-  
-  const groupedModels = useMemo(() => isModel ? groupModelsByFolder(options) : null, [options, isModel]);
-  
+  }, [parameter.name, onChange, options]);
+
+  const groupedModels = useMemo(() => isModel ? groupModelsByFolder(modelOptions) : null, [modelOptions, isModel]);
+
   return (
     <div className="parameter-widget enum-widget">
       <label className="parameter-label">{parameter.display_name}</label>
-      <select
-        className="parameter-select"
-        value={localValue}
-        onChange={handleChange}
-        disabled={disabled}
-      >
-        {isModel && groupedModels ? (
-          Array.from(groupedModels.entries()).map(([folder, models]) => (
-            <optgroup key={folder} label={folder}>
-              {models.map(model => (
-                <option key={model} value={model}>
-                  {formatModelName(model)}
-                </option>
-              ))}
-            </optgroup>
-          ))
-        ) : (
-          options.map(option => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))
+      <select className="parameter-select" value={selectedIndex >= 0 ? String(selectedIndex) : ''}
+        onChange={handleChange} disabled={disabled}>
+        {selectedIndex < 0 && localValue !== undefined && localValue !== null && localValue !== '' && (
+          <option value="" disabled>Current value unavailable</option>
         )}
+        {isModel && groupedModels ? Array.from(groupedModels.entries()).map(([folder, models]) => (
+          <optgroup key={folder} label={folder}>
+            {models.map(model => {
+              const index = options.findIndex(option => Object.is(option, model));
+              return <option key={`${index}:${model}`} value={String(index)}>{formatModelName(model)}</option>;
+            })}
+          </optgroup>
+        )) : options.map((option, index) => (
+          <option key={`${index}:${typeof option}:${String(option)}`} value={String(index)}>
+            {typeof option === 'object' && option !== null ? String((option as any).key ?? JSON.stringify(option)) : String(option)}
+          </option>
+        ))}
       </select>
-      {parameter.description && (
-        <span className="parameter-description">{parameter.description}</span>
-      )}
+      {parameter.description && <span className="parameter-description">{parameter.description}</span>}
     </div>
   );
 }
@@ -327,7 +315,7 @@ export function BooleanWidget({ parameter, value, onChange, disabled }: Paramete
         <input
           type="checkbox"
           className="parameter-checkbox"
-          checked={localValue}
+          checked={localValue === true}
           onChange={handleChange}
           disabled={disabled}
         />
@@ -336,6 +324,23 @@ export function BooleanWidget({ parameter, value, onChange, disabled }: Paramete
       {parameter.description && (
         <span className="parameter-description">{parameter.description}</span>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// String Widget
+// ============================================================================
+
+export function StringWidget({ parameter, value, onChange, disabled }: ParameterWidgetProps) {
+  const [localValue, setLocalValue] = useState(String(value ?? parameter.default ?? ''));
+  useEffect(() => setLocalValue(String(value ?? parameter.default ?? '')), [value, parameter.default]);
+  return (
+    <div className="parameter-widget string-widget">
+      <label className="parameter-label">{parameter.display_name}</label>
+      <input className="parameter-input" type="text" value={localValue} disabled={disabled}
+        onChange={event => { setLocalValue(event.target.value); onChange(parameter.name, event.target.value); }} />
+      {parameter.description && <span className="parameter-description">{parameter.description}</span>}
     </div>
   );
 }
@@ -837,6 +842,8 @@ interface ParameterWidgetRouterProps extends ParameterWidgetProps {
 
 export function ParameterWidget({ parameter, value, onChange, disabled, onEnhancePrompt, cameraAngle, onCameraAngleChange, comfyUrl }: ParameterWidgetRouterProps) {
   switch (parameter.type) {
+    case 'string':
+      return <StringWidget parameter={parameter} value={value} onChange={onChange} disabled={disabled} />;
     case 'integer':
       return <IntegerWidget parameter={parameter} value={value} onChange={onChange} disabled={disabled} />;
     case 'float':
@@ -901,7 +908,7 @@ export function ParameterPanel({ parameters, values, onChange, disabled, onEnhan
       <div className="parameter-list">
         {parameters.map((parameter) => (
           <ParameterWidget
-            key={parameter.name}
+            key={bindingKey(parameter)}
             parameter={parameter}
             value={values[parameter.name]}
             onChange={onChange}

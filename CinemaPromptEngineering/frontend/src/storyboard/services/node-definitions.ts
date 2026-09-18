@@ -1,23 +1,22 @@
-/**
- * ComfyUI Node Definitions Service
- * 
- * Fetches and caches node definitions from ComfyUI's /object_info endpoint
- * This provides information about valid input types, enum options, etc.
- */
+/** Runtime ComfyUI /object_info schema access. */
 
-// ============================================================================
-// Types
-// ============================================================================
+export type SchemaScalar = string | number | boolean | null;
+export type RawInputSpec =
+  | string
+  | string[]
+  | [string | string[] | Record<string, unknown>, Record<string, any>?]
+  | Record<string, any>;
 
 export interface NodeInputDefinition {
-  type: string | string[]; // Can be a type name or array of enum options
-  name: string;
+  type: string | string[];
+  name?: string;
   optional?: boolean;
   default?: any;
   min?: number;
   max?: number;
   step?: number;
   tooltip?: string;
+  [key: string]: any;
 }
 
 export interface NodeOutputDefinition {
@@ -26,214 +25,241 @@ export interface NodeOutputDefinition {
 }
 
 export interface NodeDefinition {
-  name: string;
-  display_name: string;
-  description: string;
-  category: string;
-  input: {
-    required?: Record<string, NodeInputDefinition | [string | string[], Record<string, any>?]>;
-    optional?: Record<string, NodeInputDefinition | [string | string[], Record<string, any>?]>;
+  name?: string;
+  display_name?: string;
+  description?: string;
+  category?: string;
+  input?: {
+    required?: Record<string, RawInputSpec | NodeInputDefinition>;
+    optional?: Record<string, RawInputSpec | NodeInputDefinition>;
     hidden?: Record<string, any>;
   };
-  output: string[];
-  output_name: string[];
-  output_is_list: boolean[];
+  // A few custom servers use the plural spelling. Keep it readable without
+  // pretending that it is a different schema.
+  inputs?: NodeDefinition['input'];
+  output?: string[];
+  output_name?: string[];
+  output_is_list?: boolean[];
   output_node?: boolean;
+  [key: string]: any;
 }
 
 export interface ObjectInfo {
   [nodeType: string]: NodeDefinition;
 }
 
-// ============================================================================
-// Service Class
-// ============================================================================
+export interface RemoteInputDescriptor {
+  route: string;
+  refresh_button?: boolean;
+  control_after_refresh?: string;
+  timeout?: number;
+  max_retries?: number;
+  refresh?: number;
+  [key: string]: unknown;
+}
+
+export type SchemaAvailability = 'available' | 'remote' | 'unsupported';
+
+export interface NormalizedInputDefinition {
+  type: string;
+  isEnum: boolean;
+  options?: unknown[];
+  default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
+  tooltip?: string;
+  remote?: RemoteInputDescriptor;
+  availability: SchemaAvailability;
+  raw: unknown;
+  config: Record<string, any>;
+  dynamic?: Record<string, any>;
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : {};
+}
+
+function inputSpecParts(inputDef: unknown): { typeOrOptions: unknown; config: Record<string, any> } {
+  if (Array.isArray(inputDef)) {
+    return { typeOrOptions: inputDef[0], config: asRecord(inputDef[1]) };
+  }
+  if (typeof inputDef === 'string' || Array.isArray(inputDef)) {
+    return { typeOrOptions: inputDef, config: {} };
+  }
+  const record = asRecord(inputDef);
+  return {
+    typeOrOptions: record.type ?? record.io_type ?? record.input_type ?? '*',
+    config: record,
+  };
+}
+
+const SUPPORTED_TYPES = new Set([
+  'STRING', 'INT', 'FLOAT', 'BOOLEAN', 'COMBO', 'IMAGE', 'MASK', 'LATENT',
+  'CONDITIONING', 'MODEL', 'CLIP', 'VAE', 'CONTROL_NET', 'SAMPLER', 'SIGMAS',
+  'NOISE', 'SIGMA', 'ANY', '*', 'NUMBER', 'PRIMITIVE',
+  'COMFY_DYNAMICCOMBO_V3', 'COMFY_AUTOGROW_V3', 'COMFY_DYNAMICSLOT_V3',
+  'COMFY_MULTITYPED_V3', 'COMFY_MATCHTYPE_V3',
+]);
+
+/** Normalize both legacy combo arrays and the modern ['COMBO', {options}] form. */
+export function normalizeInputDefinition(inputDef: unknown): NormalizedInputDefinition {
+  const { typeOrOptions, config } = inputSpecParts(inputDef);
+  const isLegacyEnum = Array.isArray(typeOrOptions) &&
+    (typeOrOptions.length === 0 || typeOrOptions.every(value => ['string', 'number', 'boolean'].includes(typeof value) || value === null));
+  const modernOptions = typeOrOptions === 'COMBO' && Array.isArray(config.options)
+    ? config.options
+    : undefined;
+  const declaredType = String(typeOrOptions || '*').toUpperCase();
+  const dynamicOptions = declaredType === 'COMFY_DYNAMICCOMBO_V3' && Array.isArray(config.options)
+    ? config.options.map((option: any) => option && typeof option === 'object' ? option.key : option)
+    : undefined;
+  const options = isLegacyEnum ? [...typeOrOptions as unknown[]] : (modernOptions || dynamicOptions);
+  const type = options ? 'COMBO' : declaredType;
+  const remote = config.remote && typeof config.remote === 'object'
+    ? config.remote as RemoteInputDescriptor
+    : undefined;
+  const availability: SchemaAvailability = remote
+    ? 'remote'
+    : SUPPORTED_TYPES.has(type)
+      ? 'available'
+      : 'unsupported';
+
+  return {
+    type,
+    isEnum: Boolean(options) || type === 'COMBO',
+    ...(options ? { options } : {}),
+    default: config.default,
+    min: typeof config.min === 'number' ? config.min : undefined,
+    max: typeof config.max === 'number' ? config.max : undefined,
+    step: typeof config.step === 'number' ? config.step : undefined,
+    tooltip: typeof config.tooltip === 'string' ? config.tooltip : undefined,
+    remote,
+    availability,
+    raw: inputDef,
+    config,
+    dynamic: config.options || config.template || config.names ? config : undefined,
+  };
+}
+
+function normalizeUrl(url: string): string {
+  return url.replace(/\/ws$/, '').replace(/\/+$/, '');
+}
+
+/** Return a schema input from either V1 input or a custom server's plural alias. */
+export function getNodeInputSpec(node: NodeDefinition | null | undefined, name: string): unknown {
+  const groups = node?.input || node?.inputs;
+  return groups?.required?.[name] ?? groups?.optional?.[name];
+}
+
+export function getNodeInputSpecs(node: NodeDefinition | null | undefined): Array<[string, unknown, boolean]> {
+  const groups = node?.input || node?.inputs;
+  if (!groups) return [];
+  return [
+    ...Object.entries(groups.required || {}).map(([name, spec]) => [name, spec, true] as [string, unknown, boolean]),
+    ...Object.entries(groups.optional || {}).map(([name, spec]) => [name, spec, false] as [string, unknown, boolean]),
+  ];
+}
 
 class ComfyUINodeDefinitions {
-  private cache: ObjectInfo | null = null;
-  private cacheUrl: string | null = null;
-  private cacheTimestamp: number = 0;
-  private cacheTTL: number = 5 * 60 * 1000; // 5 minutes
-  private fetchPromise: Promise<ObjectInfo> | null = null;
-  private fetchPromiseUrl: string | null = null;
-  
-  /**
-   * Fetch object_info from ComfyUI
-   */
+  private cache = new Map<string, { definitions: ObjectInfo; timestamp: number }>();
+  private requests = new Map<string, Promise<ObjectInfo>>();
+  private cacheTTL = 5 * 60 * 1000;
+
   async fetchDefinitions(comfyUrl: string): Promise<ObjectInfo> {
-    const baseUrl = comfyUrl.replace(/\/ws$/, '').replace(/\/+$/, '');
-    const now = Date.now();
-    
-    // A definition set belongs to its ComfyUI URL; never reuse another node's model list.
-    if (this.cache && this.cacheUrl === baseUrl && (now - this.cacheTimestamp) < this.cacheTTL) {
-      return this.cache;
-    }
-    
-    // Share only an in-flight request for this same URL.
-    if (this.fetchPromise && this.fetchPromiseUrl === baseUrl) {
-      return this.fetchPromise;
-    }
-    
-    const request = this._doFetch(baseUrl);
-    this.fetchPromise = request;
-    this.fetchPromiseUrl = baseUrl;
-    
+    const url = normalizeUrl(comfyUrl);
+    const cached = this.cache.get(url);
+    if (cached && Date.now() - cached.timestamp < this.cacheTTL) return cached.definitions;
+    const existing = this.requests.get(url);
+    if (existing) return existing;
+    const request = this._doFetch(url);
+    this.requests.set(url, request);
     try {
       const definitions = await request;
-      // A late response from an older URL must not replace the current cache.
-      if (this.fetchPromise === request && this.fetchPromiseUrl === baseUrl) {
-        this.cache = definitions;
-        this.cacheUrl = baseUrl;
-        this.cacheTimestamp = Date.now();
-      }
+      this.cache.set(url, { definitions, timestamp: Date.now() });
       return definitions;
     } finally {
-      if (this.fetchPromise === request) {
-        this.fetchPromise = null;
-        this.fetchPromiseUrl = null;
-      }
+      if (this.requests.get(url) === request) this.requests.delete(url);
     }
   }
-  
-  private async _doFetch(comfyUrl: string): Promise<ObjectInfo> {
-    // Normalize URL
-    const baseUrl = comfyUrl
-      .replace(/\/ws$/, '')
-      .replace(/\/$/, '');
-    
+
+  private async _doFetch(baseUrl: string): Promise<ObjectInfo> {
     const response = await fetch(`${baseUrl}/object_info`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch object_info: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    console.log(`[NodeDefinitions] Loaded ${Object.keys(data).length} node definitions`);
+    if (!response.ok) throw new Error(`Failed to fetch object_info: ${response.statusText || response.status}`);
+    const data = await response.json() as ObjectInfo;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('ComfyUI object_info was not an object');
     return data;
   }
-  
-  /**
-   * Get definition for a specific node type
-   */
-  getNodeDefinition(nodeType: string): NodeDefinition | null {
-    if (!this.cache) return null;
-    return this.cache[nodeType] || null;
+
+  getDefinitions(comfyUrl: string): ObjectInfo | null {
+    return this.cache.get(normalizeUrl(comfyUrl))?.definitions || null;
   }
-  
-  /**
-   * Get enum options for a specific input on a node type
-   * Returns null if the input is not an enum, or array of valid options
-   */
-  getEnumOptions(nodeType: string, inputName: string): string[] | null {
-    const nodeDef = this.getNodeDefinition(nodeType);
-    if (!nodeDef) return null;
-    
-    // Check required inputs
-    if (nodeDef.input.required?.[inputName]) {
-      const inputDef = nodeDef.input.required[inputName];
-      return this._extractEnumOptions(inputDef);
-    }
-    
-    // Check optional inputs
-    if (nodeDef.input.optional?.[inputName]) {
-      const inputDef = nodeDef.input.optional[inputName];
-      return this._extractEnumOptions(inputDef);
-    }
-    
-    return null;
+
+  getNodeDefinition(nodeType: string, comfyUrl: string): NodeDefinition | null {
+    return this.getDefinitions(comfyUrl)?.[nodeType] || null;
   }
-  
-  private _extractEnumOptions(inputDef: NodeInputDefinition | [string | string[], Record<string, any>?]): string[] | null {
-    // ComfyUI format: [["option1", "option2", ...], { default: "option1" }]
-    // Or: [type_string, { ... }]
-    if (Array.isArray(inputDef)) {
-      const [typeOrOptions] = inputDef;
-      if (Array.isArray(typeOrOptions)) {
-        // It's an enum - array of string options
-        return typeOrOptions;
-      }
-    }
-    return null;
+
+  getEnumOptions(nodeType: string, inputName: string, comfyUrl: string): unknown[] | null {
+    const definition = this.getInputDefinition(nodeType, inputName, comfyUrl);
+    return definition?.isEnum && definition.options ? definition.options : null;
   }
-  
-  /**
-   * Get input definition with metadata (min, max, step, etc.)
-   */
-  getInputDefinition(nodeType: string, inputName: string): { 
-    type: string; 
-    isEnum: boolean;
-    options?: string[];
-    min?: number;
-    max?: number;
-    step?: number;
-    default?: any;
-  } | null {
-    const nodeDef = this.getNodeDefinition(nodeType);
-    if (!nodeDef) return null;
-    
-    const findInput = (inputs: Record<string, any> | undefined) => {
-      if (!inputs?.[inputName]) return null;
-      const inputDef = inputs[inputName];
-      
-      if (Array.isArray(inputDef)) {
-        const [typeOrOptions, config] = inputDef;
-        
-        if (Array.isArray(typeOrOptions)) {
-          // Enum type
-          return {
-            type: 'enum',
-            isEnum: true,
-            options: typeOrOptions,
-            default: config?.default ?? typeOrOptions[0],
-          };
-        } else {
-          // Standard type with config
-          return {
-            type: typeOrOptions,
-            isEnum: false,
-            min: config?.min,
-            max: config?.max,
-            step: config?.step,
-            default: config?.default,
-          };
-        }
-      }
-      
-      return { type: String(inputDef), isEnum: false };
-    };
-    
-    return findInput(nodeDef.input.required) || findInput(nodeDef.input.optional);
+
+  getInputDefinition(nodeType: string, inputName: string, comfyUrl: string): NormalizedInputDefinition | null {
+    const node = this.getNodeDefinition(nodeType, comfyUrl);
+    const raw = getNodeInputSpec(node, inputName);
+    return raw === undefined ? null : normalizeInputDefinition(raw);
   }
-  
-  /**
-   * Check if cache is loaded
-   */
-  isLoaded(): boolean {
-    return this.cache !== null;
+
+  isLoaded(comfyUrl?: string): boolean {
+    return comfyUrl ? this.cache.has(normalizeUrl(comfyUrl)) : this.cache.size > 0;
   }
-  
-  /**
-   * Get available LoRAs from ComfyUI
-   * Fetches the lora_name enum options from LoraLoader node definition
-   */
+
   async getLoras(comfyUrl: string): Promise<string[]> {
     await this.fetchDefinitions(comfyUrl);
-    return this.getEnumOptions('LoraLoader', 'lora_name') || [];
+    const options = this.getEnumOptions('LoraLoader', 'lora_name', comfyUrl) || [];
+    return options.filter((option): option is string => typeof option === 'string');
   }
-  
-  /**
-   * Clear the cache
-   */
-  clearCache(): void {
-    this.cache = null;
-    this.cacheUrl = null;
-    this.cacheTimestamp = 0;
-    this.fetchPromise = null;
-    this.fetchPromiseUrl = null;
+
+  /** Fetch a declared remote COMBO source from the selected managed node only. */
+  async fetchRemoteOptions(
+    comfyUrl: string,
+    nodeType: string,
+    inputName: string,
+  ): Promise<unknown[]> {
+    await this.fetchDefinitions(comfyUrl);
+    const schema = this.getInputDefinition(nodeType, inputName, comfyUrl);
+    const route = schema?.remote?.route;
+    if (!route) throw new Error(`${nodeType}.${inputName} has no remote option route`);
+    const base = normalizeUrl(comfyUrl);
+    const target = new URL(route, `${base}/`);
+    if (target.origin !== new URL(`${base}/`).origin) {
+      throw new Error('Remote schema route must stay on the selected managed node');
+    }
+    const response = await fetch(target.toString());
+    if (!response.ok) throw new Error(`Remote options unavailable: HTTP ${response.status}`);
+    const payload = await response.json() as unknown;
+    const options = Array.isArray(payload)
+      ? payload
+      : payload && typeof payload === 'object' && Array.isArray((payload as any).options)
+        ? (payload as any).options
+        : null;
+    if (!options) throw new Error('Remote schema response did not contain an options array');
+    return options;
+  }
+
+  clearCache(comfyUrl?: string): void {
+    if (comfyUrl) {
+      const url = normalizeUrl(comfyUrl);
+      this.cache.delete(url);
+      this.requests.delete(url);
+      return;
+    }
+    this.cache.clear();
+    this.requests.clear();
   }
 }
 
-// ============================================================================
-// Singleton Export
-// ============================================================================
-
+export { ComfyUINodeDefinitions };
 export const nodeDefinitions = new ComfyUINodeDefinitions();
