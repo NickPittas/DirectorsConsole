@@ -2243,6 +2243,23 @@ function App() {
   const [enhanceWarnings, setEnhanceWarnings] = useState<string[]>([]);
   const [enhancementProfiles, setEnhancementProfiles] = useState<PromptEnhancementProfile[]>([]);
   const [enhancementDialect, setEnhancementDialect] = useState('');
+  const enhancementRevisionRef = useRef(0);
+  const userPromptRef = useRef(userPrompt);
+  const projectTypeRef = useRef(projectType);
+  const enhancementDialectRef = useRef(enhancementDialect);
+  const enhancementConfigRef = useRef<unknown>(liveActionConfig);
+  userPromptRef.current = userPrompt;
+  projectTypeRef.current = projectType;
+  enhancementDialectRef.current = enhancementDialect;
+  enhancementConfigRef.current = projectType === 'live_action' ? liveActionConfig : animationConfig;
+
+  useEffect(() => {
+    enhancementRevisionRef.current += 1;
+  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect]);
+
+  useEffect(() => () => {
+    enhancementRevisionRef.current += 1;
+  }, []);
   
   // Target AI models (fetched from API)
   const [availableTargetModels, setAvailableTargetModels] = useState<Array<{id: string, name: string, category: string}>>([]);
@@ -2625,6 +2642,8 @@ function App() {
     const requestedPrompt = userPrompt.trim();
     const requestedTarget = targetModel;
     const requestedProjectType = projectType;
+    const requestedConfig = JSON.stringify(enhancementConfigRef.current);
+    const requestRevision = enhancementRevisionRef.current;
     const selectedProfile = enhancementProfiles.find(profile => profile.target_model === targetModel);
     const requestedDialect = selectedProfile?.dialects.some(item => item.id === enhancementDialect)
       ? enhancementDialect
@@ -2667,16 +2686,32 @@ function App() {
       }
 
       if (result.success) {
-        // Do not apply a late response after the user changed the request.
-        if (userPrompt.trim() !== requestedPrompt || targetModel !== requestedTarget || projectType !== requestedProjectType || enhancementDialect !== requestedDialect) {
+        // Read current refs after the await. The callback closure may describe
+        // the request that was submitted, not the request still visible in the UI.
+        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
+          && userPromptRef.current.trim() === requestedPrompt
+          && targetModelRef.current === requestedTarget
+          && projectTypeRef.current === requestedProjectType
+          && enhancementDialectRef.current === requestedDialect
+          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
+        if (!requestStillCurrent) {
           setEnhanceError('Enhancement discarded because the request changed while it was running.');
           return;
         }
-        // Set the enhanced prompt separately from the simple generated prompt
+        // Set the enhanced prompt separately from the simple generated prompt.
         setEnhancedPrompt(result.enhanced_prompt);
         setEnhanceWarnings(result.warnings ?? []);
-
       } else {
+        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
+          && userPromptRef.current.trim() === requestedPrompt
+          && targetModelRef.current === requestedTarget
+          && projectTypeRef.current === requestedProjectType
+          && enhancementDialectRef.current === requestedDialect
+          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
+        if (!requestStillCurrent) {
+          setEnhanceError('Enhancement discarded because the request changed while it was running.');
+          return;
+        }
         setEnhanceError(result.error || 'Enhancement failed');
       }
     } catch (error) {

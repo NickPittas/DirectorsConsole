@@ -25,6 +25,8 @@ export interface EnhancementPreferences {
   taskMode: 'auto' | 'manual';
   task?: EnhancementTask;
   referenceOrderConfirmed: boolean;
+  /** Local-only snapshot used to require reconfirmation after reload or rewiring. */
+  mappingFingerprint?: string;
   assets?: Record<string, {
     include?: boolean;
     role?: EnhancementAssetRole;
@@ -53,6 +55,9 @@ export interface EnhancementAssetCandidate {
   valueFingerprint: string;
   ambiguous: boolean;
   include: boolean;
+  sourceNodeId?: string;
+  sourceInputName?: string;
+  connectionTopology?: string;
 }
 
 export interface EnhancementContext {
@@ -97,7 +102,15 @@ interface EnhancementWorkflow {
 
 const MEDIA_TYPES = new Set(['image', 'image_list', 'video', 'video_list', 'audio', 'audio_list', 'media']);
 const EXCLUDED_INPUT = /mask|latent|model|checkpoint|clip|vae|conditioning|output|filename|path|prefix|audio_output/i;
-const NATIVE_H3 = /minimax.?h3/i;
+const NATIVE_H3_REFERENCE_CLASSES = new Set([
+  'MiniMaxH3ImageToVideo',
+  'MiniMaxH3ReferenceToVideo',
+]);
+const NATIVE_H3_GENERATION_CLASSES = new Set([
+  'MiniMaxH3TextToVideo',
+  ...NATIVE_H3_REFERENCE_CLASSES,
+]);
+const KNOWN_OUTPUT_NODE = /^(?:SaveImage|PreviewImage|SaveAnimatedWEBP|VHS_VideoCombine|VideoCombine|SaveVideo|SaveAudio)$/i;
 const FIRST_FRAME = /first.?frame|start.?frame|start.?image|initial.?frame|key.?frame/i;
 const LAST_FRAME = /last.?frame|end.?frame|ending.?frame|final.?frame/i;
 const VIDEO_INPUT = /video|movie/i;
@@ -139,7 +152,7 @@ function effectiveValue(
 
 function isMediaInput(node: WorkflowNode, inputName: string, config?: WorkflowConfig): boolean {
   const classType = node.class_type || '';
-  if (EXCLUDED_INPUT.test(inputName) || EXCLUDED_INPUT.test(classType) && !NATIVE_H3.test(classType)) return false;
+  if (EXCLUDED_INPUT.test(inputName) || EXCLUDED_INPUT.test(classType) && !NATIVE_H3_REFERENCE_CLASSES.has(classType)) return false;
   if (config?.type && MEDIA_TYPES.has(config.type)) return true;
   if (/loadimage|loadvideo|videoloader|audio.*loader|load.*audio/i.test(classType)) return true;
   return IMAGE_INPUT.test(inputName) || VIDEO_INPUT.test(inputName) || AUDIO_INPUT.test(inputName);
@@ -186,9 +199,76 @@ function isLoaderNode(node: WorkflowNode): boolean {
 }
 
 function isVerifiedNativeReference(node: WorkflowNode, inputName: string): boolean {
-  return NATIVE_H3.test(node.class_type || '') &&
+  return NATIVE_H3_REFERENCE_CLASSES.has(node.class_type || '') &&
     (IMAGE_INPUT.test(inputName) || VIDEO_INPUT.test(inputName) || AUDIO_INPUT.test(inputName)) &&
     !/prompt|text|negative|positive/i.test(inputName);
+}
+
+function isKnownGenerationOrOutput(node: WorkflowNode): boolean {
+  const classType = node.class_type || '';
+  return NATIVE_H3_GENERATION_CLASSES.has(classType) || KNOWN_OUTPUT_NODE.test(classType);
+}
+
+type ResolvedMediaSource = {
+  nodeId: string;
+  inputName: string;
+  value: unknown;
+  path: string[];
+};
+
+function upstreamNodes(nodes: Record<string, WorkflowNode>): Set<string> {
+  const upstream = new Map<string, Set<string>>();
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    for (const value of Object.values(node.inputs || {})) {
+      if (!isLink(value)) continue;
+      const sources = upstream.get(nodeId) || new Set<string>();
+      sources.add(value[0]);
+      upstream.set(nodeId, sources);
+    }
+  }
+  const reachable = new Set<string>();
+  const pending = Object.entries(nodes)
+    .filter(([, node]) => isKnownGenerationOrOutput(node))
+    .map(([nodeId]) => nodeId);
+  while (pending.length) {
+    const nodeId = pending.pop()!;
+    if (reachable.has(nodeId)) continue;
+    reachable.add(nodeId);
+    for (const source of upstream.get(nodeId) || []) pending.push(source);
+  }
+  return reachable;
+}
+
+function resolveMediaSource(
+  nodes: Record<string, WorkflowNode>,
+  configs: WorkflowConfig[],
+  values: Record<string, unknown>,
+  nodeId: string,
+  inputName: string,
+  seen = new Set<string>(),
+): ResolvedMediaSource | undefined {
+  const key = `${nodeId}:${inputName}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  const node = nodes[nodeId];
+  if (!node) return undefined;
+  const inputValue = node.inputs?.[inputName];
+  if (isLink(inputValue)) {
+    const sourceNode = nodes[inputValue[0]];
+    if (!sourceNode) return undefined;
+    for (const sourceInputName of Object.keys(sourceNode.inputs || {})) {
+      if (!isMediaInput(sourceNode, sourceInputName, bindingFor(configs, inputValue[0], sourceInputName))) continue;
+      const resolved = resolveMediaSource(nodes, configs, values, inputValue[0], sourceInputName, seen);
+      if (resolved) return {
+        ...resolved,
+        path: [`${inputValue[0]}:${sourceInputName}->${nodeId}:${inputName}`, ...resolved.path],
+      };
+    }
+    return undefined;
+  }
+  if (!isMediaInput(node, inputName, bindingFor(configs, nodeId, inputName))) return undefined;
+  const value = effectiveValue(configs, values, nodeId, inputName, inputValue);
+  return populated(value) ? { nodeId, inputName, value, path: [`${nodeId}:${inputName}`] } : undefined;
 }
 
 function candidatesForValue(
@@ -222,8 +302,11 @@ function candidatesForValue(
       ordinal: ordinalByKind[kind],
       label: labelFor(node, inputName, config),
       valueFingerprint: fingerprint(source),
-      ambiguous: !verified && role === 'reference_image',
+      ambiguous: !verified,
       include: true,
+      sourceNodeId: nodeId,
+      sourceInputName: inputName,
+      connectionTopology: `${nodeId}:${inputName}`,
     });
   });
   return candidates;
@@ -239,69 +322,63 @@ export function discoverEnhancementAssets(
 ): EnhancementAssetCandidate[] {
   const configs = workflow.config || [];
   const nodes = workflow.workflow || {};
+  const reachable = upstreamNodes(nodes);
+  // Without a known generation/output anchor, graph connectivity is not
+  // trustworthy enough to auto-submit media metadata.
+  if (reachable.size === 0) return [];
   const candidates: EnhancementAssetCandidate[] = [];
   const ordinalByKind: Record<EnhancementAssetKind, number> = { image: 0, video: 0, audio: 0 };
   const consumedSourceBindings = new Set<string>();
-  const consumedNodeIds = new Set<string>();
-  for (const node of Object.values(nodes)) {
-    if (!node?.inputs) continue;
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (!node || node.mode === 4 || !node.inputs || !reachable.has(nodeId)) continue;
     for (const [inputName, inputValue] of Object.entries(node.inputs)) {
       if (!isLink(inputValue)) continue;
-      consumedNodeIds.add(inputValue[0]);
-      if (!isVerifiedNativeReference(node, inputName)) continue;
-      const sourceNode = nodes[inputValue[0]];
-      if (!sourceNode?.inputs) continue;
-      const sourceInputName = Object.keys(sourceNode.inputs).find(name =>
-        isMediaInput(sourceNode, name, bindingFor(configs, inputValue[0], name))
-      );
-      if (sourceInputName) consumedSourceBindings.add(`${inputValue[0]}:${sourceInputName}`);
+      const source = resolveMediaSource(nodes, configs, values, nodeId, inputName);
+      if (source) consumedSourceBindings.add(`${source.nodeId}:${source.inputName}`);
     }
   }
 
   for (const [nodeId, node] of Object.entries(nodes)) {
-    if (!node || node.mode === 4 || !node.inputs) continue;
-    if (isLoaderNode(node) && !consumedNodeIds.has(nodeId)) continue;
+    if (!node || node.mode === 4 || !node.inputs || !reachable.has(nodeId)) continue;
     for (const [inputName, inputValue] of Object.entries(node.inputs)) {
-      if (consumedSourceBindings.has(`${nodeId}:${inputName}`) && !isLink(inputValue)) continue;
       if (isLink(inputValue)) {
-        // A native H3 destination establishes the role; a generic graph edge
-        // does not establish upload order or first-frame semantics.
-        if (!isVerifiedNativeReference(node, inputName)) continue;
-        const sourceNode = nodes[inputValue[0]];
-        if (!sourceNode || sourceNode.mode === 4 || !sourceNode.inputs) continue;
-        const sourceInputName = Object.keys(sourceNode.inputs).find(name =>
-          isMediaInput(sourceNode, name, bindingFor(configs, inputValue[0], name)) &&
-          populated(effectiveValue(configs, values, inputValue[0], name, sourceNode.inputs?.[name]))
-        );
-        if (!sourceInputName) continue;
-        const sourceValue = effectiveValue(configs, values, inputValue[0], sourceInputName, sourceNode.inputs[sourceInputName]);
-        const sourceKind = kindFor(sourceNode, sourceInputName, bindingFor(configs, inputValue[0], sourceInputName)) || kindFor(node, inputName);
+        const source = resolveMediaSource(nodes, configs, values, nodeId, inputName);
+        if (!source) continue;
+        consumedSourceBindings.add(`${source.nodeId}:${source.inputName}`);
+        const sourceKind = kindFor(
+          nodes[source.nodeId], source.inputName,
+          bindingFor(configs, source.nodeId, source.inputName),
+        ) || kindFor(node, inputName, bindingFor(configs, nodeId, inputName));
         if (!sourceKind) continue;
         ordinalByKind[sourceKind] += 1;
+        const verified = isVerifiedNativeReference(node, inputName);
         candidates.push({
           binding_id: `media:${nodeId}:${inputName}`,
           kind: sourceKind,
           role: roleFor(inputName, sourceKind),
           ordinal: ordinalByKind[sourceKind],
           label: labelFor(node, inputName, bindingFor(configs, nodeId, inputName)),
-          valueFingerprint: fingerprint(sourceValue),
-          ambiguous: false,
+          valueFingerprint: fingerprint(source.value),
+          ambiguous: !verified,
           include: true,
+          sourceNodeId: source.nodeId,
+          sourceInputName: source.inputName,
+          connectionTopology: source.path.join('>'),
         });
         continue;
       }
+      if (consumedSourceBindings.has(`${nodeId}:${inputName}`)) continue;
+      if (isLoaderNode(node)) continue;
       candidates.push(...candidatesForValue(node, nodeId, inputName, inputValue, configs, values, ordinalByKind));
     }
   }
 
-  // A configured media binding may be present in the schema but absent as a
-  // literal workflow input (hidden custom-node input). It is still eligible
-  // when the effective panel value populates it.
+  // Hidden schema inputs belong to the same reachable graph rule. A
+  // disconnected loader/custom node is never an automatic reference.
   for (const config of configs) {
     if (!config.type || !MEDIA_TYPES.has(config.type) || !Object.prototype.hasOwnProperty.call(values, config.name)) continue;
     const node = nodes[config.node_id];
-    if (!node || node.mode === 4) continue;
-    if (isLoaderNode(node) && !consumedNodeIds.has(config.node_id)) continue;
+    if (!node || node.mode === 4 || !reachable.has(config.node_id) || isLoaderNode(node)) continue;
     if (node.inputs && config.input_name in node.inputs) continue;
     candidates.push(...candidatesForValue(node, config.node_id, config.input_name, values[config.name], configs, values, ordinalByKind));
   }
@@ -339,10 +416,22 @@ export function resolveEnhancementTask(
   mode: 'auto' | 'manual',
   requested: EnhancementTask | undefined,
   assets: EnhancementAssetCandidate[],
-): EnhancementTask {
+): EnhancementTask | undefined {
   if (mode === 'manual' && requested) return requested;
-  if (assets.some(asset => asset.role === 'first_frame' || asset.role === 'last_frame')) return 'i2v';
-  return assets.length > 0 ? 'ref2v' : 't2v';
+  if (assets.length === 0) return 't2v';
+  const hasFrame = assets.some(asset => asset.role === 'first_frame' || asset.role === 'last_frame');
+  const hasReference = assets.some(asset => asset.role === 'reference_image' || asset.role === 'reference_video' || asset.role === 'reference_audio');
+  if (hasFrame && hasReference) return undefined;
+  return hasFrame ? 'i2v' : 'ref2v';
+}
+
+export function effectiveEnhancementAssets(
+  assets: EnhancementAssetCandidate[],
+  preferences: EnhancementPreferences,
+): EnhancementAssetCandidate[] {
+  return assets
+    .map(candidate => cloneAsset(candidate, preferences.assets?.[candidate.binding_id]))
+    .filter(candidate => candidate.include);
 }
 
 function cloneAsset(candidate: EnhancementAssetCandidate, override?: EnhancementAssetOverride): EnhancementAssetCandidate {
@@ -375,6 +464,9 @@ export function enhancementMappingFingerprint(
       description: preferences.assets?.[asset.binding_id]?.description || '',
       referenceName: preferences.assets?.[asset.binding_id]?.referenceName || '',
       fingerprint: asset.valueFingerprint,
+      sourceNodeId: asset.sourceNodeId || '',
+      sourceInputName: asset.sourceInputName || '',
+      connectionTopology: asset.connectionTopology || '',
     })),
   });
 }
@@ -390,13 +482,15 @@ export function buildEnhancementContext(
   const mappingFingerprint = enhancementMappingFingerprint(candidates, preferences);
   const dialect = profile.dialects.find(item => item.id === preferences.referenceDialect);
   if (!dialect) return { error: 'Select a dialect supported by the selected target.', mappingFingerprint };
-  const task = resolveEnhancementTask(preferences.taskMode, preferences.task, candidates);
+  const assets = effectiveEnhancementAssets(candidates, preferences);
+  const task = resolveEnhancementTask(preferences.taskMode, preferences.task, assets);
+  if (!task) return { error: 'Media roles mix keyframes and references; choose I2V or R2V explicitly.', mappingFingerprint };
   if (!profile.tasks.includes(task) || !dialect.tasks.includes(task)) {
     return { error: `${profile.label} does not support ${task.toUpperCase()} with this dialect.`, mappingFingerprint };
   }
-
-  const assets = candidates.map(candidate => cloneAsset(candidate, preferences.assets?.[candidate.binding_id]))
-    .filter(candidate => candidate.include);
+  if (preferences.referenceOrderConfirmed && preferences.mappingFingerprint !== mappingFingerprint) {
+    return { error: 'The media mapping changed or was loaded without a local confirmation snapshot; confirm it again.', mappingFingerprint };
+  }
   if (task === 't2v' && assets.length > 0) {
     return { error: 'T2V does not use media references; exclude irrelevant detected media first.', mappingFingerprint };
   }

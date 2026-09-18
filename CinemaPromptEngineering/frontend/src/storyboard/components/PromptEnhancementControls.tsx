@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { resolveEnhancementTask } from '../services/prompt-enhancement';
+import { effectiveEnhancementAssets, resolveEnhancementTask } from '../services/prompt-enhancement';
 import type {
   EnhancementAssetCandidate,
   EnhancementPreferences,
@@ -13,6 +13,9 @@ interface PromptEnhancementControlsProps {
   preferences: EnhancementPreferences;
   onChange: (preferences: EnhancementPreferences) => void;
   durationSeconds?: number;
+  profilesLoading?: boolean;
+  profilesError?: string | null;
+  onRetryProfiles?: () => void;
   disabled?: boolean;
 }
 
@@ -28,12 +31,16 @@ export function PromptEnhancementControls({
   preferences,
   onChange,
   durationSeconds,
+  profilesLoading = false,
+  profilesError,
+  onRetryProfiles,
   disabled = false,
 }: PromptEnhancementControlsProps) {
   const profile = profiles.find(item => item.target_model === preferences.targetModel);
   const dialect = profile?.dialects.find(item => item.id === preferences.referenceDialect);
-  const resolvedTask = resolveEnhancementTask(preferences.taskMode, preferences.task, assets);
-  const frameAssets = assets.filter(asset => {
+  const effectiveAssets = effectiveEnhancementAssets(assets, preferences);
+  const resolvedTask = resolveEnhancementTask(preferences.taskMode, preferences.task, effectiveAssets);
+  const frameAssets = effectiveAssets.filter(asset => {
     const role = preferences.assets?.[asset.binding_id]?.role || asset.role;
     return role === 'first_frame' || role === 'last_frame';
   });
@@ -65,6 +72,10 @@ export function PromptEnhancementControls({
 
   return (
     <div className="prompt-enhancement-controls" aria-label="Prompt enhancement controls">
+      {profilesLoading && <small role="status">Loading verified video enhancement profiles…</small>}
+      {!profilesLoading && profilesError && (
+        <small role="alert">{profilesError} <button type="button" onClick={onRetryProfiles}>Retry</button></small>
+      )}
       <div className="prompt-enhancement-row">
         <label>
           Target
@@ -113,7 +124,7 @@ export function PromptEnhancementControls({
               });
             }}
           >
-            <option value="auto">Auto ({assets.length ? 'media detected' : 'T2V'})</option>
+            <option value="auto">Auto ({effectiveAssets.length ? 'media detected' : 'T2V'})</option>
             {availableTasks.map(task => <option key={task} value={task}>{taskLabels[task]}</option>)}
           </select>
         </label>
@@ -131,7 +142,10 @@ export function PromptEnhancementControls({
       {profile && (profile.target_model === 'ltx_2.3' || profile.target_model === 'ltx_2.5') && resolvedTask === 'i2v' && (
         <small role="status">{profile.label} requires a first frame; last-frame-only is unsupported.</small>
       )}
-      {resolvedTask === 'ref2v' && assets.length > 0 && (
+      {!resolvedTask && effectiveAssets.length > 0 && preferences.taskMode === 'auto' && (
+        <small role="alert">Mixed keyframe/reference roles need an explicit I2V or R2V task.</small>
+      )}
+      {resolvedTask === 'ref2v' && effectiveAssets.length > 0 && (
         <small role="status">R2V preserves original per-kind ordinals, including intentional gaps after exclusions.</small>
       )}
       {assets.length > 0 && (
@@ -149,7 +163,7 @@ export function PromptEnhancementControls({
                     disabled={disabled}
                     onChange={event => updateAsset(asset.binding_id, { include: event.target.checked })}
                   />
-                  <span>{asset.label || asset.binding_id}</span>
+                  <span>{asset.label || asset.binding_id}{asset.ambiguous ? ' (ambiguous — confirm manually)' : ''}</span>
                 </label>
                 <select
                   aria-label={`Role for ${asset.label || asset.binding_id}`}

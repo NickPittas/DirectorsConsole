@@ -64,11 +64,12 @@ import {
   type StoryboardDraftState,
 } from './services/session-recovery';
 import { useCinemaStore } from '../store';
-import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
+import { getSelectedLlmSettings, getConfiguredProviders, loadTargetModel, updateSavedOAuthToken } from '../components/Settings';
 import { api } from '../api/client';
 import {
   buildEnhancementContext,
   discoverEnhancementAssets,
+  enhancementMappingFingerprint,
   getEffectiveDuration,
   type EnhancementPreferences,
   type EnhancementProfile,
@@ -447,6 +448,8 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [globalPromptOverride, setGlobalPromptOverride] = useState<string>(initialSession?.globalPromptOverride || '');
   const [useGlobalPrompt, setUseGlobalPrompt] = useState(initialSession?.useGlobalPrompt ?? false);
   const [enhancementProfiles, setEnhancementProfiles] = useState<EnhancementProfile[]>([]);
+  const [enhancementProfilesLoading, setEnhancementProfilesLoading] = useState(true);
+  const [enhancementProfilesError, setEnhancementProfilesError] = useState<string | null>(null);
   const [enhancementPreferences, setEnhancementPreferences] = useState<EnhancementPreferences>(EMPTY_ENHANCEMENT_PREFERENCES);
   
   // ---------------------------------------------------------------------------
@@ -598,12 +601,19 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const selectedPanelIdRef = useRef<number | null>(selectedPanelId);
   const panelsRef = useRef(panels);
   const enhancementPreferencesRef = useRef<EnhancementPreferences>(enhancementPreferences);
+  const enhancementRequestRevisionRef = useRef(0);
+  const enhancementProjectTypeRef = useRef<'live_action'>('live_action');
+  const enhancementConfigRef = useRef<Record<string, unknown>>({});
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
   panelsRef.current = panels;
   enhancementPreferencesRef.current = enhancementPreferences;
+
+  useEffect(() => () => {
+    enhancementRequestRevisionRef.current += 1;
+  }, []);
 
   // Ref for handleParameterChange — allows early effects to call it before it's declared
   const handleParameterChangeRef = useRef<(name: string, value: any) => void>(() => {});
@@ -1216,15 +1226,29 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [isResizingRight, setIsResizingRight] = useState(false);
 
   // Prompt target/dialect metadata is backend-owned; do not duplicate a profile table here.
-  useEffect(() => {
-    let active = true;
-    api.getPromptEnhancementProfiles()
-      .then(result => {
-        if (active) setEnhancementProfiles(result.profiles || []);
-      })
-      .catch(error => console.warn('[PromptEnhancement] profiles unavailable:', error));
-    return () => { active = false; };
+  const loadEnhancementProfiles = useCallback(async () => {
+    setEnhancementProfilesLoading(true);
+    setEnhancementProfilesError(null);
+    try {
+      const result = await api.getPromptEnhancementProfiles();
+      setEnhancementProfiles(result.profiles || []);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Prompt profiles are unavailable.';
+      setEnhancementProfilesError(message);
+      console.warn('[PromptEnhancement] profiles unavailable:', error);
+    } finally {
+      setEnhancementProfilesLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadEnhancementProfiles().catch(() => undefined);
+    return () => { enhancementRequestRevisionRef.current += 1; };
+  }, [loadEnhancementProfiles]);
+
+  useEffect(() => {
+    enhancementRequestRevisionRef.current += 1;
+  }, [selectedPanelId, selectedWorkflowId, enhancementProfiles]);
 
   // Keep the selected panel's enhancement preferences alongside its effective
   // values. Non-selected panels never borrow the live sidebar state.
@@ -4014,6 +4038,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // Functions - Parameter Updates
   // ---------------------------------------------------------------------------
   const handleParameterChange = useCallback((name: string, value: any) => {
+    enhancementRequestRevisionRef.current += 1;
     console.log('[handleParameterChange] Called with:', name, '=', typeof value === 'string' ? value.substring(0, 50) : value);
     
     // CRITICAL: Update the ref BEFORE calling setParameterValues
@@ -4028,10 +4053,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       
     const activeWorkflow = workflowsRef.current.find(item => item.id === selectedWorkflowIdRef.current);
     const changedMedia = activeWorkflow?.config.some(config =>
-      config.name === name && ['image_input', 'image', 'image_list', 'video', 'video_list', 'media'].includes(config.type || '')
+      config.name === name && ['image_input', 'image', 'image_list', 'video', 'video_list', 'audio', 'audio_list', 'media'].includes(config.type || '')
     ) || false;
     if (changedMedia) {
-      const invalidated = { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false };
+      const invalidated = { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false, mappingFingerprint: undefined };
       enhancementPreferencesRef.current = invalidated;
       setEnhancementPreferences(invalidated);
     }
@@ -4044,7 +4069,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             ...p,
             parameterValues: newValues,
             ...(changedMedia ? {
-              enhancementPreferences: { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false },
+              enhancementPreferences: { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false, mappingFingerprint: undefined },
             } : {}),
           }
           : p
@@ -4054,12 +4079,21 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   handleParameterChangeRef.current = handleParameterChange;
 
   const handleEnhancementPreferencesChange = useCallback((preferences: EnhancementPreferences) => {
-    enhancementPreferencesRef.current = preferences;
-    setEnhancementPreferences(preferences);
+    enhancementRequestRevisionRef.current += 1;
     const panelId = selectedPanelIdRef.current;
+    const panel = panelId === null ? undefined : panelsRef.current.find(item => item.id === panelId);
+    const workflowId = selectedWorkflowIdRef.current || panel?.workflowId;
+    const workflow = workflowsRef.current.find(item => item.id === workflowId);
+    const values = parameterValuesRef.current;
+    const snapshot = preferences.referenceOrderConfirmed && workflow
+      ? enhancementMappingFingerprint(discoverEnhancementAssets(workflow, values), preferences)
+      : undefined;
+    const nextPreferences = { ...preferences, mappingFingerprint: snapshot };
+    enhancementPreferencesRef.current = nextPreferences;
+    setEnhancementPreferences(nextPreferences);
     if (panelId !== null) {
       setPanels(current => current.map(panel => panel.id === panelId
-        ? { ...panel, enhancementPreferences: preferences }
+        ? { ...panel, enhancementPreferences: nextPreferences }
         : panel));
     }
   }, []);
@@ -4080,22 +4114,35 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const values = parameterValuesRef.current;
     const preferences = panel?.enhancementPreferences || enhancementPreferencesRef.current;
     const profile = enhancementProfiles.find(item => item.target_model === preferences.targetModel);
+    const isVideoWorkflow = workflow?.category === 'video-generation'
+      || workflow?.subCategory === 'img2vid' || workflow?.subCategory === 'txt2vid' || workflow?.subCategory === 'fflf';
 
-    if (!workflow || !profile) {
-      const message = profile ? 'Select a workflow before enhancing.' : 'Select a verified video target and dialect before enhancing.';
+    if (!workflow) {
+      showError('Select a workflow before enhancing.');
+      throw new Error('Select a workflow before enhancing.');
+    }
+    if (!profile && isVideoWorkflow) {
+      const message = enhancementProfilesLoading
+        ? 'Video enhancement profiles are still loading. Retry after they finish loading.'
+        : `Video enhancement profiles are unavailable${enhancementProfilesError ? `: ${enhancementProfilesError}` : '.'} Retry before enhancing.`;
       showError(message);
       throw new Error(message);
     }
 
-    const built = buildEnhancementContext(workflow, values, profile, preferences);
-    if (!built.context) {
-      showError(built.error || 'The media mapping is not ready.');
-      throw new Error(built.error || 'The media mapping is not ready.');
+    const built = profile ? buildEnhancementContext(workflow, values, profile, preferences) : undefined;
+    if (profile && !built?.context) {
+      showError(built?.error || 'The media mapping is not ready.');
+      throw new Error(built?.error || 'The media mapping is not ready.');
     }
     const requestedPrompt = prompt.trim();
-    const mappingAtSubmit = built.mappingFingerprint;
+    const mappingAtSubmit = built?.mappingFingerprint;
     const workflowAtSubmit = workflow.id;
+    const workflowSnapshotAtSubmit = JSON.stringify(workflow);
     const panelAtSubmit = panelId;
+    const targetAtSubmit = profile?.target_model || loadTargetModel() || 'generic';
+    const projectTypeAtSubmit = enhancementProjectTypeRef.current;
+    const configAtSubmit = JSON.stringify(enhancementConfigRef.current);
+    const requestRevision = enhancementRequestRevisionRef.current;
     const submittedOAuthToken = getConfiguredProviders().find(item => item.providerId === getSelectedLlmSettings()?.provider)?.credentials.oauthToken;
     const llmSettings = getSelectedLlmSettings();
     if (!llmSettings) throw new Error('No LLM provider configured. Please configure in Settings.');
@@ -4107,30 +4154,42 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         userPrompt: requestedPrompt,
         llmProvider: llmSettings.provider,
         llmModel: llmSettings.model,
-        targetModel: profile.target_model,
-        projectType: 'live_action',
-        config: {} as any,
-        enhancementContext: {
-          task: built.context.task,
-          referenceDialect: built.context.reference_dialect,
-          durationSeconds: built.context.duration_seconds,
-          assets: built.context.assets.map(asset => ({
-            bindingId: asset.binding_id,
-            kind: asset.kind,
-            role: asset.role,
-            ordinal: asset.ordinal,
-            label: asset.label,
-            description: asset.description,
-            referenceName: asset.reference_name,
-          })),
-          referenceOrderConfirmed: built.context.reference_order_confirmed,
-        },
+        targetModel: targetAtSubmit,
+        projectType: projectTypeAtSubmit,
+        config: enhancementConfigRef.current as any,
+        ...(built?.context ? {
+          enhancementContext: {
+            task: built.context.task,
+            referenceDialect: built.context.reference_dialect,
+            durationSeconds: built.context.duration_seconds,
+            assets: built.context.assets.map(asset => ({
+              bindingId: asset.binding_id,
+              kind: asset.kind,
+              role: asset.role,
+              ordinal: asset.ordinal,
+              label: asset.label,
+              description: asset.description,
+              referenceName: asset.reference_name,
+            })),
+            referenceOrderConfirmed: built.context.reference_order_confirmed,
+          },
+        } : {}),
         credentials: {
           apiKey: provider.credentials.apiKey,
           endpoint: provider.credentials.endpoint,
           oauthToken: provider.credentials.oauthToken,
         },
       });
+
+      // OAuth refresh is independent of prompt freshness: a valid guarded token
+      // must survive failed or stale content responses, but never cross accounts.
+      const currentProvider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
+      if (
+        result.oauth_token &&
+        submittedOAuthToken &&
+        getSelectedLlmSettings()?.provider === llmSettings.provider &&
+        currentProvider?.credentials.oauthToken === submittedOAuthToken
+      ) updateSavedOAuthToken(llmSettings.provider, result.oauth_token);
 
       const currentPanel = panelAtSubmit === null ? undefined : panelsRef.current.find(item => item.id === panelAtSubmit);
       const currentWorkflowId = panelAtSubmit === null
@@ -4141,33 +4200,29 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       const currentValues = panelAtSubmit === null || selectedPanelIdRef.current === panelAtSubmit
         ? parameterValuesRef.current
         : (currentPanel?.parameterValues || {});
-      const currentProfile = enhancementProfiles.find(item => item.target_model === preferences.targetModel);
+      const currentPreferences = currentPanel?.enhancementPreferences || enhancementPreferencesRef.current;
+      const currentProfile = enhancementProfiles.find(item => item.target_model === currentPreferences.targetModel);
       const currentWorkflow = workflowsRef.current.find(item => item.id === currentWorkflowId) || workflow;
       const currentMapping = currentProfile
-        ? buildEnhancementContext(currentWorkflow, currentValues, currentProfile, currentPanel?.enhancementPreferences || enhancementPreferencesRef.current)
+        ? buildEnhancementContext(currentWorkflow, currentValues, currentProfile, currentPreferences)
         : undefined;
       const promptStillCurrent = !parameterName || String(currentValues[parameterName] ?? '').trim() === requestedPrompt;
-      const currentTargetStillCurrent = enhancementPreferencesRef.current.targetModel === preferences.targetModel
-        && enhancementPreferencesRef.current.referenceDialect === preferences.referenceDialect;
-      if (
-        !result.success ||
-        panelAtSubmit !== selectedPanelIdRef.current ||
-        currentWorkflowId !== workflowAtSubmit ||
-        !promptStillCurrent ||
-        !currentTargetStillCurrent ||
-        currentMapping?.mappingFingerprint !== mappingAtSubmit
-      ) {
+      const contentStillCurrent = requestRevision === enhancementRequestRevisionRef.current
+        && panelAtSubmit === selectedPanelIdRef.current
+        && currentWorkflowId === workflowAtSubmit
+        && JSON.stringify(currentWorkflow) === workflowSnapshotAtSubmit
+        && currentPreferences.targetModel === preferences.targetModel
+        && currentPreferences.referenceDialect === preferences.referenceDialect
+        && projectTypeAtSubmit === enhancementProjectTypeRef.current
+        && configAtSubmit === JSON.stringify(enhancementConfigRef.current)
+        && promptStillCurrent
+        && (profile
+          ? currentMapping?.mappingFingerprint === mappingAtSubmit
+          : targetAtSubmit === (loadTargetModel() || 'generic'));
+      if (!result.success || !contentStillCurrent) {
         if (result.success) showWarning('Enhancement discarded because the prompt, panel, workflow, target, or media mapping changed.');
         throw new Error(result.success ? 'Enhancement response discarded as stale.' : (result.error || 'Enhancement failed'));
       }
-
-      const currentProvider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
-      if (
-        result.oauth_token &&
-        submittedOAuthToken &&
-        getSelectedLlmSettings()?.provider === llmSettings.provider &&
-        currentProvider?.credentials.oauthToken === submittedOAuthToken
-      ) updateSavedOAuthToken(llmSettings.provider, result.oauth_token);
 
       showInfo('Prompt enhanced successfully');
       return result.enhanced_prompt;
@@ -4177,7 +4232,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       if (/discarded as stale/i.test(errorMsg)) return null;
       throw error;
     }
-  }, [enhancementProfiles, showInfo, showWarning, showError]);
+  }, [enhancementProfiles, enhancementProfilesLoading, enhancementProfilesError, showInfo, showWarning, showError]);
   
   // ---------------------------------------------------------------------------
   // Render Helpers
@@ -4759,6 +4814,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             notes: savedPanel?.notes ?? '',
             workflowId: savedPanel?.workflowId,
             parameterValues: savedPanel?.parameterValues,
+            enhancementPreferences: savedPanel?.enhancementPreferences,
             nodeId: savedPanel?.nodeId,
             imageHistory,
             historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
@@ -4793,6 +4849,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
               notes: savedPanel.notes ?? '',
               workflowId: savedPanel.workflowId,
               parameterValues: savedPanel.parameterValues,
+              enhancementPreferences: savedPanel.enhancementPreferences,
               nodeId: savedPanel.nodeId,
               imageHistory: [],
               historyIndex: -1,
@@ -5461,6 +5518,9 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 preferences={selectedEnhancementPreferences}
                 durationSeconds={enhancementDuration}
                 onChange={handleEnhancementPreferencesChange}
+                profilesLoading={enhancementProfilesLoading}
+                profilesError={enhancementProfilesError}
+                onRetryProfiles={loadEnhancementProfiles}
                 disabled={false}
               />
               <ParameterPanel
