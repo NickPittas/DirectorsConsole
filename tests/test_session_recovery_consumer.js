@@ -26,6 +26,34 @@ function compile(name) {
   return filename;
 }
 
+function loadFrontendModule(relativePath) {
+  const filename = path.join(frontend, relativePath);
+  const output = typescript.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    fileName: filename,
+    compilerOptions: { target: typescript.ScriptTarget.ES2020, module: typescript.ModuleKind.CommonJS },
+  }).outputText;
+  const module = { exports: {} };
+  vm.runInNewContext(output, {
+    module,
+    exports: module.exports,
+    require: request => request === 'react'
+      ? { useState: initial => [initial, () => {}], useCallback: callback => callback }
+      : frontendRequire(request),
+    console,
+    localStorage: global.localStorage,
+    window: global.window,
+    Blob,
+    Date,
+    Map,
+    Set,
+    ArrayBuffer,
+    WeakMap,
+    URL,
+    fetch: (...args) => global.fetch(...args),
+  }, { filename });
+  return module.exports;
+}
+
 function loadStore(recovery) {
   const source = fs.readFileSync(path.join(frontend, 'src/store/index.ts'), 'utf8');
   const output = typescript.transpileModule(source, {
@@ -51,6 +79,100 @@ function deleteDatabase(name) {
     request.onblocked = () => reject(new Error('database deletion blocked'));
     request.onsuccess = () => resolve();
   });
+}
+
+function response(status, body) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+async function testProjectSaveSnapshot() {
+  const { ProjectManager } = loadFrontendModule('src/storyboard/services/project-manager.ts');
+  const manager = new ProjectManager();
+  manager.restoreFromSession({
+    name: 'Snapshot', path: '/tmp/snapshot', orchestratorUrl: 'http://orchestrator:9820',
+    created: new Date('2026-01-01'), lastModified: new Date('2026-01-01'),
+  });
+
+  const frame = new Blob(['generated-frame'], { type: 'image/png' });
+  const panel = {
+    id: 1,
+    name: 'Hero',
+    x: 10,
+    y: 20,
+    width: 300,
+    height: 300,
+    imageHistory: [{
+      id: 'generated-1',
+      url: 'blob:generated-preview',
+      metadata: {
+        timestamp: new Date('2026-02-01'),
+        workflowId: 'workflow-a',
+        workflowName: 'Generated',
+        seed: 42,
+        promptSummary: 'hero',
+        parameters: { nested: { keep: true } },
+        workflow: { node: { class_type: 'KSampler' } },
+        sourceUrl: 'http://managed-node/view',
+        savedPath: '/tmp/snapshot/Hero/v001.png',
+        version: 1,
+        rating: 5,
+      },
+    }],
+    parameterValues: {
+      reference: 'data:image/png;base64,AA==',
+      nested: { preview: frame, generated: [{ seed: 42 }] },
+    },
+  };
+  const globalParameters = { mask: 'data:video/mp4;base64,BB==', nested: { frame } };
+  const originalPanels = structuredCloneLike(panel);
+  const originalGlobal = structuredCloneLike(globalParameters);
+  const requests = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    requests.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
+    if (url.includes('/api/save-base64-image')) {
+      const body = JSON.parse(init.body);
+      return response(200, { success: true, saved_path: `${body.folder_path}/stored-${body.filename}` });
+    }
+    if (url.includes('/api/save-project')) return response(500, { success: false, message: 'save failed' });
+    return response(200, { success: true });
+  };
+  try {
+    const failed = await manager.saveProjectState([panel], undefined, globalParameters);
+    assert.equal(failed.success, false);
+    assert.deepEqual(panel, originalPanels, 'failed Save As must not mutate the live panel or generated history');
+    assert.deepEqual(globalParameters, originalGlobal, 'failed Save As must not mutate live global media');
+    assert.equal(requests.filter(request => request.url.includes('/api/save-base64-image')).length, 2);
+
+    global.fetch = async (url, init) => {
+      requests.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
+      if (url.includes('/api/save-base64-image')) {
+        const body = JSON.parse(init.body);
+        return response(200, { success: true, saved_path: `${body.folder_path}/stored-${body.filename}` });
+      }
+      if (url.includes('/api/save-project')) return response(200, { success: true, saved_path: '/tmp/snapshot/Snapshot_project.json' });
+      return response(200, { success: true });
+    };
+    const saved = await manager.saveProjectState([panel], undefined, globalParameters);
+    assert.equal(saved.success, true);
+    assert.deepEqual(panel, originalPanels, 'successful save also keeps live data URLs and history untouched');
+    assert.deepEqual(globalParameters, originalGlobal);
+    const projectRequest = requests.find(request => request.url.includes('/api/save-project'));
+    assert.match(projectRequest.body.state.panels[0].parameterValues.reference, /^__fileref::/);
+    assert.match(projectRequest.body.state.parameter_values.mask, /^__fileref::/);
+    assert.equal(Object.prototype.toString.call(panel.parameterValues.nested.preview), '[object Blob]');
+    assert.equal(Object.prototype.toString.call(globalParameters.nested.frame), '[object Blob]');
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+function structuredCloneLike(value) {
+  if (value instanceof Blob) return value;
+  if (value instanceof Date) return new Date(value.getTime());
+  if (Array.isArray(value)) return value.map(structuredCloneLike);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, structuredCloneLike(item)]));
+  return value;
 }
 
 function makeData(project) {
@@ -153,6 +275,8 @@ async function main() {
     };
     await controller.flush();
     assert.equal(controller.getStatus().state, 'failed');
+    assert.equal(controller.getStatus().message, 'Autosave unavailable — save manually.');
+    assert.equal(controller.hasPendingChanges(), true, 'quota failure remains visibly dirty for retry/manual save');
     await assert.rejects(controller.transitionIdentity('project:B'));
   } finally {
     fakeIndexedDB.IDBObjectStore.prototype.put = originalPut;
@@ -177,6 +301,7 @@ async function main() {
   assert.equal(failed.success, false);
   assert.equal(global.localStorage.getItem('storyboard_recent_projects'), null);
 
+  await testProjectSaveSnapshot();
   console.log('session recovery production consumer checks passed');
 }
 
