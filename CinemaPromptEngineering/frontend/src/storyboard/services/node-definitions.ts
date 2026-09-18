@@ -51,35 +51,47 @@ export interface ObjectInfo {
 
 class ComfyUINodeDefinitions {
   private cache: ObjectInfo | null = null;
+  private cacheUrl: string | null = null;
   private cacheTimestamp: number = 0;
   private cacheTTL: number = 5 * 60 * 1000; // 5 minutes
   private fetchPromise: Promise<ObjectInfo> | null = null;
+  private fetchPromiseUrl: string | null = null;
   
   /**
    * Fetch object_info from ComfyUI
    */
   async fetchDefinitions(comfyUrl: string): Promise<ObjectInfo> {
+    const baseUrl = comfyUrl.replace(/\/ws$/, '').replace(/\/+$/, '');
     const now = Date.now();
     
-    // Return cached if still valid
-    if (this.cache && (now - this.cacheTimestamp) < this.cacheTTL) {
+    // A definition set belongs to its ComfyUI URL; never reuse another node's model list.
+    if (this.cache && this.cacheUrl === baseUrl && (now - this.cacheTimestamp) < this.cacheTTL) {
       return this.cache;
     }
     
-    // If already fetching, wait for that promise
-    if (this.fetchPromise) {
+    // Share only an in-flight request for this same URL.
+    if (this.fetchPromise && this.fetchPromiseUrl === baseUrl) {
       return this.fetchPromise;
     }
     
-    // Start new fetch
-    this.fetchPromise = this._doFetch(comfyUrl);
+    const request = this._doFetch(baseUrl);
+    this.fetchPromise = request;
+    this.fetchPromiseUrl = baseUrl;
     
     try {
-      this.cache = await this.fetchPromise;
-      this.cacheTimestamp = now;
-      return this.cache;
+      const definitions = await request;
+      // A late response from an older URL must not replace the current cache.
+      if (this.fetchPromise === request && this.fetchPromiseUrl === baseUrl) {
+        this.cache = definitions;
+        this.cacheUrl = baseUrl;
+        this.cacheTimestamp = Date.now();
+      }
+      return definitions;
     } finally {
-      this.fetchPromise = null;
+      if (this.fetchPromise === request) {
+        this.fetchPromise = null;
+        this.fetchPromiseUrl = null;
+      }
     }
   }
   
@@ -213,7 +225,10 @@ class ComfyUINodeDefinitions {
    */
   clearCache(): void {
     this.cache = null;
+    this.cacheUrl = null;
     this.cacheTimestamp = 0;
+    this.fetchPromise = null;
+    this.fetchPromiseUrl = null;
   }
 }
 

@@ -10,11 +10,19 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { 
+import {
   ComfyUIWorkflow,
-  ParsedWorkflow 
+  ParsedWorkflow,
+  QwenWorkflowFormat,
 } from '../services/workflow-parser';
 import { nodeDefinitions } from '../services/node-definitions';
+import {
+  findWorkflowNode,
+  getWorkflowNodeClassType,
+  getWorkflowNodeInput,
+  listWorkflowNodes,
+  resolveEnumConfig,
+} from '../services/workflow-editor-options';
 import './WorkflowEditor.css';
 
 // ============================================================================
@@ -22,7 +30,7 @@ import './WorkflowEditor.css';
 // ============================================================================
 
 interface WorkflowEditorProps {
-  workflow: ComfyUIWorkflow | null;
+  workflow: ComfyUIWorkflow | QwenWorkflowFormat | null;
   parsedWorkflow: ParsedWorkflow | null;
   initialConfig?: ParameterConfig[];
   comfyUrl?: string; // URL to fetch node definitions
@@ -183,31 +191,45 @@ export function WorkflowEditor({
   const draggedIndexRef = useRef<number | null>(null);
   const [nodeDefsLoaded, setNodeDefsLoaded] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<string[]>([]);
+  const loadedDefinitionsUrlRef = useRef<string | null>(null);
+  const workflowRef = useRef(workflow);
+  workflowRef.current = workflow;
   
-  // Fetch node definitions and available LoRAs when comfyUrl is available
+  // Fetch definitions for the currently selected ComfyUI URL only.
   useEffect(() => {
-    if (comfyUrl && !nodeDefsLoaded) {
-      // Fetch node definitions
-      nodeDefinitions.fetchDefinitions(comfyUrl)
-        .then(() => {
-          setNodeDefsLoaded(true);
-          console.log('[WorkflowEditor] Node definitions loaded');
-        })
-        .catch(err => {
-          console.error('[WorkflowEditor] Failed to load node definitions:', err);
-        });
-      
-      // Fetch available LoRAs
-      nodeDefinitions.getLoras(comfyUrl)
-        .then(loras => {
-          setAvailableLoras(loras);
-          console.log(`[WorkflowEditor] Loaded ${loras.length} available LoRAs`);
-        })
-        .catch(err => {
-          console.error('[WorkflowEditor] Failed to load LoRAs:', err);
-        });
-    }
-  }, [comfyUrl, nodeDefsLoaded]);
+    let active = true;
+    loadedDefinitionsUrlRef.current = null;
+    setNodeDefsLoaded(false);
+    setAvailableLoras([]);
+    setConfigs(previous => previous.map(config => {
+      if (config.input_name !== 'ckpt_name') return config;
+      return resolveEnumConfig(workflowRef.current, config, []) as ParameterConfig;
+    }));
+    if (!comfyUrl) return () => { active = false; };
+
+    nodeDefinitions.fetchDefinitions(comfyUrl)
+      .then(() => {
+        if (!active) return;
+        loadedDefinitionsUrlRef.current = comfyUrl;
+        setNodeDefsLoaded(true);
+        console.log('[WorkflowEditor] Node definitions loaded');
+      })
+      .catch(err => {
+        if (active) console.error('[WorkflowEditor] Failed to load node definitions:', err);
+      });
+
+    nodeDefinitions.getLoras(comfyUrl)
+      .then(loras => {
+        if (!active) return;
+        setAvailableLoras(loras);
+        console.log(`[WorkflowEditor] Loaded ${loras.length} available LoRAs`);
+      })
+      .catch(err => {
+        if (active) console.error('[WorkflowEditor] Failed to load LoRAs:', err);
+      });
+
+    return () => { active = false; };
+  }, [comfyUrl]);
   
   // Initialize configs from parsed workflow or initial config
   useEffect(() => {
@@ -272,7 +294,7 @@ export function WorkflowEditor({
             min: -10, 
             max: 10, 
             step: 0.01,
-            availableLoras: availableLoras,  // Will be populated from ComfyUI
+            availableLoras: [],  // Populated by the live options effect
             lora_name: lora.lora_name || '',  // Current lora selection from workflow
             bypassed: false
           },
@@ -286,28 +308,55 @@ export function WorkflowEditor({
       
       setConfigs(newConfigs);
     }
-  }, [parsedWorkflow, initialConfig, availableLoras]);
+  }, [parsedWorkflow, initialConfig]);
   
-  // Update LoRA configs when availableLoras changes after initial load
+  // Apply options from the selected node's ComfyUI URL without dropping offline/imported values.
   useEffect(() => {
-    if (availableLoras.length === 0) return;
-
-    setConfigs(prevConfigs => {
-      if (prevConfigs.length === 0) return prevConfigs;
-      return prevConfigs.map(config => {
-        if (config.category === 'lora') {
-          return {
-            ...config,
-            constraints: {
-              ...config.constraints,
-              availableLoras: availableLoras
-            }
-          };
-        }
-        return config;
+    if (!nodeDefsLoaded || loadedDefinitionsUrlRef.current !== comfyUrl || !workflow || configs.length === 0) return;
+    setConfigs(previous => {
+      let changed = false;
+      const nextConfigs = previous.map(config => {
+        if (config.input_name !== 'ckpt_name') return config;
+        const node = findWorkflowNode(workflow, config.node_id);
+        if (getWorkflowNodeClassType(node) !== 'CheckpointLoaderSimple') return config;
+        const liveOptions = nodeDefinitions.getEnumOptions('CheckpointLoaderSimple', 'ckpt_name') || [];
+        const resolved = resolveEnumConfig(workflow, config, liveOptions);
+        if (
+          config.type === resolved.type &&
+          config.default === resolved.default &&
+          JSON.stringify(config.constraints?.options || []) === JSON.stringify(resolved.constraints?.options || [])
+        ) return config;
+        changed = true;
+        return resolved as ParameterConfig;
       });
+      return changed ? nextConfigs : previous;
     });
-  }, [availableLoras]);
+  }, [configs, nodeDefsLoaded, workflow, comfyUrl]);
+
+  // Refresh live LoRA metadata without changing values or user-owned flags.
+  // Context dependencies reapply unchanged URL metadata after workflow initialization.
+  useEffect(() => {
+    setConfigs(prevConfigs => {
+      let changed = false;
+      const nextConfigs = prevConfigs.map(config => {
+        if (config.category !== 'lora') return config;
+        const currentLoras = config.constraints?.availableLoras || [];
+        if (
+          currentLoras.length === availableLoras.length &&
+          currentLoras.every((lora, index) => lora === availableLoras[index])
+        ) return config;
+        changed = true;
+        return {
+          ...config,
+          constraints: {
+            ...config.constraints,
+            availableLoras,
+          },
+        };
+      });
+      return changed ? nextConfigs : prevConfigs;
+    });
+  }, [availableLoras, parsedWorkflow, initialConfig]);
   
   // Auto-save to localStorage
   useEffect(() => {
@@ -327,44 +376,33 @@ export function WorkflowEditor({
     if (!workflow) return [];
     
     const nodes: NodeInfo[] = [];
-    
-    for (const [nodeId, node] of Object.entries(workflow)) {
-      if (nodeId === 'meta' || typeof node !== 'object' || node === null) {
-        continue;
+
+    for (const [nodeId, node] of listWorkflowNodes(workflow)) {
+      const classType = getWorkflowNodeClassType(node);
+      const inputEntries = Object.entries(node.inputs || {});
+      if (classType === 'CheckpointLoaderSimple' && !inputEntries.some(([name]) => name === 'ckpt_name')) {
+        const value = getWorkflowNodeInput(node, 'ckpt_name');
+        if (value !== undefined) inputEntries.push(['ckpt_name', value]);
       }
-      
-      const typedNode = node as any;
-      const inputs: NodeInfo['inputs'] = [];
-      
-      if (typedNode.inputs) {
-        for (const [inputName, inputValue] of Object.entries(typedNode.inputs)) {
-          // Skip connection inputs (arrays)
-          if (Array.isArray(inputValue)) continue;
-          
-          // Skip if already exposed
-          const isExposed = configs.some(
-            c => c.node_id === nodeId && c.input_name === inputName && c.exposed
-          );
-          
-          inputs.push({
-            name: inputName,
-            value: inputValue,
-            type: typeof inputValue,
-            exposed: isExposed,
-          });
-        }
-      }
-      
+      const inputs: NodeInfo['inputs'] = inputEntries
+        .filter(([, inputValue]) => !Array.isArray(inputValue))
+        .map(([inputName, inputValue]) => ({
+          name: inputName,
+          value: inputValue,
+          type: typeof inputValue,
+          exposed: configs.some(c => c.node_id === nodeId && c.input_name === inputName && c.exposed),
+        }));
+
       if (inputs.length > 0) {
         nodes.push({
           id: nodeId,
-          class_type: typedNode.class_type || 'Unknown',
-          title: typedNode._meta?.title || typedNode.class_type || `Node ${nodeId}`,
+          class_type: classType || 'Unknown',
+          title: node._meta?.title || classType || `Node ${nodeId}`,
           inputs,
         });
       }
     }
-    
+
     return nodes;
   }, [workflow, configs]);
   
@@ -374,14 +412,15 @@ export function WorkflowEditor({
     let constraints = getDefaultConstraints(type, value) || {};
     
     // Check node definitions FIRST to see if this is actually an enum
-    const node = workflow?.[nodeId] as any;
-    if (node?.class_type) {
-      const inputDef = nodeDefinitions.getInputDefinition(node.class_type, inputName);
+    const node = findWorkflowNode(workflow, nodeId);
+    const classType = getWorkflowNodeClassType(node);
+    if (classType) {
+      const inputDef = nodeDefinitions.getInputDefinition(classType, inputName);
       if (inputDef?.isEnum && inputDef.options) {
         // Override the inferred type - this is actually an enum!
         type = 'enum';
         constraints = { options: inputDef.options };
-        console.log(`[WorkflowEditor] Detected enum from node definitions: ${node.class_type}.${inputName}`, inputDef.options);
+        console.log(`[WorkflowEditor] Detected enum from node definitions: ${classType}.${inputName}`, inputDef.options);
       }
     }
     
@@ -621,7 +660,7 @@ export function WorkflowEditor({
 
 interface ParameterConfigCardProps {
   config: ParameterConfig;
-  workflow: ComfyUIWorkflow | null;
+  workflow: ComfyUIWorkflow | QwenWorkflowFormat | null;
   isSelected: boolean;
   onSelect: () => void;
   onUpdate: (updates: Partial<ParameterConfig>) => void;
@@ -823,9 +862,10 @@ function ParameterConfigCard({
                   className="fetch-options-btn"
                   onClick={() => {
                     if (!workflow) return;
-                    const node = workflow[config.node_id] as any;
-                    if (node?.class_type) {
-                      const enumOptions = nodeDefinitions.getEnumOptions(node.class_type, config.input_name);
+                    const node = findWorkflowNode(workflow, config.node_id);
+                    const classType = getWorkflowNodeClassType(node);
+                    if (classType) {
+                      const enumOptions = nodeDefinitions.getEnumOptions(classType, config.input_name);
                       if (enumOptions && enumOptions.length > 0) {
                         onUpdate({ 
                           constraints: { 
@@ -834,7 +874,7 @@ function ParameterConfigCard({
                           }
                         });
                       } else {
-                        alert(`No enum options found for ${node.class_type}.${config.input_name}.\nMake sure ComfyUI is connected.`);
+                        alert(`No enum options found for ${classType}.${config.input_name}.\nMake sure ComfyUI is connected.`);
                       }
                     }
                   }}

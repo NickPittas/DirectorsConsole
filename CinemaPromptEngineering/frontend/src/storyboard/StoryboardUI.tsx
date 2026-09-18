@@ -31,7 +31,13 @@ import {
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
-import { extractMediaOutputs, isVideoUrl } from './comfyui-client';
+import { extractMediaOutputs, isVideoUrl, normalizeComfyUIUrl, type ComfyUIProbeResult } from './comfyui-client';
+import {
+  getGenerationDisabledReason,
+  resolveGenerationTarget,
+  type BrowserNodeStatus,
+} from './services/generation-target';
+import { startComfyUIProbeLifecycle } from './services/comfyui-probe-lifecycle';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
@@ -444,9 +450,11 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   // State - Connection
   // ---------------------------------------------------------------------------
-  const [comfyUrl, setComfyUrl] = useState(`${window.location.protocol}//${window.location.hostname}:8188`);
-  const [connectionStatus, _setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [systemStats, _setSystemStats] = useState<any>(null);
+  const [comfyUrl, setComfyUrl] = useState(() => normalizeComfyUIUrl(`${window.location.protocol}//${window.location.hostname}:8188`));
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('connecting');
+  const [systemStats, setSystemStats] = useState<Record<string, any> | null>(null);
+  const [browserNodeStatus, setBrowserNodeStatus] = useState<Record<string, BrowserNodeStatus>>({});
+  const [connectionHint, setConnectionHint] = useState('');
   
   // ---------------------------------------------------------------------------
   // State - Logs
@@ -463,6 +471,11 @@ export function StoryboardUI() {
   const [showNodeManager, setShowNodeManager] = useState(false);
   const [isRestartingNodes, setIsRestartingNodes] = useState(false);
   const renderNodes = useRenderNodes();
+  const normalizedComfyUrl = normalizeComfyUIUrl(comfyUrl);
+  const managedComfyUrls = renderNodes
+    .map(node => normalizeComfyUIUrl(node.url))
+    .filter(Boolean);
+  const managedComfyUrlsKey = [...new Set(managedComfyUrls)].sort().join('|');
   // One entry per submitted prompt, independent of the currently selected panel/node.
   const activeGenerationsRef = useRef(new Map<string, ActiveGeneration>());
   const generationRunsRef = useRef(new Map<number, GenerationRun>());
@@ -900,6 +913,22 @@ export function StoryboardUI() {
   // State - Multi-Node Parallel Generation
   // ---------------------------------------------------------------------------
   const [selectedBackendIds, setSelectedBackendIds] = useState<string[]>([]);
+  const hasWorkflowForPanel = (panel?: Panel): boolean => Boolean(workflows.find(workflow =>
+    workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId
+  ));
+  const getPanelGenerationDisabledReason = (panel?: Panel): string | null => getGenerationDisabledReason(
+    hasWorkflowForPanel(panel),
+    {
+      directUrl: normalizedComfyUrl,
+      managedNodes: renderNodes,
+      browserStatuses: browserNodeStatus,
+      selectedBackendIds,
+      panelNodeId: panel?.nodeId,
+      connectionStatus,
+    },
+  );
+  const actionPanel = panels.find(panel => panel.id === selectedPanelId) || panels[0];
+  const generationDisabledReason = getPanelGenerationDisabledReason(actionPanel);
   
   // ---------------------------------------------------------------------------
   // State - Project Settings
@@ -1002,6 +1031,42 @@ export function StoryboardUI() {
       orchestratorManager.stopPolling();
     };
   }, [projectSettings.orchestratorUrl]);
+
+  // ---------------------------------------------------------------------------
+  // Effect - Probe the browser's direct ComfyUI paths
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const urls = [normalizedComfyUrl, ...managedComfyUrlsKey.split('|')];
+    setSystemStats(null);
+    setConnectionHint('');
+    setConnectionStatus(normalizedComfyUrl ? 'connecting' : 'disconnected');
+
+    return startComfyUIProbeLifecycle({
+      urls,
+      setStatuses: statuses => setBrowserNodeStatus(statuses),
+      onResult: (url, result: ComfyUIProbeResult) => {
+        setBrowserNodeStatus(previous => ({
+          ...previous,
+          [url]: result.ok ? 'connected' : 'disconnected',
+        }));
+        if (url !== normalizedComfyUrl) return;
+        if (result.ok) {
+          setConnectionStatus('connected');
+          setSystemStats(result.stats || null);
+          setConnectionHint('');
+          return;
+        }
+        setConnectionStatus('disconnected');
+        setSystemStats(null);
+        const detail = result.failure === 'network'
+          ? 'possible network, mixed-content, CORS, or ComfyUI server issue'
+          : result.failure === 'timeout'
+            ? 'the browser probe timed out'
+            : result.error || 'the browser probe failed';
+        setConnectionHint(`Browser cannot reach ${url}: ${detail}.`);
+      },
+    });
+  }, [normalizedComfyUrl, managedComfyUrlsKey]);
   
   // ---------------------------------------------------------------------------
   // Effect - Check endpoint availability when orchestrator URL changes
@@ -2750,6 +2815,22 @@ export function StoryboardUI() {
   }, [panels, workflows, selectedWorkflowId, useGlobalPrompt, globalPromptOverride, renderNodes, addLog, showError, showInfo, claimGenerationRun, finishGenerationSubmission]);
   
   const generatePanel = useCallback(async (panelId: number) => {
+    const panel = panels.find(p => p.id === panelId);
+    const panelReason = getGenerationDisabledReason(
+      Boolean(workflows.find(workflow => workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId)),
+      {
+        directUrl: normalizedComfyUrl,
+        managedNodes: renderNodes,
+        browserStatuses: browserNodeStatus,
+        selectedBackendIds,
+        panelNodeId: panel?.nodeId,
+        connectionStatus,
+      },
+    );
+    if (panelReason) {
+      showError(panelReason);
+      return;
+    }
     // Fix #2: Check if user explicitly selected multiple nodes for parallel generation
     if (selectedBackendIds.length > 1) {
       await generateParallel(panelId, selectedBackendIds);
@@ -2760,60 +2841,24 @@ export function StoryboardUI() {
     if (!generationRun) return;
 
     try {
-      // Single-node generation (original logic)
-      const panel = panels.find(p => p.id === panelId);
-    
-    // Determine which node to use - prioritize explicit selection, then panel-specific, then auto-select
-    let targetUrl = '';
-    let nodeName = '';
-    let targetOS: TargetOS = 'unknown';
-    
-    // Fix #2: First check if user explicitly selected a single node
-    if (selectedBackendIds.length === 1) {
-      const selectedNode = renderNodes.find(n => n.id === selectedBackendIds[0]);
-      if (selectedNode && selectedNode.status === 'online') {
-        targetUrl = selectedNode.url;
-        nodeName = selectedNode.name;
-        targetOS = selectedNode.os || 'unknown';
+      // Single-node generation uses the same target resolution as the gate and editor.
+      const target = resolveGenerationTarget({
+        directUrl: normalizedComfyUrl,
+        managedNodes: renderNodes,
+        browserStatuses: browserNodeStatus,
+        selectedBackendIds,
+        panelNodeId: panel?.nodeId,
+        connectionStatus,
+      });
+      if (target.kind !== 'managed' && target.kind !== 'direct') {
+        const errorMsg = target.reason || 'No render nodes available. Add nodes in Manage Nodes or connect via URL.';
+        addLog('error', errorMsg);
+        showError(errorMsg);
+        return;
       }
-    }
-    
-    // Then check if panel has a specific node assigned
-    if (!targetUrl && panel?.nodeId) {
-      const node = renderNodes.find(n => n.id === panel.nodeId);
-      if (node && node.status === 'online') {
-        targetUrl = node.url;
-        nodeName = node.name;
-        targetOS = node.os || 'unknown';
-      }
-    }
-    
-    // If no explicit or panel-specific node, find the best available node from orchestrator
-    if (!targetUrl) {
-      const onlineNodes = renderNodes.filter(n => n.status === 'online');
-      if (onlineNodes.length > 0) {
-        // Pick the node with most free VRAM (or first available)
-        const bestNode = onlineNodes[0]; // TODO: Sort by free VRAM
-        targetUrl = bestNode.url;
-        nodeName = bestNode.name;
-        targetOS = bestNode.os || 'unknown';
-      }
-    }
-    
-    // Fall back to top bar URL only if no orchestrator nodes available
-    if (!targetUrl && comfyUrl && connectionStatus === 'connected') {
-      targetUrl = comfyUrl;
-      nodeName = 'Direct Connection';
-      // OS will be detected from health check below
-    }
-    
-    // If still no target, show error
-    if (!targetUrl) {
-      const errorMsg = 'No render nodes available. Add nodes in Manage Nodes or connect via URL.';
-      addLog('error', errorMsg);
-      showError(errorMsg);
-      return;
-    }
+      const targetUrl = target.url || '';
+      const nodeName = target.node?.name || 'Direct Connection';
+      let targetOS: TargetOS = target.node?.os || 'unknown';
     
     // Check connection to target node and detect OS if not already known
     try {
@@ -3170,7 +3215,7 @@ export function StoryboardUI() {
     } finally {
       finishGenerationSubmission(generationRun.id);
     }
-  }, [connectionStatus, workflows, selectedWorkflowId, comfyUrl, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
+  }, [workflows, selectedWorkflowId, normalizedComfyUrl, browserNodeStatus, connectionStatus, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
   
   // Track generation progress via WebSocket (real-time)
   const trackWithWebSocket = useCallback((
@@ -4813,6 +4858,18 @@ export function StoryboardUI() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [handleNewProject, handleSaveProject, handleSaveProjectAs, handleLoadProject]);
+
+  const editorTarget = resolveGenerationTarget({
+    directUrl: normalizedComfyUrl,
+    managedNodes: renderNodes,
+    browserStatuses: browserNodeStatus,
+    selectedBackendIds,
+    panelNodeId: actionPanel?.nodeId,
+    connectionStatus,
+  });
+  const editorComfyUrl = editorTarget.kind === 'managed' || editorTarget.kind === 'direct'
+    ? editorTarget.url || ''
+    : '';
   
   return (
     <div className="storyboard-ui">
@@ -4952,6 +5009,9 @@ export function StoryboardUI() {
           </div>
         </div>
       </div>
+      {connectionHint && (
+        <div className="connection-hint" role="status" aria-live="polite">{connectionHint}</div>
+      )}
       
       {/* Main Content */}
       <div className="storyboard-main">
@@ -5562,7 +5622,8 @@ export function StoryboardUI() {
                         e.stopPropagation(); 
                         generatePanel(panel.id); 
                       }}
-                      disabled={!selectedWorkflow || (connectionStatus !== 'connected' && renderNodes.filter(n => n.status === 'online').length === 0)}
+                      disabled={Boolean(getPanelGenerationDisabledReason(panel))}
+                      aria-describedby={getPanelGenerationDisabledReason(panel) ? 'generate-disabled-reason' : undefined}
                       title="Generate"
                     >
                       ▶
@@ -5889,7 +5950,8 @@ export function StoryboardUI() {
                         }));
                         generatePanel(panel.id); 
                       }}
-                      disabled={!selectedWorkflow || (connectionStatus !== 'connected' && renderNodes.filter(n => n.status === 'online').length === 0)}
+                      disabled={Boolean(getPanelGenerationDisabledReason(panel))}
+                      aria-describedby={getPanelGenerationDisabledReason(panel) ? 'generate-disabled-reason' : undefined}
                       title={panel.status === 'empty' ? 'Generate' : 'Regenerate'}
                     >
                       {panel.status === 'error' ? '⟳' : '▶'}
@@ -6230,7 +6292,7 @@ export function StoryboardUI() {
               workflow={editingWorkflow.workflow}
               parsedWorkflow={editingWorkflow.parsed}
               initialConfig={editingWorkflow.config}
-              comfyUrl={comfyUrl}
+              comfyUrl={editorComfyUrl}
               onSave={(config) => {
                 skipParameterReset.current = true;
                 setWorkflows(prev => prev.map(w =>
@@ -6596,6 +6658,13 @@ export function StoryboardUI() {
       
       {/* Floating Generate/Cancel Button Container */}
       <div className="floating-action-container">
+        {generationDisabledReason && (
+          <div id="generate-disabled-reason" className="generate-disabled-reason" role="status" aria-live="polite">
+            <span>{generationDisabledReason}</span>
+            <button type="button" onClick={() => setShowNodeManager(true)}>Manage Nodes</button>
+          </div>
+        )}
+
         {/* Cancel Button - Only visible when generating */}
         {(panels.some(p => p.status === 'generating') || renderNodes.some(n => n.status === 'busy')) && (
           <button 
@@ -6618,7 +6687,8 @@ export function StoryboardUI() {
               generatePanel(panels[0].id);
             }
           }}
-          disabled={!selectedWorkflow || (connectionStatus !== 'connected' && renderNodes.filter(n => n.status === 'online').length === 0)}
+          disabled={Boolean(generationDisabledReason)}
+          aria-describedby={generationDisabledReason ? 'generate-disabled-reason' : undefined}
           title="Generate (G)"
         >
           ▶ Generate

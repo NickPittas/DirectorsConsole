@@ -12,6 +12,15 @@ interface State {
   errorInfo: ErrorInfo | null;
 }
 
+export function isBrowserDomMutationError(error: Error | null): boolean {
+  if (!error) return false;
+  const message = `${error.name} ${error.message}`.toLowerCase();
+  return error.name === 'NotFoundError' || message.includes('notfounderror') || (
+    message.includes('removechild') &&
+    (message.includes('not a child') || message.includes('notfound') || message.includes('not found'))
+  );
+}
+
 /**
  * Error Boundary component that catches JavaScript errors in its child component tree.
  * 
@@ -81,6 +90,11 @@ export class ErrorBoundary extends Component<Props, State> {
             <p style={styles.message}>
               An unexpected error occurred. Please try again or refresh the page.
             </p>
+            {isBrowserDomMutationError(this.state.error) && (
+              <p style={styles.hint} role="note">
+                If page translation or a DOM-modifying browser extension is enabled, try disabling it for this site and reload.
+              </p>
+            )}
             
             {this.state.error && (
               <details style={styles.details}>
@@ -168,6 +182,12 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.6,
     marginBottom: '24px',
     margin: '0 0 24px 0',
+  },
+  hint: {
+    color: '#d29922',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    margin: '0 0 20px 0',
   },
   details: {
     backgroundColor: '#0d1117',

@@ -38,6 +38,9 @@ CHECKS = [
             ROOT / "tests/test_storyboard_generation_run.js",
             ROOT / "tests/test_storyboard_metadata.js",
             ROOT / "tests/test_batch_rename_dialog_race.js",
+            ROOT / "tests/test_storyboard_issue6_connection.js",
+            ROOT / "tests/test_storyboard_issue7_checkpoint.js",
+            ROOT / "tests/test_error_boundary_hint.js",
         )
     ],
     ("Frontend lint", [NPM, "run", "lint"], FRONTEND),

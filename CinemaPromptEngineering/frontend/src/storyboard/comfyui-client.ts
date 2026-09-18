@@ -48,6 +48,57 @@ export interface GeneratedImage {
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv'];
 const ANIMATED_EXTENSIONS = ['.gif', '.webp', '.apng'];
 
+export type ComfyUIProbeFailure = 'http' | 'timeout' | 'network' | 'aborted';
+
+export interface ComfyUIProbeResult {
+  ok: boolean;
+  stats?: Record<string, any>;
+  status?: number;
+  failure?: ComfyUIProbeFailure;
+  error?: string;
+}
+
+export function normalizeComfyUIUrl(url: string): string {
+  return url.trim().replace(/\/ws$/, '').replace(/\/+$/, '');
+}
+
+/** Probe the browser's actual path to ComfyUI without treating server health as reachability. */
+export async function probeComfyUI(
+  comfyUrl: string,
+  parentSignal?: AbortSignal,
+  timeoutMs = 5000,
+): Promise<ComfyUIProbeResult> {
+  const baseUrl = normalizeComfyUIUrl(comfyUrl);
+  if (!baseUrl) return { ok: false, failure: 'network', error: 'ComfyUI URL is empty' };
+
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${baseUrl}/system_stats`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status, failure: 'http', error: `HTTP ${response.status}` };
+    }
+    return { ok: true, stats: await response.json() };
+  } catch (error) {
+    const aborted = controller.signal.aborted;
+    const parentAborted = parentSignal?.aborted;
+    return {
+      ok: false,
+      failure: parentAborted ? 'aborted' : aborted ? 'timeout' : 'network',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
 /**
  * Detect media type from filename extension.
  */
@@ -182,7 +233,7 @@ export class ComfyUIClient {
   private wsIntentionallyClosed = false;
 
   constructor(config: ComfyUIConfig) {
-    this.serverUrl = config.serverUrl.replace(/\/$/, '');
+    this.serverUrl = normalizeComfyUIUrl(config.serverUrl);
     this.timeout = config.timeout ?? 300000; // 5 minutes default
     this.maxRetries = config.maxRetries ?? 3;
     this.useOrchestrator = config.useOrchestrator ?? false;

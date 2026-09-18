@@ -304,6 +304,7 @@ export class WorkflowParser {
       'EmptySD3LatentImage': ['width', 'height', 'batch_size'],
       'LoadImage': ['image', 'upload'],
       'LoadImageOutput': ['image', 'refresh'],
+      'CheckpointLoaderSimple': ['ckpt_name'],
       'LoraLoader': ['lora_name', 'strength_model', 'strength_clip'],
       'LoraLoaderModelOnly': ['lora_name', 'strength_model'],
       'VAELoader': ['vae_name'],
@@ -515,6 +516,22 @@ export class WorkflowParser {
           default: widgetValues[13] || inputs.cfg || 3.0,
           constraints: { min: 1, max: 20, step: 0.5 },
           description: 'Classifier-free guidance',
+        });
+      }
+
+      // CheckpointLoaderSimple is a graph-format widget whose API input is ckpt_name.
+      // Parsing stays offline-safe; the editor merges URL-qualified live options later.
+      if (class_type === 'CheckpointLoaderSimple' && 'ckpt_name' in inputs) {
+        const importedModel = inputs.ckpt_name;
+        parameters.push({
+          name: 'ckpt_name',
+          display_name: 'Checkpoint',
+          type: 'enum',
+          node_id,
+          input_name: 'ckpt_name',
+          default: importedModel,
+          constraints: { options: importedModel ? [importedModel] : [] },
+          description: 'Checkpoint model used for generation',
         });
       }
 

@@ -1906,6 +1906,36 @@
 }
 
 /* Floating Generate Button */
+.connection-hint {
+  padding: 5px 10px;
+  color: #ffd9d9;
+  background: rgba(90, 32, 32, 0.94);
+  border-bottom: 1px solid #a84b4b;
+  font-size: 12px;
+}
+
+.generate-disabled-reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, 80vw);
+  padding: 6px 10px;
+  color: #ffd9d9;
+  background: rgba(90, 32, 32, 0.94);
+  border: 1px solid #a84b4b;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.generate-disabled-reason button {
+  padding: 3px 7px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
 .floating-generate-btn {
   position: fixed;
   bottom: 20px;
