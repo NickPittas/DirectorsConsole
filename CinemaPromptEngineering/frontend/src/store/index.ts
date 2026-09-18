@@ -1,6 +1,7 @@
 /** Zustand store for Cinema Prompt Engineering state */
 
 import { create } from 'zustand';
+import { sessionDraftController, type CinemaDraftState } from '@/storyboard/services/session-recovery';
 import type {
   ProjectType,
   LiveActionConfig,
@@ -125,6 +126,9 @@ interface CinemaStore {
   // Reset
   resetConfig: () => void;
 
+  // Session recovery (catalogs and provider credentials are intentionally excluded)
+  hydrateSession: (draft: CinemaDraftState) => void;
+
   // CPE prompt for Storyboard sharing
   cpePromptForStoryboard: string | null;
   setCpePromptForStoryboard: (prompt: string | null) => void;
@@ -229,4 +233,35 @@ export const useCinemaStore = create<CinemaStore>((set) => ({
   // CPE prompt for Storyboard sharing
   cpePromptForStoryboard: null,
   setCpePromptForStoryboard: (prompt) => set({ cpePromptForStoryboard: prompt }),
+
+  hydrateSession: (draft) => set({
+    projectType: draft.projectType as ProjectType,
+    liveActionConfig: draft.liveActionConfig as LiveActionConfig,
+    animationConfig: draft.animationConfig as AnimationConfig,
+    generatedPrompt: draft.generatedPrompt || '',
+    negativePrompt: draft.negativePrompt ?? null,
+    cpePromptForStoryboard: draft.cpePromptForStoryboard ?? null,
+    targetModel: draft.targetModel || 'generic',
+    selectedLiveActionPreset: draft.selectedLiveActionPreset as FilmPreset | null,
+    selectedAnimationPreset: draft.selectedAnimationPreset as AnimationPreset | null,
+    validationResult: null,
+  }),
 }));
+
+// App gates this subscription until the active envelope has been validated.
+useCinemaStore.subscribe((state, previous) => {
+  if (state === previous) return;
+  sessionDraftController.update({
+    cinema: {
+      projectType: state.projectType,
+      liveActionConfig: state.liveActionConfig,
+      animationConfig: state.animationConfig,
+      generatedPrompt: state.generatedPrompt,
+      negativePrompt: state.negativePrompt,
+      cpePromptForStoryboard: state.cpePromptForStoryboard,
+      targetModel: state.targetModel,
+      selectedLiveActionPreset: state.selectedLiveActionPreset,
+      selectedAnimationPreset: state.selectedAnimationPreset,
+    },
+  });
+});

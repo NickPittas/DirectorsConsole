@@ -45,12 +45,15 @@ export interface ProjectSettings {
   orchestratorUrl: string; // URL to Orchestrator API (e.g., "http://localhost:9820")
   created: Date;
   lastModified: Date;
+  /** Actual project JSON path, when one has been loaded or successfully saved. */
+  projectFilePath?: string;
 }
 
 export interface ProjectIdentity {
   name: string;
   path: string;
   orchestratorUrl: string;
+  projectFilePath?: string;
 }
 
 export interface MediaSaveOptions {
@@ -170,12 +173,11 @@ export class ProjectManager {
   private listeners = new Set<ProjectSettingsListener>();
   private pendingMediaRevisionOrigins = new Map<string, ProjectIdentity>();
   private mediaRevisionTimer: ReturnType<typeof setTimeout> | null = null;
+  private unsavedIdentity: string;
   
   constructor() {
+    this.unsavedIdentity = this.loadUnsavedIdentity();
     this.loadFromStorage();
-    // Overwrite localStorage with clean startup state so that other consumers
-    // (e.g. Gallery tab reading from localStorage) see empty project on launch.
-    this.saveToStorage();
   }
   
   // ---------------------------------------------------------------------------
@@ -189,18 +191,64 @@ export class ProjectManager {
   private normalizePath(path: string): string {
     return path.replace(/\\/g, '/');
   }
+
+  private loadUnsavedIdentity(): string {
+    try {
+      const stored = localStorage.getItem('storyboard_unsaved_identity');
+      if (stored?.startsWith('unsaved:')) return stored;
+    } catch { /* storage is optional */ }
+    const cryptoApi = typeof globalThis.crypto !== 'undefined' ? globalThis.crypto : undefined;
+    const suffix = cryptoApi?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const identity = `unsaved:${suffix}`;
+    try { localStorage.setItem('storyboard_unsaved_identity', identity); } catch { /* storage is optional */ }
+    return identity;
+  }
+
+  /** Restore settings only after recovery has been validated. */
+  restoreFromSession(settings: Partial<ProjectSettings>): void {
+    this.currentProject = {
+      ...DEFAULT_PROJECT,
+      ...settings,
+      path: this.normalizePath(settings.path || ''),
+      orchestratorUrl: normalizeOrchestratorUrl(settings.orchestratorUrl || DEFAULT_PROJECT.orchestratorUrl),
+      created: settings.created instanceof Date ? settings.created : new Date(settings.created || Date.now()),
+      lastModified: settings.lastModified instanceof Date ? settings.lastModified : new Date(settings.lastModified || Date.now()),
+    };
+    this.saveToStorage();
+    this.notifyListeners();
+  }
   
   getProject(): ProjectSettings {
     return { ...this.currentProject };
   }
 
   getProjectIdentity(): ProjectIdentity {
-    const { name, path, orchestratorUrl } = this.currentProject;
-    return { name, path, orchestratorUrl };
+    const { name, path, orchestratorUrl, projectFilePath } = this.currentProject;
+    return { name, path, orchestratorUrl, projectFilePath };
+  }
+
+  /** Stable draft identity: a known project file is distinct from every unsaved project. */
+  getSessionIdentity(): string {
+    const filePath = this.currentProject.projectFilePath;
+    if (filePath) return `project:${this.normalizePath(filePath)}`;
+    return this.unsavedIdentity;
+  }
+
+  rotateUnsavedIdentity(): string {
+    const cryptoApi = typeof globalThis.crypto !== 'undefined' ? globalThis.crypto : undefined;
+    const suffix = cryptoApi?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.unsavedIdentity = `unsaved:${suffix}`;
+    try { localStorage.setItem('storyboard_unsaved_identity', this.unsavedIdentity); } catch { /* storage is optional */ }
+    return this.unsavedIdentity;
   }
 
   private projectIdentityKey(identity: ProjectIdentity): string {
-    return JSON.stringify([identity.name, identity.path, identity.orchestratorUrl]);
+    return JSON.stringify([
+      identity.name,
+      this.normalizePath(identity.path),
+      identity.orchestratorUrl,
+      identity.projectFilePath ? this.normalizePath(identity.projectFilePath) : '',
+    ]);
   }
 
   private sameProjectIdentity(a: ProjectIdentity, b: ProjectIdentity): boolean {
@@ -284,6 +332,7 @@ export class ProjectManager {
   }
   
   resetProject(): void {
+    this.rotateUnsavedIdentity();
     this.currentProject = { ...DEFAULT_PROJECT, created: new Date(), lastModified: new Date() };
     this.saveToStorage();
     this.notifyListeners();
@@ -776,14 +825,14 @@ export class ProjectManager {
         const parsed = JSON.parse(data);
         this.currentProject = {
           ...DEFAULT_PROJECT,
-          // Only restore user preferences, NOT project identity (name/path).
-          // The app should always start with a blank project, requiring the
-          // user to explicitly open or create one.
-          orchestratorUrl: normalizeOrchestratorUrl(parsed.orchestratorUrl || ''),
+          name: parsed.name || DEFAULT_PROJECT.name,
+          path: this.normalizePath(parsed.path || ''),
+          projectFilePath: parsed.projectFilePath ? this.normalizePath(parsed.projectFilePath) : undefined,
+          orchestratorUrl: normalizeOrchestratorUrl(parsed.orchestratorUrl || DEFAULT_PROJECT.orchestratorUrl),
           namingTemplate: parsed.namingTemplate || DEFAULT_PROJECT.namingTemplate,
           autoSave: parsed.autoSave ?? DEFAULT_PROJECT.autoSave,
-          // name and path intentionally left as DEFAULT_PROJECT values
-          // ('' path and 'Untitled Project' name)
+          created: parsed.created ? new Date(parsed.created) : DEFAULT_PROJECT.created,
+          lastModified: parsed.lastModified ? new Date(parsed.lastModified) : DEFAULT_PROJECT.lastModified,
         };
       }
     } catch (error) {
@@ -1090,6 +1139,7 @@ export class ProjectManager {
             selected_workflow_id: additionalState?.selectedWorkflowId || null,
             render_nodes: additionalState?.renderNodes || null,
             comfy_url: additionalState?.comfyUrl || null,
+            camera_angles: additionalState?.cameraAngles || null,
             deleted_images: additionalState?.deletedImages || [],
             saved_at: new Date().toISOString(),
           },

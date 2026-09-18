@@ -51,6 +51,11 @@ import { PrintDialog } from './components/PrintDialog';
 import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
+import {
+  recoverInterruptedPanels,
+  sessionDraftController,
+  type StoryboardDraftState,
+} from './services/session-recovery';
 import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
 import { api } from '../api/client';
 import {
@@ -265,6 +270,7 @@ export interface Panel {
     totalNodes?: number; // Total workflow node count
   }>;
   batchSaveTriggered?: boolean; // Prevents duplicate batch saves
+  errorMessage?: string;
 }
 
 export interface Workflow {
@@ -295,9 +301,10 @@ interface LogEntry {
 
 interface StoryboardUIProps {
   onProjectLoadingChange?: (isLoading: boolean) => void;
+  initialSession?: StoryboardDraftState;
 }
 
-export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {}) {
+export function StoryboardUI({ onProjectLoadingChange, initialSession }: StoryboardUIProps = {}) {
   // ---------------------------------------------------------------------------
   // Error Notifications
   // ---------------------------------------------------------------------------
@@ -307,6 +314,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   // State - Tabs (with localStorage persistence)
   // ---------------------------------------------------------------------------
   const [activeTab, setActiveTab] = useState<TabType>(() => {
+    if (initialSession?.activeTab) return initialSession.activeTab as TabType;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
@@ -317,6 +325,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
     return 'image-generation';
   });
   const [activeSubTab, setActiveSubTab] = useState<SubTabType>(() => {
+    if (initialSession?.activeSubTab) return initialSession.activeSubTab as SubTabType;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
@@ -331,16 +340,19 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   // ---------------------------------------------------------------------------
   // State - Canvas
   // ---------------------------------------------------------------------------
-  const [panels, setPanels] = useState<Panel[]>(() => [
-    { id: 1, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 0, y: 0, width: 300, height: 300 },
-    { id: 2, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 320, y: 0, width: 300, height: 300 },
-    { id: 3, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 640, y: 0, width: 300, height: 300 },
-    { id: 4, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 0, y: 320, width: 300, height: 300 },
-    { id: 5, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 320, y: 320, width: 300, height: 300 },
-    { id: 6, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 640, y: 320, width: 300, height: 300 },
-  ]);
-  const [selectedPanelId, setSelectedPanelId] = useState<number | null>(null);
+  const [panels, setPanels] = useState<Panel[]>(() => initialSession
+    ? recoverInterruptedPanels(initialSession.panels) as Panel[]
+    : [
+      { id: 1, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 0, y: 0, width: 300, height: 300 },
+      { id: 2, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 320, y: 0, width: 300, height: 300 },
+      { id: 3, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 640, y: 0, width: 300, height: 300 },
+      { id: 4, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 0, y: 320, width: 300, height: 300 },
+      { id: 5, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 320, y: 320, width: 300, height: 300 },
+      { id: 6, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', seed: -1, x: 640, y: 320, width: 300, height: 300 },
+    ]);
+  const [selectedPanelId, setSelectedPanelId] = useState<number | null>(initialSession?.selectedPanelId ?? null);
   const [canvasZoom, setCanvasZoom] = useState<number>(() => {
+    if (initialSession?.canvasZoom !== undefined) return initialSession.canvasZoom;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
@@ -350,7 +362,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
     }
     return 1;
   });
-  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [canvasPan, setCanvasPan] = useState(initialSession?.canvasPan ?? { x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
@@ -386,6 +398,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const skipParameterReset = useRef(false);
+  const restoredParametersPendingRef = useRef(Boolean(initialSession));
   const generationStartTimes = useRef<Map<number, number>>(new Map());
   
   // ---------------------------------------------------------------------------
@@ -395,7 +408,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   const workflowsRef = useRef(workflows);
   workflowsRef.current = workflows;
   const workflowsLoadedRef = useRef(false); // Tracks whether initial load from localStorage is done
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(initialSession?.selectedWorkflowId ?? null);
   const selectedWorkflowIdRef = useRef(selectedWorkflowId);
   selectedWorkflowIdRef.current = selectedWorkflowId;
   const [showWorkflowEditor, setShowWorkflowEditor] = useState(false);
@@ -405,10 +418,10 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   const [showPrintDialog, setShowPrintDialog] = useState(false);
   const [renamingWorkflow, setRenamingWorkflow] = useState<Workflow | null>(null);
   const [newWorkflowName, setNewWorkflowName] = useState('');
-  const [parameterValues, setParameterValues] = useState<Record<string, any>>({});
-  const [cameraAngles, setCameraAngles] = useState<Record<string, CameraAngle | null>>({});
-  const [globalPromptOverride, setGlobalPromptOverride] = useState<string>('');
-  const [useGlobalPrompt, setUseGlobalPrompt] = useState(false);
+  const [parameterValues, setParameterValues] = useState<Record<string, any>>(initialSession?.parameterValues || {});
+  const [cameraAngles, setCameraAngles] = useState<Record<string, CameraAngle | null>>((initialSession?.cameraAngles || {}) as Record<string, CameraAngle | null>);
+  const [globalPromptOverride, setGlobalPromptOverride] = useState<string>(initialSession?.globalPromptOverride || '');
+  const [useGlobalPrompt, setUseGlobalPrompt] = useState(initialSession?.useGlobalPrompt ?? false);
   
   // ---------------------------------------------------------------------------
   // State - Image Viewer
@@ -456,7 +469,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   // State - Connection
   // ---------------------------------------------------------------------------
   // Legacy project field retained for save/load compatibility; managed nodes are authoritative for network access.
-  const [comfyUrl, setComfyUrl] = useState('');
+  const [comfyUrl, setComfyUrl] = useState(initialSession?.comfyUrl || '');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('connecting');
   const [systemStats, setSystemStats] = useState<Record<string, any> | null>(null);
   const [browserNodeStatus, setBrowserNodeStatus] = useState<Record<string, BrowserNodeStatus>>({});
@@ -915,7 +928,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   // ---------------------------------------------------------------------------
   // State - Multi-Node Parallel Generation
   // ---------------------------------------------------------------------------
-  const [selectedBackendIds, setSelectedBackendIds] = useState<string[]>([]);
+  const [selectedBackendIds, setSelectedBackendIds] = useState<string[]>(initialSession?.selectedBackendIds || []);
   const hasWorkflowForPanel = (panel?: Panel): boolean => Boolean(workflows.find(workflow =>
     workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId
   ));
@@ -1150,6 +1163,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   // State - Resizable Panels (with localStorage persistence)
   // ---------------------------------------------------------------------------
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    if (initialSession?.leftPanelWidth !== undefined) return initialSession.leftPanelWidth;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
@@ -1160,6 +1174,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
     return 250;
   });
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    if (initialSession?.rightPanelWidth !== undefined) return initialSession.rightPanelWidth;
     const saved = localStorage.getItem('storyboard-ui-state');
     if (saved) {
       try {
@@ -1171,6 +1186,47 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   });
   const [isResizingLeft, setIsResizingLeft] = useState(false);
   const [isResizingRight, setIsResizingRight] = useState(false);
+
+  // Session recovery stores work state only; catalogs, logs, active jobs, and provider credentials stay out.
+  useEffect(() => {
+    sessionDraftController.update({
+      storyboard: {
+        activeTab,
+        activeSubTab,
+        panels,
+        selectedPanelId,
+        canvasZoom,
+        canvasPan,
+        leftPanelWidth,
+        rightPanelWidth,
+        selectedWorkflowId,
+        selectedBackendIds,
+        comfyUrl,
+        parameterValues,
+        cameraAngles,
+        globalPromptOverride,
+        useGlobalPrompt,
+      },
+      project: { settings: { ...projectManager.getProject() } },
+    });
+  }, [
+    activeTab,
+    activeSubTab,
+    panels,
+    selectedPanelId,
+    canvasZoom,
+    canvasPan,
+    leftPanelWidth,
+    rightPanelWidth,
+    selectedWorkflowId,
+    selectedBackendIds,
+    comfyUrl,
+    parameterValues,
+    cameraAngles,
+    globalPromptOverride,
+    useGlobalPrompt,
+    projectSettings,
+  ]);
   
   // ---------------------------------------------------------------------------
   // Resize Handlers
@@ -1385,6 +1441,11 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
     }
     const workflow = workflowsRef.current.find(w => w.id === selectedWorkflowId);
     if (workflow) {
+      if (restoredParametersPendingRef.current) {
+        // The first catalog selection is initialization, not a user workflow change.
+        restoredParametersPendingRef.current = false;
+        return;
+      }
       console.log('[Effect] Workflow change detected, resetting parameters to defaults for workflow:', selectedWorkflowId);
       
       // Compute new values, preserving prompts and images from previous workflow
@@ -3993,6 +4054,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   
   // Save project handler
   const handleSaveProject = useCallback(async () => {
+    await sessionDraftController.flush();
     const result = await saveProjectAndRecordRecent(
       projectSettings.name || 'Untitled',
       () => projectManager.saveProjectState(
@@ -4008,6 +4070,11 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       ),
     );
     if (result.success) {
+      if (result.savedPath) {
+        projectManager.setProject({ projectFilePath: result.savedPath });
+        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
+        sessionDraftController.clearFailure();
+      }
       showInfo(`Project saved to ${result.savedPath}`);
     } else {
       showError(`Failed to save project: ${result.error}`);
@@ -4031,13 +4098,15 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
 
   // Handle save from file browser dialog
   const handleSaveFromDialog = async (folderPath: string, projectName: string) => {
-    // Update project settings with new path and name
+    await sessionDraftController.flush();
+    const previousSettings = projectManager.getProject();
+    // Stage Save As locally; identity changes only after the file is confirmed saved.
     const newSettings = {
-      ...projectSettings,
+      ...previousSettings,
       name: projectName,
       path: folderPath,
+      projectFilePath: undefined,
     };
-    setProjectSettings(newSettings);
     projectManager.setProject(newSettings);
 
     // Save the project
@@ -4057,20 +4126,33 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
     );
 
     if (result.success) {
+      projectManager.setProject({ projectFilePath: result.savedPath });
+      setProjectSettings(projectManager.getProject());
+      sessionDraftController.setIdentity(projectManager.getSessionIdentity());
+      sessionDraftController.clearFailure();
       showInfo(`Project saved to ${result.savedPath}`);
       setFileBrowserMode(null);
     } else {
+      projectManager.restoreFromSession(previousSettings);
+      setProjectSettings(previousSettings);
       showError(`Failed to save project: ${result.error}`);
     }
   };
 
   // Phase 3: New load handler with folder scanning
   const handleLoadFromDialog = async (projectPath: string) => {
+    // Flush the old identity before any load can replace it.
+    await sessionDraftController.flush();
+    if (sessionDraftController.getStatus().state === 'failed') {
+      showError('Autosave unavailable — save manually before switching projects.');
+      return;
+    }
+    const previousProjectSettings = projectManager.getProject();
     // Close the file browser dialog immediately so the loading overlay is visible
     setFileBrowserMode(null);
     
     // Remember the current orchestrator URL before loadProjectState overwrites it
-    const currentOrchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+    const currentOrchestratorUrl = previousProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
     
     // Derive the project directory from the selected file path
     // Handle both / (Linux/macOS) and \ (Windows) separators
@@ -4098,6 +4180,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       // scanProjectPanels hits the correct server and path.
       projectManager.setProject({
         path: projectDir,
+        projectFilePath: projectPath,
         orchestratorUrl: currentOrchestratorUrl,
       });
       
@@ -4115,30 +4198,11 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       const scanResult = await projectManager.scanProjectPanels();
       
       if (!scanResult.success) {
+        projectManager.restoreFromSession(previousProjectSettings);
+        setProjectSettings(previousProjectSettings);
         console.error('[Load] Failed to scan project panels:', scanResult.error);
         showError(`Failed to scan project: ${scanResult.error}`);
-        // Still restore panels from saved state even without scan
-        const savedPanels = result.state.panels as Panel[];
-        if (savedPanels.length > 0) {
-          // Resolve __fileref:: values before setting panel state
-          const fallbackPanels = savedPanels.map((p) => ({
-            ...p,
-            selected: false,
-            status: p.status || 'empty',
-            progress: p.progress || 0,
-            imageHistory: p.imageHistory || [],
-            historyIndex: p.historyIndex ?? -1,
-            image: p.image || null,
-            images: p.images || [],
-            currentImageIndex: p.currentImageIndex || 0,
-          }));
-          // NOTE: __fileref:: markers are NOT resolved on load — see main path comment
-          setPanels(fallbackPanels);
-          if (result.state.parameter_values) {
-            setParameterValues(result.state.parameter_values);
-            parameterValuesRef.current = result.state.parameter_values;
-          }
-        }
+        // A failed switch must leave the previous project and its in-memory work untouched.
         return;
       }
 
@@ -4304,6 +4368,8 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       // selects a panel and explicitly restores its workflow parameters.
       setLoadingProgress({ progress: 70, currentFile: 'Finalizing panels...' });
 
+      // The filesystem load is now complete; only now make project B active.
+      sessionDraftController.setIdentity(projectManager.getSessionIdentity());
       setPanels(restoredPanels);
       
       // Workflows are NOT restored from project files — they are managed
@@ -4338,6 +4404,8 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       showInfo(`Loaded project with ${restoredPanels.length} panels, ${totalImages} images`);
       
     } catch (error) {
+      projectManager.restoreFromSession(previousProjectSettings);
+      setProjectSettings(previousProjectSettings);
       console.error('[Load] Failed to load project:', error);
       showError(`Failed to load project: ${String(error)}`);
     } finally {
@@ -4372,10 +4440,16 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
   
   // Handle loading a specific project file
   const handleLoadSelectedProject = async (projectPath: string) => {
+    await sessionDraftController.flush();
+    if (sessionDraftController.getStatus().state === 'failed') {
+      showError('Autosave unavailable — save manually before switching projects.');
+      return;
+    }
+    const previousProjectSettings = projectManager.getProject();
     setIsLoadingProject(true);
     try {
       // Remember the current orchestrator URL before loadProjectState overwrites it
-    const currentOrchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
+    const currentOrchestratorUrl = previousProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
     
     const result = await loadProjectAndRecordRecent(
       projectPath,
@@ -4391,6 +4465,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       // (keep current session value) so scanProjectPanels works correctly
       projectManager.setProject({
         path: projectDir,
+        projectFilePath: projectPath,
         orchestratorUrl: currentOrchestratorUrl,
       });
       setProjectSettings(projectManager.getProject());
@@ -4538,6 +4613,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
         }
         
         restoredPanels.sort((a, b) => a.id - b.id);
+        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
         setPanels(restoredPanels);
       } else {
         // Fallback: no scan results, restore from save file with deduplicated IDs
@@ -4558,6 +4634,7 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
             parallelJobs: undefined,
           };
         });
+        sessionDraftController.setIdentity(projectManager.getSessionIdentity());
         setPanels(restoredPanels);
       }
       // Workflows are NOT restored from project files — they are managed
@@ -4590,6 +4667,8 @@ export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {})
       showError(`Failed to load project: ${result.error}`);
     }
     } catch (error) {
+      projectManager.restoreFromSession(previousProjectSettings);
+      setProjectSettings(previousProjectSettings);
       console.error('[Load-Selected] Failed to load project:', error);
       showError(`Failed to load project: ${String(error)}`);
     } finally {

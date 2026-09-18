@@ -42,6 +42,8 @@ CHECKS = [
             ROOT / "tests/test_storyboard_issue7_checkpoint.js",
             ROOT / "tests/test_error_boundary_hint.js",
             ROOT / "tests/test_project_ux_fixes.js",
+            ROOT / "tests/test_session_draft_storage.js",
+            ROOT / "tests/test_session_recovery_node.js",
         )
     ],
     ("Frontend lint", [NPM, "run", "lint"], FRONTEND),
