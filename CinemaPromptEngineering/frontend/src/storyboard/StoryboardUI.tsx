@@ -31,13 +31,13 @@ import {
 } from 'lucide-react';
 import { orchestratorManager, useRenderNodes } from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
-import { extractMediaOutputs, isVideoUrl, normalizeComfyUIUrl, type ComfyUIProbeResult } from './comfyui-client';
+import { extractMediaOutputs, isVideoUrl, type ComfyUIProbeResult } from './comfyui-client';
 import {
   getGenerationDisabledReason,
   resolveGenerationTarget,
   type BrowserNodeStatus,
 } from './services/generation-target';
-import { startComfyUIProbeLifecycle } from './services/comfyui-probe-lifecycle';
+import { getManagedComfyUIProbeUrls, startComfyUIProbeLifecycle } from './services/comfyui-probe-lifecycle';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
@@ -450,7 +450,8 @@ export function StoryboardUI() {
   // ---------------------------------------------------------------------------
   // State - Connection
   // ---------------------------------------------------------------------------
-  const [comfyUrl, setComfyUrl] = useState(() => normalizeComfyUIUrl(`${window.location.protocol}//${window.location.hostname}:8188`));
+  // Legacy project field retained for save/load compatibility; managed nodes are authoritative for network access.
+  const [comfyUrl, setComfyUrl] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('connecting');
   const [systemStats, setSystemStats] = useState<Record<string, any> | null>(null);
   const [browserNodeStatus, setBrowserNodeStatus] = useState<Record<string, BrowserNodeStatus>>({});
@@ -471,11 +472,8 @@ export function StoryboardUI() {
   const [showNodeManager, setShowNodeManager] = useState(false);
   const [isRestartingNodes, setIsRestartingNodes] = useState(false);
   const renderNodes = useRenderNodes();
-  const normalizedComfyUrl = normalizeComfyUIUrl(comfyUrl);
-  const managedComfyUrls = renderNodes
-    .map(node => normalizeComfyUIUrl(node.url))
-    .filter(Boolean);
-  const managedComfyUrlsKey = [...new Set(managedComfyUrls)].sort().join('|');
+  const managedComfyUrls = getManagedComfyUIProbeUrls(renderNodes);
+  const managedComfyUrlsKey = [...managedComfyUrls].sort().join('|');
   // One entry per submitted prompt, independent of the currently selected panel/node.
   const activeGenerationsRef = useRef(new Map<string, ActiveGeneration>());
   const generationRunsRef = useRef(new Map<number, GenerationRun>());
@@ -919,7 +917,6 @@ export function StoryboardUI() {
   const getPanelGenerationDisabledReason = (panel?: Panel): string | null => getGenerationDisabledReason(
     hasWorkflowForPanel(panel),
     {
-      directUrl: normalizedComfyUrl,
       managedNodes: renderNodes,
       browserStatuses: browserNodeStatus,
       selectedBackendIds,
@@ -1033,13 +1030,13 @@ export function StoryboardUI() {
   }, [projectSettings.orchestratorUrl]);
 
   // ---------------------------------------------------------------------------
-  // Effect - Probe the browser's direct ComfyUI paths
+  // Effect - Probe only configured managed ComfyUI paths.
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const urls = [normalizedComfyUrl, ...managedComfyUrlsKey.split('|')];
+    const urls = managedComfyUrlsKey ? managedComfyUrlsKey.split('|') : [];
     setSystemStats(null);
-    setConnectionHint('');
-    setConnectionStatus(normalizedComfyUrl ? 'connecting' : 'disconnected');
+    setConnectionHint(urls.length > 0 ? '' : 'No managed ComfyUI nodes configured. Add one in Manage Nodes.');
+    setConnectionStatus(urls.length > 0 ? 'connecting' : 'disconnected');
 
     return startComfyUIProbeLifecycle({
       urls,
@@ -1049,24 +1046,32 @@ export function StoryboardUI() {
           ...previous,
           [url]: result.ok ? 'connected' : 'disconnected',
         }));
-        if (url !== normalizedComfyUrl) return;
-        if (result.ok) {
-          setConnectionStatus('connected');
-          setSystemStats(result.stats || null);
-          setConnectionHint('');
-          return;
-        }
-        setConnectionStatus('disconnected');
-        setSystemStats(null);
-        const detail = result.failure === 'network'
-          ? 'possible network, mixed-content, CORS, or ComfyUI server issue'
-          : result.failure === 'timeout'
-            ? 'the browser probe timed out'
-            : result.error || 'the browser probe failed';
-        setConnectionHint(`Browser cannot reach ${url}: ${detail}.`);
+        if (result.ok) setSystemStats(result.stats || null);
       },
     });
-  }, [normalizedComfyUrl, managedComfyUrlsKey]);
+  }, [managedComfyUrlsKey]);
+
+  useEffect(() => {
+    const urls = managedComfyUrlsKey ? managedComfyUrlsKey.split('|') : [];
+    if (urls.length === 0) {
+      setConnectionStatus('disconnected');
+      setConnectionHint('No managed ComfyUI nodes configured. Add one in Manage Nodes.');
+      return;
+    }
+
+    const hasConnectedNode = urls.some(url => browserNodeStatus[url] === 'connected');
+    const hasPendingProbe = urls.some(url => browserNodeStatus[url] === 'connecting');
+    if (hasConnectedNode) {
+      setConnectionStatus('connected');
+      setConnectionHint('');
+    } else if (hasPendingProbe) {
+      setConnectionStatus('connecting');
+      setConnectionHint('');
+    } else {
+      setConnectionStatus('disconnected');
+      setConnectionHint(`Browser cannot reach managed ComfyUI node(s): ${urls.join(', ')}. Check Manage Nodes, network, CORS, or mixed-content policy.`);
+    }
+  }, [browserNodeStatus, managedComfyUrlsKey]);
   
   // ---------------------------------------------------------------------------
   // Effect - Check endpoint availability when orchestrator URL changes
@@ -2819,7 +2824,6 @@ export function StoryboardUI() {
     const panelReason = getGenerationDisabledReason(
       Boolean(workflows.find(workflow => workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId)),
       {
-        directUrl: normalizedComfyUrl,
         managedNodes: renderNodes,
         browserStatuses: browserNodeStatus,
         selectedBackendIds,
@@ -2843,21 +2847,20 @@ export function StoryboardUI() {
     try {
       // Single-node generation uses the same target resolution as the gate and editor.
       const target = resolveGenerationTarget({
-        directUrl: normalizedComfyUrl,
         managedNodes: renderNodes,
         browserStatuses: browserNodeStatus,
         selectedBackendIds,
         panelNodeId: panel?.nodeId,
         connectionStatus,
       });
-      if (target.kind !== 'managed' && target.kind !== 'direct') {
-        const errorMsg = target.reason || 'No render nodes available. Add nodes in Manage Nodes or connect via URL.';
+      if (target.kind !== 'managed' || !target.url || !target.node) {
+        const errorMsg = target.reason || 'No managed render node available. Add one in Manage Nodes.';
         addLog('error', errorMsg);
         showError(errorMsg);
         return;
       }
-      const targetUrl = target.url || '';
-      const nodeName = target.node?.name || 'Direct Connection';
+      const targetUrl = target.url;
+      const nodeName = target.node.name || 'Managed ComfyUI node';
       let targetOS: TargetOS = target.node?.os || 'unknown';
     
     // Check connection to target node and detect OS if not already known
@@ -3215,7 +3218,7 @@ export function StoryboardUI() {
     } finally {
       finishGenerationSubmission(generationRun.id);
     }
-  }, [workflows, selectedWorkflowId, normalizedComfyUrl, browserNodeStatus, connectionStatus, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
+  }, [workflows, selectedWorkflowId, browserNodeStatus, connectionStatus, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
   
   // Track generation progress via WebSocket (real-time)
   const trackWithWebSocket = useCallback((
@@ -4860,16 +4863,13 @@ export function StoryboardUI() {
   }, [handleNewProject, handleSaveProject, handleSaveProjectAs, handleLoadProject]);
 
   const editorTarget = resolveGenerationTarget({
-    directUrl: normalizedComfyUrl,
     managedNodes: renderNodes,
     browserStatuses: browserNodeStatus,
     selectedBackendIds,
     panelNodeId: actionPanel?.nodeId,
     connectionStatus,
   });
-  const editorComfyUrl = editorTarget.kind === 'managed' || editorTarget.kind === 'direct'
-    ? editorTarget.url || ''
-    : '';
+  const editorComfyUrl = editorTarget.kind === 'managed' ? editorTarget.url || '' : '';
   
   return (
     <div className="storyboard-ui">
@@ -5171,7 +5171,7 @@ export function StoryboardUI() {
                 onEnhancePrompt={handleEnhancePrompt}
                 cameraAngles={cameraAngles}
                 onCameraAngleChange={handleCameraAngleChange}
-                comfyUrl={comfyUrl}
+                comfyUrl={editorComfyUrl}
               />
             </div>
           )}

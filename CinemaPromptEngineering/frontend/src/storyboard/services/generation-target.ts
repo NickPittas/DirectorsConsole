@@ -11,7 +11,6 @@ export type GenerationNodeStatus = {
 };
 
 export interface GenerationTargetContext {
-  directUrl: string;
   managedNodes: GenerationNodeStatus[];
   browserStatuses: Record<string, BrowserNodeStatus>;
   selectedBackendIds?: string[];
@@ -20,7 +19,7 @@ export interface GenerationTargetContext {
 }
 
 export type GenerationTarget = {
-  kind: 'managed' | 'direct' | 'none' | 'blocked';
+  kind: 'managed' | 'none' | 'blocked';
   url?: string;
   node?: GenerationNodeStatus;
   reason?: string;
@@ -73,22 +72,17 @@ export function resolveGenerationTarget(context: GenerationTargetContext): Gener
   const autoNode = context.managedNodes.find(node => isBrowserReachable(node, context.browserStatuses));
   if (autoNode) return { kind: 'managed', node: autoNode, url: autoNode.url };
 
-  const directUrl = normalizeComfyUIUrl(context.directUrl);
-  const directIsManaged = directUrl && context.managedNodes.some(
-    node => normalizeComfyUIUrl(node.url) === directUrl,
-  );
-  if (directUrl && !directIsManaged && context.browserStatuses[directUrl] === 'connected') {
-    return { kind: 'direct', url: directUrl };
+  if (context.managedNodes.length === 0) {
+    return { kind: 'none', reason: 'No managed ComfyUI nodes configured. Add one in Manage Nodes.' };
   }
-
-  if (context.connectionStatus === 'connecting') return { kind: 'none', reason: 'Checking ComfyUI browser connectivity…' };
+  if (context.connectionStatus === 'connecting') return { kind: 'none', reason: 'Checking managed ComfyUI browser connectivity…' };
   if (context.managedNodes.some(node => node.status === 'busy')) {
     return { kind: 'none', reason: 'All reachable render nodes are busy. Wait for a node or cancel the current generation.' };
   }
   if (context.managedNodes.some(node => node.status === 'online')) {
-    return { kind: 'none', reason: 'Orchestrator reports a healthy node, but this browser cannot reach its ComfyUI URL; possible network, mixed-content, CORS, or server issue. Check Manage Nodes.' };
+    return { kind: 'none', reason: 'No reachable managed ComfyUI node. Check Manage Nodes, network, CORS, or mixed-content policy.' };
   }
-  return { kind: 'none', reason: 'No reachable ComfyUI node. Check Manage Nodes or the direct ComfyUI URL.' };
+  return { kind: 'none', reason: 'No reachable managed ComfyUI node. Check Manage Nodes.' };
 }
 
 export function getGenerationDisabledReason(

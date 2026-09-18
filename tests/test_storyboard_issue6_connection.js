@@ -75,9 +75,9 @@ async function main() {
     { id: 'a', name: 'A', url: 'http://a', status: 'online', os: 'linux' },
     { id: 'b', name: 'B', url: 'http://b', status: 'online', os: 'linux' },
   ];
-  const connected = { 'http://a': 'connected', 'http://b': 'connected', 'http://direct': 'connected' };
+  const connected = { 'http://a': 'connected', 'http://b': 'connected' };
   const base = {
-    directUrl: 'http://direct', managedNodes: nodes, browserStatuses: connected,
+    managedNodes: nodes, browserStatuses: connected,
     selectedBackendIds: [], connectionStatus: 'connected',
   };
   assert.equal(target.resolveGenerationTarget({ ...base, panelNodeId: 'a' }).url, 'http://a');
@@ -86,8 +86,79 @@ async function main() {
   assert.match(target.getGenerationDisabledReason(true, { ...base, panelNodeId: 'a', managedNodes: [{ ...nodes[0], status: 'offline' }, nodes[1]] }), /offline/);
   assert.equal(target.resolveGenerationTarget({ ...base, panelNodeId: 'auto' }).url, 'http://a');
   assert.equal(target.resolveGenerationTarget({ ...base, selectedBackendIds: ['b'] }).url, 'http://b');
-  assert.equal(target.resolveGenerationTarget({ ...base, managedNodes: [], panelNodeId: '' }).url, 'http://direct');
-  assert.equal(target.resolveGenerationTarget({ ...base, directUrl: 'http://a', managedNodes: [{ ...nodes[0], status: 'offline' }], panelNodeId: '' }).kind, 'none', 'managed URL is never used as an unmanaged fallback');
+  const noNodes = target.resolveGenerationTarget({
+    ...base,
+    managedNodes: [],
+    browserStatuses: { 'http://legacy-direct': 'connected' },
+    panelNodeId: '',
+  });
+  assert.equal(noNodes.kind, 'none');
+  assert.match(noNodes.reason, /Manage Nodes/);
+  assert.equal(target.resolveGenerationTarget({
+    ...base,
+    managedNodes: [{ ...nodes[0], status: 'offline' }],
+    browserStatuses: { 'http://legacy-direct': 'connected' },
+    panelNodeId: '',
+  }).kind, 'none', 'offline managed nodes cannot fall back to an unmanaged URL');
+  assert.equal(target.resolveGenerationTarget({
+    ...base,
+    managedNodes: [{ ...nodes[0], status: 'busy' }],
+    browserStatuses: { 'http://legacy-direct': 'connected' },
+    panelNodeId: '',
+  }).kind, 'none', 'busy managed nodes cannot fall back to an unmanaged URL');
+  assert.equal(target.resolveGenerationTarget({ ...base, panelNodeId: 'missing' }).kind, 'blocked');
+
+  const lifecycle = loadLifecycleService(probeService);
+  const remoteUrls = lifecycle.getManagedComfyUIProbeUrls([
+    { url: 'http://remote:8188/' },
+    { url: 'http://remote:8188' },
+    { url: 'http://other:8188' },
+  ]);
+  assert.deepEqual(Array.from(remoteUrls), ['http://remote:8188', 'http://other:8188']);
+  const probedRemoteUrls = [];
+  const cleanupRemote = lifecycle.startComfyUIProbeLifecycle({
+    urls: remoteUrls,
+    probe: async url => { probedRemoteUrls.push(url); return { ok: true }; },
+    setStatuses: () => {},
+    onResult: () => {},
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  cleanupRemote();
+  assert.deepEqual(probedRemoteUrls, Array.from(remoteUrls));
+  assert.equal(probedRemoteUrls.some(url => url.includes('localhost')), false);
+
+  const cleanupNoNodes = lifecycle.startComfyUIProbeLifecycle({
+    urls: lifecycle.getManagedComfyUIProbeUrls([]),
+    probe: async () => { throw new Error('no probe expected'); },
+    setStatuses: statuses => assert.equal(Object.keys(statuses).length, 0),
+    onResult: () => {},
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  await Promise.resolve();
+  cleanupNoNodes();
+
+  const localNode = { id: 'local', name: 'Local', url: 'http://localhost:8188', status: 'online', os: 'linux' };
+  assert.equal(target.resolveGenerationTarget({
+    ...base,
+    managedNodes: [localNode],
+    browserStatuses: { 'http://localhost:8188': 'connected' },
+    panelNodeId: 'local',
+  }).url, 'http://localhost:8188');
+  const probedLocalUrls = [];
+  const cleanupLocal = lifecycle.startComfyUIProbeLifecycle({
+    urls: lifecycle.getManagedComfyUIProbeUrls([localNode]),
+    probe: async url => { probedLocalUrls.push(url); return { ok: true }; },
+    setStatuses: () => {},
+    onResult: () => {},
+    setIntervalFn: () => 1,
+    clearIntervalFn: () => {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  cleanupLocal();
+  assert.deepEqual(probedLocalUrls, ['http://localhost:8188']);
 
   let intervalCallback;
   let cleared = false;
@@ -96,7 +167,6 @@ async function main() {
   let resolveNew;
   const oldPromise = new Promise(resolve => { resolveOld = resolve; });
   const newPromise = new Promise(resolve => { resolveNew = resolve; });
-  const lifecycle = loadLifecycleService(probeService);
   const cleanupA = lifecycle.startComfyUIProbeLifecycle({
     urls: ['http://old'],
     setStatuses: statuses => assert.equal(statuses['http://old'], 'connecting'),

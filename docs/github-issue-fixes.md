@@ -3,7 +3,7 @@
 ## Status
 
 - **#4/#8 — Local LLM endpoints:** The endpoint-construction bugs were identified and the existing `llm_service.py` change passes **24 focused mocked tests** in `tests/test_llm_local_endpoints.py`. The original #8 cause is not confirmed without a reporter reproduction.
-- **#6 — Generate button:** Addressed for the standard mocked connection cases. Browser reachability is checked separately from Orchestrator health, managed-node assignments are respected, and stale probes are ignored and cleaned up.
+- **#6 — Generate button:** Addressed for the standard mocked connection cases. Browser reachability is checked separately from Orchestrator health, managed-node assignments are respected, and stale probes are ignored and cleaned up. Storyboard now probes and dispatches only configured managed nodes; the legacy saved `comfy_url` remains compatible but cannot create an implicit localhost/direct fallback. With no managed nodes, generation is disabled with Manage Nodes guidance.
 - **#7 — Checkpoint selector:** Addressed for standard API-format and graph-format workflows. Parsing stays offline/import-safe with only the imported checkpoint; the editor merges URL-qualified `/object_info` options without reinitializing edited values or LoRA metadata.
 - The original reporter workflow JSON was not provided for #6 or #7.
 - **#9 — Recovery hint:** A qualified ErrorBoundary hint now appears for `NotFoundError`/`removeChild`-style DOM mutation errors. This is not a confirmed fix until the reporter verifies it.
@@ -23,7 +23,7 @@ The focused #7 check mounts the production `WorkflowEditor`, drives its real upd
 
 ## Reporter steps
 
-1. Start ComfyUI with its normal local URL; do not use a proxy.
+1. Add the intended ComfyUI URL in Storyboard → Manage Nodes (localhost is valid only when explicitly added); do not rely on a saved legacy direct URL.
 2. Open Storyboard, select/import a workflow, and wait for the visible connection prerequisite message to settle.
 3. If Generate remains disabled, open **Manage Nodes**, verify the exact browser-reachable `http(s)` URL and CORS/mixed-content policy, then retry.
 4. For #7, import/export the workflow in API format if possible and confirm the Checkpoint selector retains the imported checkpoint. If it is missing, capture the offline workflow JSON and browser console.

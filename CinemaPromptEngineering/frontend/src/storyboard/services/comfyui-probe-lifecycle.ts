@@ -1,4 +1,8 @@
-import { probeComfyUI, type ComfyUIProbeResult } from '../comfyui-client';
+import { normalizeComfyUIUrl, probeComfyUI, type ComfyUIProbeResult } from '../comfyui-client';
+
+export function getManagedComfyUIProbeUrls(nodes: Array<{ url: string }>): string[] {
+  return [...new Set(nodes.map(node => normalizeComfyUIUrl(node.url)).filter(Boolean))];
+}
 
 export interface ProbeLifecycleOptions {
   urls: string[];
