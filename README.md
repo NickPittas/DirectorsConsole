@@ -960,8 +960,8 @@ python scripts/check.py
 ### Running Tests
 
 ```bash
-# Root and Orchestrator suites without a custom PYTHONPATH
-python -m pytest -c pytest.ini tests/ Orchestrator/tests/ -v
+# Root and Orchestrator suites in the pinned Python 3.11 environment
+uv run --no-project --python 3.11 --with-requirements requirements-dev.txt python -m pytest -c pytest.ini tests/ Orchestrator/tests/ -v
 
 # Specific test files
 python -m pytest tests/test_cpe_api.py -v

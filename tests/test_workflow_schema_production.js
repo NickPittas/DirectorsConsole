@@ -96,7 +96,10 @@ class Element extends Node {
     this.nodeName = this.tagName;
     this.namespaceURI = namespaceURI;
     this.attributes = new Map();
-    this.style = {};
+    this.style = {
+      setProperty: (name, value) => { this.style[name] = value; },
+      removeProperty: name => { delete this.style[name]; },
+    };
     this.className = '';
     this._text = '';
     this.value = '';

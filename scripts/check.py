@@ -13,14 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "CinemaPromptEngineering" / "frontend"
 NODE = shutil.which("node") or "node"
 NPM = "npm.cmd" if os.name == "nt" else "npm"
+UV = shutil.which("uv")
+PYTEST = (
+    [UV, "run", "--no-project", "--python", "3.11", "--with-requirements", str(ROOT / "requirements-dev.txt"), "python", "-m", "pytest"]
+    if UV
+    else [sys.executable, "-m", "pytest"]
+)
 
 CHECKS = [
     (
         "Python tests",
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *PYTEST,
             "-c",
             "pytest.ini",
             "tests/",

@@ -24,7 +24,7 @@ LLM_MODULE = importlib.import_module("api.providers.llm_service")
 
 BASE_OUTPUT = """How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 8.25-second mark of the target video.
 
-integrated_multimodal_description: [Shot 1] The scene develops from <Picture 1> toward <Picture 2>.
+integrated_multimodal_description: [Shot 1] The scene develops from <Picture 1> toward <Picture 2>; <d>[English] literal words</d>.
 
 overall_soundscape: N/A
 
@@ -37,7 +37,7 @@ summary:
 retention_analysis:
 <Subject 1>: fully_preserved
 detailed_description:
-[Shot 1] <Subject 1> moves through the supplied setting.
+[Shot 1] <Subject 1> moves through the supplied setting with <d>[English] literal words</d>.
 overall_soundscape:
 N/A
 non_diegetic_music:
@@ -226,14 +226,22 @@ def test_endpoint_length_finish_is_structured_failure(
 @pytest.mark.parametrize(
     "content",
     [
-        "preamble\\nintegrated_multimodal_description: [Shot 1] x\\n\\noverall_soundscape: N/A\\n\\nnon_diegetic_music: N/A",
-        "integrated_multimodal_description:\\n\\noverall_soundscape: N/A\\n\\nnon_diegetic_music: N/A",
+        """preamble
+integrated_multimodal_description: [Shot 1] <Picture 1> <d>[English] literal</d>
+
+overall_soundscape: N/A
+
+non_diegetic_music: N/A""",
+        """integrated_multimodal_description:
+
+overall_soundscape: N/A
+
+non_diegetic_music: N/A""",
     ],
 )
 def test_endpoint_rejects_prefaced_or_empty_h3_sections(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
 ) -> None:
-    content = content.replace(chr(92) + "n", chr(10))
     session = _Session(_provider_body("openai", content))
     monkeypatch.setattr(LLM_MODULE.aiohttp, "ClientSession", lambda: session)
     monkeypatch.setattr(main, "get_credential_storage", lambda: CredentialStorage(tmp_path / "empty.db"))
