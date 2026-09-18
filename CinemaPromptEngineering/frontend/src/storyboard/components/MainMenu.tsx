@@ -21,66 +21,20 @@ import {
   X
 } from 'lucide-react';
 import './MainMenu.css';
+import {
+  clearRecentProjects,
+  getRecentProjects,
+  removeRecentProject,
+  type RecentProject,
+} from '../services/project-recent';
 
-// ---------------------------------------------------------------------------
-// Recent Projects utility — stored in localStorage
-// ---------------------------------------------------------------------------
-
-const RECENT_PROJECTS_KEY = 'storyboard_recent_projects';
-const MAX_RECENTS = 10;
-
-export interface RecentProject {
-  name: string;
-  path: string;         // The _project.json file path
-  projectDir: string;   // The directory containing the project
-  lastOpened: string;    // ISO date
-}
-
-export function getRecentProjects(): RecentProject[] {
-  try {
-    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function addRecentProject(name: string, projectFilePath: string): void {
-  const recents = getRecentProjects();
-  // Derive the project directory
-  const lastSlash = Math.max(projectFilePath.lastIndexOf('/'), projectFilePath.lastIndexOf('\\'));
-  const projectDir = lastSlash > 0 ? projectFilePath.substring(0, lastSlash) : projectFilePath;
-
-  // Remove any existing entry for the same path (case-insensitive)
-  const filtered = recents.filter(
-    r => r.path.toLowerCase() !== projectFilePath.toLowerCase()
-  );
-
-  // Prepend new entry
-  filtered.unshift({
-    name: name || projectDir.split('/').pop() || 'Untitled',
-    path: projectFilePath,
-    projectDir,
-    lastOpened: new Date().toISOString(),
-  });
-
-  // Trim to max
-  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filtered.slice(0, MAX_RECENTS)));
-}
-
-export function removeRecentProject(projectFilePath: string): void {
-  const recents = getRecentProjects();
-  const filtered = recents.filter(
-    r => r.path.toLowerCase() !== projectFilePath.toLowerCase()
-  );
-  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(filtered));
-}
-
-export function clearRecentProjects(): void {
-  localStorage.removeItem(RECENT_PROJECTS_KEY);
-}
+export {
+  addRecentProject,
+  clearRecentProjects,
+  getRecentProjects,
+  removeRecentProject,
+} from '../services/project-recent';
+export type { RecentProject } from '../services/project-recent';
 
 // ---------------------------------------------------------------------------
 

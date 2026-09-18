@@ -33,6 +33,11 @@ import { trashFiles } from './services/gallery-service';
 import { DropMoveDialog } from './components/DropMoveDialog';
 import { MoveToNewFolderDialog } from './components/MoveToNewFolderDialog';
 import { RefreshCw } from 'lucide-react';
+import {
+  getGalleryStatus,
+  isCurrentGalleryRequest,
+  runGuardedGalleryRequest,
+} from './gallery-loading';
 import './GalleryUI.css';
 
 // =============================================================================
@@ -42,6 +47,8 @@ import './GalleryUI.css';
 interface GalleryUIProps {
   orchestratorUrl: string;
   projectPath: string;
+  projectRevision?: number;
+  isProjectLoading?: boolean;
   /** When false the component is mounted but hidden — skip heavy data loading */
   isActive?: boolean;
 }
@@ -77,7 +84,13 @@ function buildBreadcrumbs(
 // Component
 // =============================================================================
 
-export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: GalleryUIProps) {
+export function GalleryUI({
+  orchestratorUrl,
+  projectPath,
+  projectRevision = 0,
+  isProjectLoading = false,
+  isActive = true,
+}: GalleryUIProps) {
   const {
     folderTree,
     currentPath,
@@ -146,105 +159,120 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
   const [sidebarWidth, setSidebarWidth] = useState(250);
   const resizingRef = useRef(false);
   const folderLoadIdRef = useRef(0);
+  const galleryLoadIdRef = useRef(0);
 
   // ---------------------------------------------------------------------------
   // Data loading
   // ---------------------------------------------------------------------------
 
-  const loadFolderFiles = useCallback(async (folderPath: string) => {
+  const loadFolderFiles = useCallback(async (
+    folderPath: string,
+    requestId = galleryLoadIdRef.current,
+  ) => {
     if (!orchestratorUrl || !projectPath) return;
 
+    const requestProjectPath = projectPath;
     const loadId = ++folderLoadIdRef.current;
+    const isCurrent = () =>
+      loadId === folderLoadIdRef.current &&
+      isCurrentGalleryRequest(
+        requestId,
+        galleryLoadIdRef.current,
+        requestProjectPath,
+        projectPathRef.current,
+      );
     setIsLoadingFiles(true);
     try {
-      const result = await galleryService.scanFolder(orchestratorUrl, folderPath, projectPath);
-      if (loadId !== folderLoadIdRef.current) return; // stale — user clicked another folder
+      const result = await galleryService.scanFolder(orchestratorUrl, folderPath, requestProjectPath);
+      if (!isCurrent()) return; // stale — user changed project or folder
       if (result.success) {
         setCurrentFiles(result.files);
       } else {
-        setCurrentFiles([]);
+        setError(result.message || 'Failed to load files');
       }
     } catch (err) {
-      if (loadId !== folderLoadIdRef.current) return; // stale
+      if (!isCurrent()) return; // stale
       console.warn('Failed to load folder files:', err);
-      setCurrentFiles([]);
+      setError(err instanceof Error ? err.message : 'Failed to load files');
     } finally {
-      if (loadId === folderLoadIdRef.current) {
+      if (isCurrent()) {
         setIsLoadingFiles(false);
       }
     }
-  }, [orchestratorUrl, projectPath, setCurrentFiles, setIsLoadingFiles]);
+  }, [orchestratorUrl, projectPath, setCurrentFiles, setIsLoadingFiles, setError]);
 
   const loadGalleryData = useCallback(async () => {
-    if (!projectPath || !orchestratorUrl) return;
+    if (!projectPath) return;
+    if (!orchestratorUrl) {
+      setError('Gallery server is not configured');
+      setIsLoading(false);
+      return;
+    }
 
+    const requestId = ++galleryLoadIdRef.current;
     setIsLoading(true);
     setError(null);
 
-    try {
-      // Fire lightweight requests in parallel — NO full recursive scan
-      const [treeResult, ratingsResult, tagsResult, viewResult] = await Promise.all([
-        galleryService.scanTree(orchestratorUrl, projectPath),
-        galleryService.getRatings(orchestratorUrl, projectPath).catch(() => ({ success: false, ratings: {} })),
-        galleryService.listTags(orchestratorUrl, projectPath).catch(() => ({ success: false, tags: [] })),
-        galleryService.getView(orchestratorUrl, projectPath).catch(() => null),
-      ]);
-
-      // Guard against stale response if projectPath changed mid-flight
-      if (projectPathRef.current !== projectPath) return;
-
-      if (treeResult.success) {
-        setFolderTree(treeResult.folders);
-      }
-
-      if (ratingsResult.success) {
-        setRatings(ratingsResult.ratings);
-      }
-      if (tagsResult.success) {
-        setAllTags(tagsResult.tags);
-      }
-
-      // Restore view state
-      let restoredPath = '';
-      if (viewResult?.success && viewResult.view) {
-        const v = viewResult.view;
-        if (v.view_mode) setViewMode(v.view_mode as 'grid' | 'list' | 'masonry');
-        if (v.sort_field) setSortField(v.sort_field as 'name' | 'modified' | 'created' | 'size' | 'type' | 'rating');
-        if (v.sort_direction) setSortDirection(v.sort_direction as 'asc' | 'desc');
-        if (v.thumbnail_size) setThumbnailSize(v.thumbnail_size);
-        if (v.current_path) {
-          restoredPath = v.current_path;
-          setCurrentPath(v.current_path);
-          setBreadcrumbs(buildBreadcrumbs(v.current_path, projectPath));
+    await runGuardedGalleryRequest(
+      requestId,
+      projectPath,
+      () => ({
+        requestId: galleryLoadIdRef.current,
+        projectPath: projectPathRef.current,
+      }),
+      async () => {
+        // Fire lightweight requests in parallel — NO full recursive scan
+        const [treeResult, ratingsResult, tagsResult, viewResult] = await Promise.all([
+          galleryService.scanTree(orchestratorUrl, projectPath),
+          galleryService.getRatings(orchestratorUrl, projectPath).catch(() => ({ success: false, ratings: {} })),
+          galleryService.listTags(orchestratorUrl, projectPath).catch(() => ({ success: false, tags: [] })),
+          galleryService.getView(orchestratorUrl, projectPath).catch(() => null),
+        ]);
+        return { treeResult, ratingsResult, tagsResult, viewResult };
+      },
+      async ({ treeResult, ratingsResult, tagsResult, viewResult }) => {
+        if (treeResult.success) {
+          setFolderTree(treeResult.folders);
+        } else {
+          throw new Error(treeResult.message || 'Failed to scan folders');
         }
-        if (v.filters_json) {
-          try {
-            const filters = JSON.parse(v.filters_json);
-            if (filters.filterType) setFilterType(filters.filterType);
-            if (filters.filterRating !== undefined) setFilterRating(filters.filterRating);
-            if (filters.filterTags) setFilterTags(filters.filterTags);
-          } catch { /* ignore */ }
+
+        if (ratingsResult.success) setRatings(ratingsResult.ratings);
+        if (tagsResult.success) setAllTags(tagsResult.tags);
+
+        // Restore view state
+        let restoredPath = '';
+        if (viewResult?.success && viewResult.view) {
+          const v = viewResult.view;
+          if (v.view_mode) setViewMode(v.view_mode as 'grid' | 'list' | 'masonry');
+          if (v.sort_field) setSortField(v.sort_field as 'name' | 'modified' | 'created' | 'size' | 'type' | 'rating');
+          if (v.sort_direction) setSortDirection(v.sort_direction as 'asc' | 'desc');
+          if (v.thumbnail_size) setThumbnailSize(v.thumbnail_size);
+          if (v.current_path) {
+            restoredPath = v.current_path;
+            setCurrentPath(v.current_path);
+            setBreadcrumbs(buildBreadcrumbs(v.current_path, projectPath));
+          }
+          if (v.filters_json) {
+            try {
+              const filters = JSON.parse(v.filters_json);
+              if (filters.filterType) setFilterType(filters.filterType);
+              if (filters.filterRating !== undefined) setFilterRating(filters.filterRating);
+              if (filters.filterTags) setFilterTags(filters.filterTags);
+            } catch { /* ignore */ }
+          }
         }
-      }
 
-      // If no saved path was restored, set the store to project root
-      if (!restoredPath) {
-        setCurrentPath(projectPath);
-        setBreadcrumbs(buildBreadcrumbs(projectPath, projectPath));
-      }
-      // Now load files for the active folder (restored path or project root)
-      const activePath = restoredPath || projectPath;
-      await loadFolderFiles(activePath);
-
-    } catch (err) {
-      if (projectPathRef.current === projectPath) {
-        setError(err instanceof Error ? err.message : 'Failed to load gallery data');
-      }
-    } finally {
-      if (projectPathRef.current === projectPath) {
-        setIsLoading(false);
-      }
-    }
+        const activePath = restoredPath || projectPath;
+        if (!restoredPath) {
+          setCurrentPath(projectPath);
+          setBreadcrumbs(buildBreadcrumbs(projectPath, projectPath));
+        }
+        await loadFolderFiles(activePath, requestId);
+      },
+      (err) => setError(err instanceof Error ? err.message : 'Failed to load gallery data'),
+      () => setIsLoading(false),
+    );
   }, [
     orchestratorUrl,
     projectPath,
@@ -268,22 +296,33 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
   // Track which projectPath we already loaded so we don't re-fetch on every
   // tab switch when the project hasn't changed.
   const loadedProjectRef = useRef<string>('');
+  const loadedProjectRevisionRef = useRef<number>(-1);
 
   // Load data when the tab becomes active with a new project, or the very
   // first time the tab is activated.  Switching away and back to the Gallery
   // tab re-uses the already-loaded data.
   useEffect(() => {
     if (!isActive) return;               // tab hidden — do nothing
-    if (!projectPath) return;            // no project configured yet
+    if (!projectPath) {
+      loadedProjectRef.current = '';
+      loadedProjectRevisionRef.current = -1;
+      galleryLoadIdRef.current += 1;
+      resetGallery();
+      return;
+    }
 
-    // Already loaded for this project — nothing to do
-    if (loadedProjectRef.current === projectPath) return;
+    // Already loaded for this project revision — nothing to do
+    if (
+      loadedProjectRef.current === projectPath
+      && loadedProjectRevisionRef.current === projectRevision
+    ) return;
 
     resetGallery();
     loadedProjectRef.current = projectPath;
+    loadedProjectRevisionRef.current = projectRevision;
     setIsLoading(true); // Set immediately so loading overlay shows (resetGallery clears it)
     loadGalleryData();
-  }, [projectPath, isActive, loadGalleryData, resetGallery, setIsLoading]);
+  }, [projectPath, projectRevision, isActive, loadGalleryData, resetGallery, setIsLoading]);
 
   // ---------------------------------------------------------------------------
   // Auto-save view state (debounced)
@@ -357,18 +396,38 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
 
   const handleRefresh = useCallback(async () => {
     if (!projectPath || !orchestratorUrl) return;
+    const requestId = ++galleryLoadIdRef.current;
+    const refreshPath = projectPath;
     const activePath = useGalleryStore.getState().currentPath || projectPath;
+    setIsLoading(true);
+    setError(null);
     // Lightweight refresh: re-scan tree structure + reload current folder files only
-    try {
-      const treeResult = await galleryService.scanTree(orchestratorUrl, projectPath);
-      if (treeResult.success) {
+    await runGuardedGalleryRequest(
+      requestId,
+      refreshPath,
+      () => ({
+        requestId: galleryLoadIdRef.current,
+        projectPath: projectPathRef.current,
+      }),
+      () => galleryService.scanTree(orchestratorUrl, refreshPath),
+      async (treeResult) => {
+        if (!treeResult.success) {
+          throw new Error(treeResult.message || 'Failed to scan folders');
+        }
         setFolderTree(treeResult.folders);
-      }
-      await loadFolderFiles(activePath);
-    } catch (err) {
-      console.warn('Refresh failed:', err);
-    }
-  }, [orchestratorUrl, projectPath, loadFolderFiles, setFolderTree]);
+        await loadFolderFiles(activePath, requestId);
+      },
+      (err) => setError(err instanceof Error ? err.message : 'Failed to refresh gallery'),
+      () => setIsLoading(false),
+    );
+  }, [
+    orchestratorUrl,
+    projectPath,
+    loadFolderFiles,
+    setFolderTree,
+    setError,
+    setIsLoading,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Folder drop (drag files from gallery grid onto folder tree items)
@@ -835,11 +894,20 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
   // Empty project guard
   // ---------------------------------------------------------------------------
 
+  const galleryStatus = getGalleryStatus({
+    projectPath,
+    isProjectLoading,
+    isLoading,
+    isLoadingFiles,
+    error,
+    currentFiles,
+  });
+
   if (!projectPath) {
     return (
       <div className="gallery-ui">
-        <div className="gallery-empty-state">
-          Open a project in Storyboard to browse the gallery
+        <div className="gallery-empty-state" role={galleryStatus.kind === 'loading' ? 'status' : undefined}>
+          {galleryStatus.message}
         </div>
       </div>
     );
@@ -917,12 +985,20 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
 
         {/* Error banner */}
         {error && (
-          <div className="gallery-error-banner">
-            <span>{error}</span>
+          <div className="gallery-error-banner" role="alert">
+            <span>{galleryStatus.message}</span>
+            <button
+              className="gallery-error-retry"
+              onClick={handleRefresh}
+              type="button"
+            >
+              Retry
+            </button>
             <button
               className="gallery-error-dismiss"
               onClick={handleDismissError}
               aria-label="Dismiss error"
+              type="button"
             >
               &times;
             </button>
@@ -931,9 +1007,10 @@ export function GalleryUI({ orchestratorUrl, projectPath, isActive = true }: Gal
 
         {/* Content area with loading overlay */}
         <div className="gallery-content">
-          {(isLoading || isLoadingFiles) && (
-            <div className="gallery-loading-overlay">
+          {!error && (isLoading || isLoadingFiles || isProjectLoading) && (
+            <div className="gallery-loading-overlay" role="status" aria-live="polite">
               <div className="spinner" />
+              <span>{galleryStatus.message}</span>
             </div>
           )}
           {showTimeline ? (

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CinemaPromptEngineering } from './CinemaPromptEngineering';
 import { StoryboardUI } from './StoryboardUI';
 import { GalleryUI } from './gallery';
+import { projectManager } from './storyboard/services/project-manager';
 import OAuthCallback from '@/components/OAuthCallback';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './App.css';
@@ -27,49 +28,14 @@ const TABS: Tab[] = [
 
 function DirectorsConsole() {
   const [activeTab, setActiveTab] = useState<TabId>('cinema');
+  const [galleryProject, setGalleryProject] = useState(() => projectManager.getProject());
+  const [projectRevision, setProjectRevision] = useState(0);
+  const [isProjectLoading, setIsProjectLoading] = useState(false);
 
-  // Read project settings from Storyboard's saved state for Gallery.
-  // Load eagerly (on mount) so the values are ready when the user clicks
-  // the Gallery tab — avoids a wasted render cycle with empty props.
-  const [galleryProjectPath, setGalleryProjectPath] = useState(() => {
-    try {
-      const saved = localStorage.getItem('storyboard_project_settings');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.path || '';
-      }
-    } catch { /* ignore */ }
-    return '';
-  });
-  const [galleryOrchestratorUrl, setGalleryOrchestratorUrl] = useState(() => {
-    try {
-      const saved = localStorage.getItem('storyboard_project_settings');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.orchestratorUrl || '';
-      }
-    } catch { /* ignore */ }
-    return '';
-  });
-
-  useEffect(() => {
-    // Only poll for project setting changes while Gallery tab is active
-    if (activeTab !== 'gallery') return;
-
-    const loadProjectSettings = () => {
-      try {
-        const saved = localStorage.getItem('storyboard_project_settings');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.path) setGalleryProjectPath(parsed.path);
-          if (parsed.orchestratorUrl) setGalleryOrchestratorUrl(parsed.orchestratorUrl);
-        }
-      } catch { /* ignore */ }
-    };
-    // No need to call immediately — initial values already read above
-    const interval = setInterval(loadProjectSettings, 2000);
-    return () => clearInterval(interval);
-  }, [activeTab]);
+  useEffect(() => projectManager.subscribe((settings) => {
+    setGalleryProject(settings);
+    setProjectRevision((revision) => revision + 1);
+  }), []);
 
   return (
     <div className="directors-console">
@@ -103,12 +69,18 @@ function DirectorsConsole() {
         </div>
         <div style={{ display: activeTab === 'storyboard' ? 'contents' : 'none' }}>
           <ErrorBoundary>
-            <StoryboardUI />
+            <StoryboardUI onProjectLoadingChange={setIsProjectLoading} />
           </ErrorBoundary>
         </div>
         <div style={{ display: activeTab === 'gallery' ? 'contents' : 'none' }}>
           <ErrorBoundary>
-            <GalleryUI orchestratorUrl={galleryOrchestratorUrl} projectPath={galleryProjectPath} isActive={activeTab === 'gallery'} />
+            <GalleryUI
+              orchestratorUrl={galleryProject.orchestratorUrl}
+              projectPath={galleryProject.path}
+              projectRevision={projectRevision}
+              isProjectLoading={isProjectLoading}
+              isActive={activeTab === 'gallery'}
+            />
           </ErrorBoundary>
         </div>
       </main>

@@ -47,6 +47,16 @@ export interface ProjectSettings {
   lastModified: Date;
 }
 
+export interface ProjectIdentity {
+  name: string;
+  path: string;
+  orchestratorUrl: string;
+}
+
+export interface MediaSaveOptions {
+  notifyRevision?: boolean;
+}
+
 // ============================================================================
 // Phase 3: Scan Project Images Interfaces
 // ============================================================================
@@ -152,9 +162,14 @@ const DEFAULT_PROJECT: ProjectSettings = {
 // ProjectManager Class
 // ============================================================================
 
-class ProjectManager {
+export type ProjectSettingsListener = (settings: ProjectSettings) => void;
+
+export class ProjectManager {
   private currentProject: ProjectSettings = { ...DEFAULT_PROJECT };
   private storageKey = 'storyboard_project_settings';
+  private listeners = new Set<ProjectSettingsListener>();
+  private pendingMediaRevisionOrigins = new Map<string, ProjectIdentity>();
+  private mediaRevisionTimer: ReturnType<typeof setTimeout> | null = null;
   
   constructor() {
     this.loadFromStorage();
@@ -178,6 +193,53 @@ class ProjectManager {
   getProject(): ProjectSettings {
     return { ...this.currentProject };
   }
+
+  getProjectIdentity(): ProjectIdentity {
+    const { name, path, orchestratorUrl } = this.currentProject;
+    return { name, path, orchestratorUrl };
+  }
+
+  private projectIdentityKey(identity: ProjectIdentity): string {
+    return JSON.stringify([identity.name, identity.path, identity.orchestratorUrl]);
+  }
+
+  private sameProjectIdentity(a: ProjectIdentity, b: ProjectIdentity): boolean {
+    return this.projectIdentityKey(a) === this.projectIdentityKey(b);
+  }
+
+  /** Coalesce successful media-save refreshes without writing project metadata. */
+  notifyMediaRevision(origin: ProjectIdentity): void {
+    if (!this.sameProjectIdentity(origin, this.getProjectIdentity())) return;
+    const key = this.projectIdentityKey(origin);
+    this.pendingMediaRevisionOrigins.set(key, origin);
+    if (this.mediaRevisionTimer) clearTimeout(this.mediaRevisionTimer);
+
+    this.mediaRevisionTimer = setTimeout(() => {
+      this.mediaRevisionTimer = null;
+      const current = this.getProjectIdentity();
+      const currentKey = this.projectIdentityKey(current);
+      const shouldNotify = this.pendingMediaRevisionOrigins.has(currentKey);
+      this.pendingMediaRevisionOrigins.clear();
+      if (shouldNotify) this.notifyListeners();
+    }, 100);
+  }
+
+  /** Subscribe to project identity/settings changes. Returns an unsubscribe function. */
+  subscribe(listener: ProjectSettingsListener): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private notifyListeners(): void {
+    const settings = this.getProject();
+    for (const listener of this.listeners) {
+      try {
+        listener(settings);
+      } catch (error) {
+        console.error('[ProjectManager] Project settings listener failed:', error);
+      }
+    }
+  }
   
   setProject(settings: Partial<ProjectSettings>): void {
     this.currentProject = {
@@ -186,6 +248,7 @@ class ProjectManager {
       lastModified: new Date(),
     };
     this.saveToStorage();
+    this.notifyListeners();
     
     // Sync with backend
     this.syncProjectWithBackend();
@@ -223,6 +286,7 @@ class ProjectManager {
   resetProject(): void {
     this.currentProject = { ...DEFAULT_PROJECT, created: new Date(), lastModified: new Date() };
     this.saveToStorage();
+    this.notifyListeners();
   }
   
   // ---------------------------------------------------------------------------
@@ -531,8 +595,10 @@ class ProjectManager {
     panelId: number,
     version: number,
     metadata: ImageMetadata,
-    panelName?: string
+    panelName?: string,
+    options: MediaSaveOptions = {},
   ): Promise<{ success: boolean; savedPath?: string; error?: string }> {
+    const origin = this.getProjectIdentity();
     const orchestratorUrl = this.currentProject.orchestratorUrl;
     
     if (!this.currentProject.path) {
@@ -590,6 +656,7 @@ class ProjectManager {
       
       if (result.success) {
         console.log(`[ProjectManager] Saved to: ${result.saved_path}`);
+        if (options.notifyRevision !== false) this.notifyMediaRevision(origin);
         return { 
           success: true, 
           savedPath: result.saved_path 
@@ -1034,6 +1101,7 @@ class ProjectManager {
       }
       
       const result = await response.json();
+      if (result.success) this.notifyListeners();
       return {
         success: result.success,
         savedPath: result.saved_path,
@@ -1094,6 +1162,7 @@ class ProjectManager {
           lastModified: new Date(settings.lastModified),
         };
         this.saveToStorage();
+        this.notifyListeners();
         
         return {
           success: true,

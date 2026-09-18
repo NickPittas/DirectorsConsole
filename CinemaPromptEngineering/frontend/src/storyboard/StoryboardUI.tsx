@@ -18,7 +18,7 @@ import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPa
 import { CameraAngle } from './data/cameraAngleData';
 import { useErrorNotifications, ErrorNotificationContainer } from './components/ErrorNotification';
 import { NodeManager } from './components/NodeManager';
-import { MainMenu, addRecentProject } from './components/MainMenu';
+import { MainMenu } from './components/MainMenu';
 import { MultiSelectDropdown } from './components/MultiSelectDropdown';
 import { MultiNodeSelector } from '../components/MultiNodeSelector';
 import { WorkflowCategoriesModal } from './components/WorkflowCategoriesModal';
@@ -39,6 +39,7 @@ import {
 } from './services/generation-target';
 import { getManagedComfyUIProbeUrls, startComfyUIProbeLifecycle } from './services/comfyui-probe-lifecycle';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
+import { saveProjectAndRecordRecent, loadProjectAndRecordRecent } from './services/project-actions';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { FileBrowserDialog } from './components/FileBrowser';
@@ -292,7 +293,11 @@ interface LogEntry {
 // StoryboardUI Component
 // ============================================================================
 
-export function StoryboardUI() {
+interface StoryboardUIProps {
+  onProjectLoadingChange?: (isLoading: boolean) => void;
+}
+
+export function StoryboardUI({ onProjectLoadingChange }: StoryboardUIProps = {}) {
   // ---------------------------------------------------------------------------
   // Error Notifications
   // ---------------------------------------------------------------------------
@@ -939,6 +944,9 @@ export function StoryboardUI() {
   
   // Phase 4: Loading progress state for project scanning
   const [isLoadingProject, setIsLoadingProject] = useState(false);
+  useEffect(() => {
+    onProjectLoadingChange?.(isLoadingProject);
+  }, [isLoadingProject, onProjectLoadingChange]);
   const [loadingProgress, setLoadingProgress] = useState({
     progress: 0,
     currentFile: '',
@@ -3373,6 +3381,8 @@ export function StoryboardUI() {
                    // CRITICAL FIX: Use unified getNextVersion() to prevent version collisions
                    // Use panelsRef.current to avoid stale closure from WebSocket callback
                    const panelsSnapshot = [...panelsRef.current];
+                   const mediaSaveOrigin = projectManager.getProjectIdentity();
+                   let mediaSavedForBatch = false;
                    await (async () => {
                      try {
                         // Get the panel to determine its current history
@@ -3406,10 +3416,12 @@ export function StoryboardUI() {
                           panelId,
                           version,
                           entry.metadata,
-                          panelName  // CRITICAL: Pass panel name for per-panel folder creation
+                          panelName,  // CRITICAL: Pass panel name for per-panel folder creation
+                          { notifyRevision: false },
                         );
                         
                          if (result.success) {
+                           mediaSavedForBatch = true;
                            addLog('info', `Saved: ${result.savedPath}`);
                            // Match by URL since entry.id differs between auto-save and UI state entries
                            setPanels(prev => prev.map(p => {
@@ -3427,6 +3439,8 @@ export function StoryboardUI() {
                        }
                      } catch (err) {
                        addLog('error', `Auto-save exception: ${err}`);
+                     } finally {
+                       if (mediaSavedForBatch) projectManager.notifyMediaRevision(mediaSaveOrigin);
                      }
                    })();
                  } else if (currentSettings.autoSave && !currentSettings.path) {
@@ -3979,23 +3993,22 @@ export function StoryboardUI() {
   
   // Save project handler
   const handleSaveProject = useCallback(async () => {
-    const result = await projectManager.saveProjectState(
-      panels,
-      undefined, // Workflows are NOT saved in projects — they belong to the application
-      parameterValues,
-      {
-        selectedWorkflowId: selectedWorkflowId || undefined,
-        renderNodes: renderNodes,
-        comfyUrl: comfyUrl,
-        cameraAngles: cameraAngles,
-      }
+    const result = await saveProjectAndRecordRecent(
+      projectSettings.name || 'Untitled',
+      () => projectManager.saveProjectState(
+        panels,
+        undefined, // Workflows are NOT saved in projects — they belong to the application
+        parameterValues,
+        {
+          selectedWorkflowId: selectedWorkflowId || undefined,
+          renderNodes: renderNodes,
+          comfyUrl: comfyUrl,
+          cameraAngles: cameraAngles,
+        }
+      ),
     );
     if (result.success) {
       showInfo(`Project saved to ${result.savedPath}`);
-      // Track in recent projects for quick access
-      if (result.savedPath) {
-        addRecentProject(projectSettings.name || 'Untitled', result.savedPath);
-      }
     } else {
       showError(`Failed to save project: ${result.error}`);
     }
@@ -4028,16 +4041,19 @@ export function StoryboardUI() {
     projectManager.setProject(newSettings);
 
     // Save the project
-    const result = await projectManager.saveProjectState(
-      panels,
-      undefined, // Workflows are NOT saved in projects — they belong to the application
-      parameterValues,
-      {
-        selectedWorkflowId: selectedWorkflowId || undefined,
-        renderNodes: renderNodes,
-        comfyUrl: comfyUrl,
-        cameraAngles: cameraAngles,
-      }
+    const result = await saveProjectAndRecordRecent(
+      projectName,
+      () => projectManager.saveProjectState(
+        panels,
+        undefined, // Workflows are NOT saved in projects — they belong to the application
+        parameterValues,
+        {
+          selectedWorkflowId: selectedWorkflowId || undefined,
+          renderNodes: renderNodes,
+          comfyUrl: comfyUrl,
+          cameraAngles: cameraAngles,
+        }
+      ),
     );
 
     if (result.success) {
@@ -4066,11 +4082,13 @@ export function StoryboardUI() {
     setLoadingProgress({ progress: 0, currentFile: 'Loading project data...' });
     
     try {
-      const result = await projectManager.loadProjectState(projectPath);
+      const result = await loadProjectAndRecordRecent(
+        projectPath,
+        () => projectManager.loadProjectState(projectPath),
+      );
       
       if (!result.success || !result.state) {
         showError(`Failed to load project: ${result.error}`);
-        setIsLoadingProject(false);
         return;
       }
       
@@ -4086,9 +4104,6 @@ export function StoryboardUI() {
       // Update React state immediately so file browser remembers path
       // even if scanning fails below
       setProjectSettings(projectManager.getProject());
-
-      // Track in recent projects for quick access
-      addRecentProject(result.state.project_settings?.name || projectDir.split('/').pop() || 'Untitled', projectPath);
 
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
@@ -4124,7 +4139,6 @@ export function StoryboardUI() {
             parameterValuesRef.current = result.state.parameter_values;
           }
         }
-        setIsLoadingProject(false);
         return;
       }
 
@@ -4323,14 +4337,10 @@ export function StoryboardUI() {
       restoredPanels.forEach(p => totalImages += p.imageHistory.length);
       showInfo(`Loaded project with ${restoredPanels.length} panels, ${totalImages} images`);
       
-      // Close loading overlay after a brief delay
-      setTimeout(() => {
-        setIsLoadingProject(false);
-      }, 500);
-      
     } catch (error) {
       console.error('[Load] Failed to load project:', error);
       showError(`Failed to load project: ${String(error)}`);
+    } finally {
       setIsLoadingProject(false);
     }
   };
@@ -4362,10 +4372,15 @@ export function StoryboardUI() {
   
   // Handle loading a specific project file
   const handleLoadSelectedProject = async (projectPath: string) => {
-    // Remember the current orchestrator URL before loadProjectState overwrites it
+    setIsLoadingProject(true);
+    try {
+      // Remember the current orchestrator URL before loadProjectState overwrites it
     const currentOrchestratorUrl = projectManager.getProject().orchestratorUrl || getDefaultOrchestratorUrl();
     
-    const result = await projectManager.loadProjectState(projectPath);
+    const result = await loadProjectAndRecordRecent(
+      projectPath,
+      () => projectManager.loadProjectState(projectPath),
+    );
     
     if (result.success && result.state) {
       // Derive the project directory from the selected file path
@@ -4573,6 +4588,12 @@ export function StoryboardUI() {
       setAvailableProjects([]);
     } else {
       showError(`Failed to load project: ${result.error}`);
+    }
+    } catch (error) {
+      console.error('[Load-Selected] Failed to load project:', error);
+      showError(`Failed to load project: ${String(error)}`);
+    } finally {
+      setIsLoadingProject(false);
     }
   };
 
@@ -4911,6 +4932,7 @@ export function StoryboardUI() {
           onRestartNodes={handleRestartNodes}
           onCancelGenerations={handleCancelGenerations}
           onPrintStoryboard={() => setShowPrintDialog(true)}
+          isLoading={isLoadingProject}
           isRestarting={isRestartingNodes}
           isGenerating={panels.some(p => p.status === 'generating') || renderNodes.some(n => n.status === 'busy')}
         />

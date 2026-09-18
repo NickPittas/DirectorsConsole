@@ -8,6 +8,14 @@
 - The original reporter workflow JSON was not provided for #6 or #7.
 - **#9 — Recovery hint:** A qualified ErrorBoundary hint now appears for `NotFoundError`/`removeChild`-style DOM mutation errors. This is not a confirmed fix until the reporter verifies it.
 
+## Workstation project/gallery UX fixes (partial recovery scope)
+
+- Recent projects are recorded only after successful Save/Save As or project-file load, using the returned save path or selected project JSON path; entries stay deduplicated and capped at 10.
+- `ProjectManager.subscribe(listener)` provides a cleanup function and publishes successful settings, project save/load/reset, and coalesced successful media-save revisions. App Gallery state uses this in-memory snapshot instead of polling localStorage; the project folder path remains separate from the project JSON path.
+- Gallery loading now distinguishes no project, pending project load, folder scanning, file loading, loaded-empty, and retryable failure. Request identities prevent late project A responses from replacing project B state.
+
+This is not the full project-recovery implementation: draft autosave, recovery UI, and startup-policy changes remain deferred to the recovery task. Gallery metadata/detail-operation limits are unchanged.
+
 ## Regression commands
 
 ```bash
@@ -16,6 +24,7 @@ python -m pytest tests/test_llm_local_endpoints.py -q
 node tests/test_storyboard_issue6_connection.js
 node tests/test_storyboard_issue7_checkpoint.js
 node tests/test_error_boundary_hint.js
+node tests/test_project_ux_fixes.js
 python scripts/check.py
 ```
 

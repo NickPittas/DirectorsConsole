@@ -41,6 +41,7 @@ CHECKS = [
             ROOT / "tests/test_storyboard_issue6_connection.js",
             ROOT / "tests/test_storyboard_issue7_checkpoint.js",
             ROOT / "tests/test_error_boundary_hint.js",
+            ROOT / "tests/test_project_ux_fixes.js",
         )
     ],
     ("Frontend lint", [NPM, "run", "lint"], FRONTEND),
