@@ -3,7 +3,7 @@
 ## Supported tools
 
 - Python 3.11 or newer
-- Node.js 22 or newer with npm
+- Node.js 22.13+ or 24+ with npm
 - A ComfyUI node is only required for live rendering; the checks below use mocks and do not contact providers or render nodes.
 
 ## Fresh checkout setup
@@ -52,15 +52,15 @@ for test in tests/test_comfyui_websocket_node.js tests/test_oauth_sync.js tests/
 
 ## Current validation snapshot
 
-Latest validation evidence:
+Latest tooling-refresh evidence:
 
-- Focused Phase 5 rerun: **25 passed**. The parameterized regression exercises the existing `generic` legacy target through both live-action and animation generation, verifies each prompt is nonempty, and preserves the exact populated `LEGACY_NEGATIVE`.
-- Full Python validation: **123 root + 183 Orchestrator = 306 passed**.
-- `git diff --check`: **passed**.
-- Previous six standalone Node regressions, frontend lint/build, installed CPE wheel smoke outside the checkout, and standalone sync-helper checks **passed** but were not repeated for this latest test-only change.
-- Independent review of all five approved implementation phases: **PASS**.
-- The audit remains **8 triaged development-tool advisories** (7 high, 1 moderate; 3 direct, 5 transitive) and unresolved; do not claim all warnings or vulnerabilities are fixed. Zero runtime advisories were recorded.
+- Resolved tooling: Vite **7.3.6**, plugin-react **5.2.0**, TypeScript ESLint parser **8.70.0**, ESLint **10.10.0**, and hooks plugin **7.1.1**. React 18, TypeScript 5.x, Terser, and application dependencies remain on their existing lines.
+- Clean temporary `npm ci` completed with **zero peer problems**. Node **22.20.0** / npm **10.9.3** passed the same install, peer check, both audits, lint, and frontend builds; `npm audit --json` and `npm audit --omit=dev --json` each report **0 vulnerabilities** at every severity.
+- `uv run --no-project --python 3.11 --with-requirements requirements-dev.txt python scripts/check.py`: **313 Python tests passed**, all **6 Node regressions passed**, frontend lint passed, and the normal build passed.
+- The same explicit Python test paths and requirements under Python **3.13** also passed: **313 passed**; the earlier 296/1 discrepancy was not reproduced.
+- Temporary normal and standalone builds passed; authoritative `npm run build:comfyui` passed and the generated relative index, JS/CSS, movie-frame, and `/api/` checks passed. Existing aiohttp bundle/API tests: **8 passed**.
+- `git diff --check`: **passed**. No providers, credentials, or live ComfyUI nodes were used.
 
 The owner approved the canonical preset wording and dropdown/value corrections. The CPE configuration screen uses the main `/options` endpoint, while the bundled ComfyUI frontend uses `/cinema_prompt/api/options`; both provide canonical composition, lighting-source, and lighting-style dropdown values. Applying a preset affects newly generated prompt text only. Existing media, cached prompt overrides, and saved workflows are not rewritten, and no visual improvement is guaranteed by this wording-only change.
 
-Live provider/account and ComfyUI image/video/two-node checks were not run. The backend `.env` loader and fresh-process environment/path/missing-file/import-order checks are complete, but live Antigravity/Google provider verification remains pending. Unsupported or unverified Seedance versions/modes remain pending owner clarification; the guidance adds no rendering backend. No provider, credential, or render-node calls were made. This final status update is documentation-only: no source, test, or dependency changes, staging, or commits.
+Live provider/account and ComfyUI image/video/two-node checks were not run. The backend `.env` loader and fresh-process environment/path/missing-file/import-order checks are complete, but live Antigravity/Google provider verification remains pending. Unsupported or unverified Seedance versions/modes remain pending owner clarification; the guidance adds no rendering backend. No provider, credential, or render-node calls were made. This tooling refresh changes only frontend tooling/configuration, documentation, CI, and the authoritative generated ComfyUI web bundle; no staging, commits, or pushes were performed.

@@ -137,7 +137,7 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 ### Prerequisites
 
 - **Python 3.11+** (with `pip` or `uv`)
-- **Node.js 22+** (with `npm`)
+- **Node.js 22.13+ or 24+** (with `npm`) — Node 22.13 is the supported floor
 - **ComfyUI** — At least one running instance for image generation
 - **Git** (for cloning)
 
@@ -158,6 +158,11 @@ cd CinemaPromptEngineering/frontend
 npm ci
 cd ../..
 ```
+
+The frontend uses the maintained Vite 7 / ESLint 10 toolchain documented in
+[docs/tooling-upgrade-plan.md](docs/tooling-upgrade-plan.md). After the security
+refresh, both full and production-only `npm audit --json` checks report zero
+findings; use `npm ci` so the checked-in lockfile is honored.
 
 `requirements-dev.txt` installs the complete Python runtime plus test tools. The
 single documented offline check is `python scripts/check.py`; see
@@ -188,7 +193,7 @@ pip install -r requirements.txt
 **Frontend:**
 ```bash
 cd CinemaPromptEngineering/frontend
-npm install
+npm ci
 ```
 
 **Orchestrator:**
@@ -946,7 +951,7 @@ python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
 ### Contributor setup and checks
 
 See [docs/contributing.md](docs/contributing.md) for the supported Python 3.11+
-and Node.js 22+ setup. Run the complete offline regression check from the root:
+and Node.js 22.13+ or 24+ setup. Run the complete offline regression check from the root:
 
 ```bash
 python scripts/check.py
@@ -979,7 +984,7 @@ cd CinemaPromptEngineering
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18, TypeScript, Vite 5, Zustand, TanStack Query v5 |
+| Frontend | React 18, TypeScript 5.3+, Vite 7, ESLint 10, Zustand, TanStack Query v5 |
 | Backend | Python 3.11+, FastAPI, Pydantic v2, httpx, aiohttp |
 | Rendering | ComfyUI (direct WebSocket) |
 | Storage | Local/NAS filesystem, JSON flat-file (Gallery metadata), SQLite (encrypted credentials) |

@@ -28,5 +28,11 @@ jobs:
         working-directory: CinemaPromptEngineering/frontend
         run: npm ci
 
+      - name: Audit frontend dependencies
+        working-directory: CinemaPromptEngineering/frontend
+        run: |
+          npm audit --json
+          npm audit --omit=dev --json
+
       - name: Run regression checks
         run: python scripts/check.py

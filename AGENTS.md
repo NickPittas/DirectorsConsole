@@ -54,7 +54,7 @@
 
 ### Frontend (CPE)
 - **Framework**: React 18 with TypeScript
-- **Build Tool**: Vite 5
+- **Build Tool**: Vite 7 (Node.js 22.13+ or 24+)
 - **State Management**: Zustand
 - **Data Fetching**: TanStack Query (React Query) v5
 - **UI Components**: React Select, Lucide React icons
@@ -141,7 +141,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
 **Frontend Development:**
 ```bash
 cd CinemaPromptEngineering/frontend
-npm install
+npm ci
 npm run dev              # Dev server on port 5173
 npm run build            # Production build (default ComfyUI mode)
 npm run build:standalone # Build to CinemaPromptEngineering/dist/static/
@@ -382,7 +382,7 @@ Get-NetTCPConnection -LocalPort 9800 | Stop-Process -Id {$_.OwningProcess}
 uv pip install -r CinemaPromptEngineering/requirements.txt
 
 # Frontend
-cd CinemaPromptEngineering/frontend && npm install
+cd CinemaPromptEngineering/frontend && npm ci
 ```
 
 ---

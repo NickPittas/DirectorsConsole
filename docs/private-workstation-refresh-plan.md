@@ -1,6 +1,6 @@
 # Private workstation refresh — plan and checklist
 
-Status: **Approved by owner. Phases 1–5 implementation, automated checks, and independent reviews are complete (PASS); live provider/account and ComfyUI verification remains pending. Final combined review and push are still pending.**
+Status: **Approved by owner. Phases 1–6 implementation and automated checks are complete (PASS); live provider/account and ComfyUI verification remains pending. Final combined review and push are still pending.**
 Branch: `maintenance/private-workstation-refresh`
 
 ## Scope and guardrails
@@ -94,7 +94,7 @@ These results are a starting point, not proof that every subsystem was tested:
 - Frontend production build passed; lint failed because its configuration was missing.
 - Root tests initially failed import collection. With explicit import paths and root + CPE dependencies: **64 passed, 4 failed**.
 - With only root dependencies, missing `cryptography` caused API tests to skip silently.
-- npm audit reported 21 affected packages (15 high severity), many in development/transitive tooling; reassess at implementation time.
+- The pre-refresh npm audit reported 21 affected packages (15 high severity), many in development/transitive tooling. This is historical baseline evidence; the approved tooling refresh later rechecked the lockfile.
 - Simulated interruption followed by `executing: node=null` incorrectly invoked the frontend completion callback.
 - No live ComfyUI-node or provider-account end-to-end verification was performed.
 
@@ -122,12 +122,12 @@ These results are a starting point, not proof that every subsystem was tested:
 
 ### Phase 3 setup, CI, and combined validation
 
-- Contributor setup is documented in [`docs/contributing.md`](contributing.md): Python 3.11+ with `python -m venv` and `pip install -r requirements-dev.txt`, Node.js 22+, `npm ci`, and the existing `python start.py` runtime launcher.
+- Contributor setup is documented in [`docs/contributing.md`](contributing.md): Python 3.11+ with `python -m venv` and `pip install -r requirements-dev.txt`, Node.js 22.13+ or 24+, `npm ci`, and the existing `python start.py` runtime launcher.
 - Added [`scripts/check.py`](../scripts/check.py), a cross-platform standard-library launcher for both Python suites, all six standalone Node regressions, frontend lint, and frontend build. It fails honestly when any check fails.
-- Added [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) using Python 3.11 and Node.js 22. It installs the checked-in requirements, runs `npm ci`, and invokes the combined check without exclusions or `continue-on-error`.
+- Added [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) using Python 3.11 and the latest Node.js 22 release (which satisfies the 22.13+ engine floor). It installs the checked-in requirements, audits both frontend dependency sets, runs `npm ci`, and invokes the combined check without exclusions or `continue-on-error`.
 - Final validation was run once in a temporary repository copy with a fresh Python 3.11 environment and current frontend dependencies, without custom `PYTHONPATH`: root pytest **84 passed**; Orchestrator pytest **183 passed**; standalone Node regressions **6 passed** (five existing plus the BatchRenameDialog race regression); frontend lint and build **passed**; `git diff --check` passed. The build ran outside the checkout so tracked build assets were not changed.
 - Installed-wheel packaging smoke was already verified outside the checkout for `templates_system`, `workflow_parser`, and `data`; **10 templates** loaded. The OpenCV module dependency and pixel-decoding test also passed.
-- Reviewed audit status remains **8 development-tool advisories** (7 high, 1 moderate; 3 direct, 5 transitive), triaged with the major-upgrade decision unresolved; zero runtime advisories were recorded. Do not silently mark them fixed or rerun the audit unnecessarily.
+- At the Phase 3 checkpoint, the audit status was **8 development-tool advisories** (7 high, 1 moderate; 3 direct, 5 transitive), with zero runtime advisories. That historical status was superseded by the approved tooling refresh; its full and production-only npm audits now report zero findings.
 - Independent review of Phase 3 **passed**. No provider credentials, render nodes, or live accounts were used; live provider/account and ComfyUI image/video/two-node checks remain pending.
 
 ### Phase 4 implementation and validation
@@ -138,6 +138,13 @@ These results are a starting point, not proof that every subsystem was tested:
 - Six fresh-process focused checks passed, covering canonical loading with and without a generated copy, isolated standalone loading and API-route imports, missing-rules guidance, overlap protection, and sync cleanup. Root pytest then passed **90 tests** (the Phase 3 baseline was **84**); no frontend assets were regenerated.
 - The options/preset follow-up now also covers the node-local editor route/static bundle and the canonical generate-prompt validation contract with stub-ComfyUI tests; the focused route/contract set passes **14 tests**, the combined root and Orchestrator suites pass **281 tests** (root **98**, Orchestrator **183**), all six standalone Node checks pass, frontend lint passes after ignoring generated `frontend/dist/`, and `npm run build:comfyui` updates only the tracked `ComfyCinemaPrompting/web/app/` bundle. No live providers, credentials, or ComfyUI nodes were used.
 - Independent review of Phase 4 **passed**. Live provider/account and ComfyUI image/video/two-node checks remain pending.
+
+### Phase 6 frontend tooling security refresh
+
+- The approved Vite/ESLint/Rollup-line refresh is recorded in [`docs/tooling-upgrade-plan.md`](tooling-upgrade-plan.md). Vite 7.3.6, ESLint 10.10.0, the compatible parser/hooks/plugin versions, and the exact Node engine floor are in the frontend manifest and lockfile.
+- `.eslintrc.cjs` and the obsolete `.eslintignore` were replaced with the minimal ESM flat config. Existing explicit rules and inline exceptions remain; no React compiler recommended rules were enabled.
+- The Vite config explicitly preserves the prior Vite 5 native-module browser target, `base: './'`, mode-specific output directories, and Terser minification. No application dependency or runtime behavior was broadly refactored.
+- Clean `npm ci` had zero peer problems under supported Node **22.20.0/npm 10.9.3**; full and production-only audits had zero findings. Python 3.11 acceptance passed **313 tests**, Python 3.13 comparison passed **313 tests**, all six Node regressions passed, lint and normal/standalone/ComfyUI builds passed, and the existing aiohttp bundle/API tests passed (**8 tests**). No live providers, credentials, or render nodes were used.
 
 ## Review checkpoint
 
@@ -151,7 +158,8 @@ These results are a starting point, not proof that every subsystem was tested:
 - [x] Independent review of Phase 3 passed.
 - [x] Independent review of Phase 4 passed.
 - [x] Independent review of Phase 5 passed.
+- [x] Phase 6 frontend tooling security refresh and acceptance checks are complete.
 - [ ] Live provider/account verification remains pending.
 - [ ] Live ComfyUI image/video and two-node verification remains pending.
 
-All five approved implementation phases, their automated verification, and independent reviews are complete (**PASS**). The audit remains **8 triaged development-tool advisories** (7 high, 1 moderate; 3 direct, 5 transitive) and unresolved; do not claim all warnings or vulnerabilities are fixed. Live provider/account and ComfyUI image/video/two-node checks were not run. Unsupported or unverified Seedance versions/modes remain pending, and the guidance adds no rendering backend. Previous six Node, frontend lint/build, outside-checkout installed-wheel, and sync checks passed but were not repeated for the latest test-only change. This final update is documentation-only: no source, test, or dependency changes, live calls, staging, or commits.
+All six approved implementation phases and their automated verification are complete (**PASS**); the recorded independent reviews for the prior phases remain PASS. The historical development-tool advisories were addressed by the approved dependency refresh: both current npm audit modes report zero findings. Live provider/account and ComfyUI image/video/two-node checks were not run. Unsupported or unverified Seedance versions/modes remain pending, and the guidance adds no rendering backend. No live calls, staging, commits, or pushes were performed.

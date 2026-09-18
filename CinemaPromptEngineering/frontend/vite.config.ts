@@ -22,6 +22,8 @@ export default defineConfig({
       ? '../dist/static'  // For standalone installer
       : '../ComfyCinemaPrompting/web/app',  // For ComfyUI
     emptyOutDir: true,
+    // Preserve Vite 5's native-ES-module target instead of Vite 7's newer default.
+    target: ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14'],
     // Optimize for production
     minify: 'terser',
     sourcemap: false,
