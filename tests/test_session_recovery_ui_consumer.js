@@ -53,11 +53,29 @@ function findEffect(source, fileName, marker) {
   return source.slice(found.getStart(tree), found.end);
 }
 
-function loadFunction(functionSource, globals = {}) {
-  const filename = path.join(temp, 'extracted.ts');
+function findFunctionDeclaration(source, fileName, name) {
+  const tree = parse(source, fileName);
+  let found;
+  function visit(node) {
+    if (found) return;
+    if (typescript.isFunctionDeclaration(node) && node.name?.getText(tree) === name) found = node;
+    typescript.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert.ok(found, `${name} was not found in ${fileName}`);
+  return source.slice(found.getStart(tree), found.end);
+}
+
+function loadFunction(functionSource, globals = {}, jsx = false) {
+  const filename = path.join(temp, jsx ? 'extracted.tsx' : 'extracted.ts');
+  const compilerOptions = {
+    target: typescript.ScriptTarget.ES2020,
+    module: typescript.ModuleKind.CommonJS,
+    ...(jsx ? { jsx: typescript.JsxEmit.React } : {}),
+  };
   const output = typescript.transpileModule(`module.exports = ${functionSource};`, {
     fileName: filename,
-    compilerOptions: { target: typescript.ScriptTarget.ES2020, module: typescript.ModuleKind.CommonJS },
+    compilerOptions,
   }).outputText;
   const module = { exports: {} };
   const context = {
@@ -266,6 +284,211 @@ async function testStoryboardHandlers() {
   assert.equal(newEvents.some(event => Array.isArray(event) && event[0] === 'loadedParameters'), true);
 }
 
+async function testNewProjectCompletion(source = read('CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.tsx')) {
+  const fileName = 'CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.tsx';
+  const oldRecord = { identity: 'unsaved:old', data: { project: 'old project' } };
+  const records = new Map([['unsaved:old', oldRecord]]);
+  let activeIdentity = 'unsaved:old';
+  const events = [];
+  const handler = loadFunction(findVariable(source, fileName, 'handleNewProject'), {
+    panels: [{ image: null, images: [], notes: '' }],
+    sessionDraftController: { hasPendingChanges: () => false },
+    projectSettings: { orchestratorUrl: 'http://orchestrator:9820' },
+    projectManager: {
+      createUnsavedIdentity: () => 'unsaved:fresh',
+      rotateUnsavedIdentity: identity => events.push(['rotate', identity]),
+      setProject: settings => events.push(['project', settings]),
+    },
+    activateSessionIdentity: async (_controller, identity, options) => {
+      assert.equal(options.discard, false);
+      activeIdentity = identity;
+      events.push(['activate', identity]);
+    },
+    handleSaveProject: async () => { throw new Error('empty new project must not save'); },
+    window: { confirm: () => { throw new Error('empty new project must not confirm'); } },
+    setProjectSettings: settings => events.push(['settings', settings]),
+    setPanels: panels => events.push(['panels', panels]),
+    setParameterValues: values => events.push(['parameters', values]),
+    parameterValuesRef: { current: { old: true } },
+    setSelectedWorkflowId: value => events.push(['workflow', value]),
+    useCinemaStore: { getState: () => ({ resetSession: () => events.push('resetCinema') }) },
+    setShowProjectSettings: value => events.push(['showSettings', value]),
+    showError: value => events.push(['error', value]),
+  });
+
+  await handler();
+  assert.equal(activeIdentity, 'unsaved:fresh', 'completed New must activate a fresh recovery identity');
+  assert.deepEqual(records.get('unsaved:old'), oldRecord, 'completed New must preserve the old archive');
+  assert.deepEqual(events.find(event => Array.isArray(event) && event[0] === 'activate'), ['activate', 'unsaved:fresh']);
+}
+
+function createElement(type, props, ...children) {
+  return { type, props: { ...(props || {}), children: children.length === 1 ? children[0] : children } };
+}
+
+function findRenderedElement(node, predicate) {
+  if (!node || typeof node !== 'object') return undefined;
+  if (predicate(node)) return node;
+  const children = node.props?.children;
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const found = findRenderedElement(child, predicate);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+async function testRenderedDiscard(source = read('CinemaPromptEngineering/frontend/src/App.tsx')) {
+  const fileName = 'CinemaPromptEngineering/frontend/src/App.tsx';
+  const records = new Map([
+    ['project:corrupt', { identity: 'project:corrupt', data: { invalid: true } }],
+    ['project:archive', { identity: 'project:archive', data: { valid: true } }],
+  ]);
+  let deletedIdentity;
+  let deleteFinished = false;
+  const state = { state: 'error', tab: 'cinema', message: 'bad snapshot', recordIdentity: 'project:corrupt' };
+  let hookIndex = 0;
+  const React = { createElement };
+  const RecoveryGate = loadFunction(findFunctionDeclaration(source, fileName, 'RecoveryGate'), { React }, true);
+  const App = loadFunction(findFunctionDeclaration(source, fileName, 'App'), {
+    React,
+    RecoveryGate,
+    isOAuthCallback: false,
+    useState: () => [hookIndex++ === 0 ? state : { state: 'idle' }, () => {}],
+    useEffect: () => {},
+    window: { confirm: () => true },
+    projectManager: {
+      getSessionIdentity: () => 'unsaved:fresh',
+      rotateUnsavedIdentity: () => {},
+      setProject: () => {},
+    },
+    sessionDraftController: { hydrate: () => {} },
+    useCinemaStore: { getState: () => ({}) },
+    blankSessionData: () => ({ app: { activeTab: 'cinema' } }),
+    clearActiveDraftPointer: async () => {
+      if (!deleteFinished) throw new Error('discard used the malformed-pointer path');
+    },
+    deleteDraft: async identity => {
+      deletedIdentity = identity;
+      assert.equal(identity, 'project:corrupt');
+      records.delete(identity);
+      deleteFinished = true;
+    },
+    setHydration: () => {},
+  }, true);
+
+  const appElement = App();
+  assert.equal(appElement.type, RecoveryGate, 'App must render the recovery gate on validation failure');
+  const gate = appElement.type(appElement.props);
+  const discardButton = findRenderedElement(
+    gate,
+    element => element.type === 'button' && element.props.children === 'Discard snapshot',
+  );
+  assert.equal(typeof discardButton?.props.onClick, 'function', 'rendered Discard button must invoke the production callback');
+  discardButton.props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(deletedIdentity, 'project:corrupt', 'confirmed discard must delete the pointed record');
+  assert.deepEqual([...records.keys()], ['project:archive'], 'confirmed discard must preserve other archives');
+}
+
+async function testAppMountHydration(source = read('CinemaPromptEngineering/frontend/src/App.tsx')) {
+  const fileName = 'CinemaPromptEngineering/frontend/src/App.tsx';
+  const calls = [];
+  const restored = {
+    app: { activeTab: 'storyboard' },
+    project: { settings: { name: 'Recovered' } },
+    storyboard: { panels: [] },
+    cinema: { userPrompt: 'restored user', enhancedPrompt: 'restored enhanced' },
+  };
+  const hydrate = loadFunction(findVariable(source, fileName, 'hydrate'), {
+    setHydration: value => calls.push(['hydration', value.state]),
+    readRecoverableActiveDraft: async () => {
+      calls.push('read');
+      return { identity: 'project:recovered', data: restored };
+    },
+    restoreSessionDraft: async data => {
+      calls.push('restore');
+      return data;
+    },
+    projectManager: {
+      getSessionIdentity: () => 'unsaved:old',
+      restoreFromSession: () => calls.push('projectRestore'),
+    },
+    useCinemaStore: { getState: () => ({ hydrateSession: () => calls.push('cinemaRestore') }) },
+    sessionDraftController: {
+      hydrate: () => calls.push('controllerHydrate'),
+      update: () => { throw new Error('default write occurred before mount hydration'); },
+    },
+    clearActiveDraftPointer: async () => {},
+  });
+  const cleanupCalls = [];
+  const effect = loadFunction(findEffect(source, fileName, 'void hydrate()'), {
+    isOAuthCallback: false,
+    hydrate,
+    installSessionFlushHandlers: () => {
+      cleanupCalls.push('register');
+      return () => cleanupCalls.push('cleanup');
+    },
+  });
+
+  const cleanup = effect();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(calls.indexOf('read') >= 0, 'App mount must read the active draft through its useEffect');
+  assert.ok(calls.indexOf('restore') > calls.indexOf('read'), 'App mount must restore after reading the active draft');
+  assert.ok(calls.indexOf('projectRestore') > calls.indexOf('restore'));
+  assert.ok(calls.indexOf('controllerHydrate') > calls.indexOf('projectRestore'));
+  assert.equal(calls.some(call => Array.isArray(call) && call[0] === 'hydration' && call[1] === 'ready'), true);
+  assert.deepEqual(cleanupCalls, ['register']);
+  cleanup();
+  assert.deepEqual(cleanupCalls, ['register', 'cleanup']);
+}
+
+async function testCpeMessageMount(source = read('CinemaPromptEngineering/frontend/src/CinemaPromptEngineering.tsx')) {
+  const fileName = 'CinemaPromptEngineering/frontend/src/CinemaPromptEngineering.tsx';
+  const updates = [];
+  class MockWindow {
+    constructor() { this.listeners = new Map(); this.parent = this; }
+    addEventListener(type, listener) {
+      const listeners = this.listeners.get(type) || new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+    removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
+    dispatchEvent(event) { for (const listener of this.listeners.get(event.type) || []) listener(event); }
+  }
+  const window = new MockWindow();
+  const config = { camera: { body: 'RecoveredCamera' } };
+  const effect = loadFunction(findEffect(source, fileName, "window.addEventListener('message', handler)"), {
+    window,
+    suppressPromptReset: { current: false },
+    suppressUserPromptSync: { current: false },
+    setProjectType: value => updates.push(['type', value]),
+    setLiveActionConfig: value => updates.push(['live', value]),
+    setAnimationConfig: value => updates.push(['animation', value]),
+    setUserPrompt: value => updates.push(['user', value]),
+    setGeneratedPrompt: (...value) => updates.push(['generated', value]),
+    setEnhancedPrompt: value => updates.push(['enhanced', value]),
+  });
+  const cleanup = effect();
+  window.dispatchEvent({
+    type: 'message',
+    data: {
+      type: 'INIT_CONFIG',
+      payload: {
+        projectType: 'live_action', config,
+        userPrompt: 'restored user prompt', prompt: 'restored generated prompt',
+        enhancedPrompt: 'restored enhanced prompt',
+      },
+    },
+  });
+  assert.deepEqual(updates, [
+    ['type', 'live_action'], ['live', config], ['user', 'restored user prompt'],
+    ['generated', ['restored generated prompt', null]], ['enhanced', 'restored enhanced prompt'],
+  ]);
+  cleanup();
+  window.dispatchEvent({ type: 'message', data: { type: 'INIT_CONFIG', payload: { projectType: 'animation', config: {} } } });
+  assert.equal(updates.length, 5, 'CPE cleanup must remove the message listener');
+}
+
 async function testAppHydrationAndDiscard() {
   const fileName = 'CinemaPromptEngineering/frontend/src/App.tsx';
   const source = read(fileName);
@@ -360,10 +583,66 @@ async function testCpeMountConsumers() {
   assert.equal(targetModelRef.current, 'recovered-target');
 }
 
+function mutateOnce(source, needle, replacement) {
+  assert.equal(source.split(needle).length - 1, 1, `mutation needle must be unique: ${needle}`);
+  return source.replace(needle, replacement);
+}
+
+async function expectMutationFailure(label, source, mutate, check) {
+  let failure;
+  try {
+    await check(mutate(source));
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure, `${label} mutation unexpectedly passed`);
+  console.log(`${label} mutation failed as expected: ${failure.message}`);
+}
+
 async function main() {
   await testStoryboardHandlers();
+  await testNewProjectCompletion();
+  await testRenderedDiscard();
+  await testAppMountHydration();
+  await testCpeMessageMount();
   await testAppHydrationAndDiscard();
   await testCpeMountConsumers();
+
+  const storyboardFile = 'CinemaPromptEngineering/frontend/src/storyboard/StoryboardUI.tsx';
+  const appFile = 'CinemaPromptEngineering/frontend/src/App.tsx';
+  const cpeFile = 'CinemaPromptEngineering/frontend/src/CinemaPromptEngineering.tsx';
+  await expectMutationFailure(
+    'A New identity activation',
+    read(storyboardFile),
+    source => mutateOnce(
+      source,
+      '      await activateSessionIdentity(sessionDraftController, newIdentity, { discard });',
+      '      // mutation: activation removed',
+    ),
+    testNewProjectCompletion,
+  );
+  await expectMutationFailure(
+    'B confirmed discard deletion',
+    read(appFile),
+    source => mutateOnce(
+      source,
+      `        const discardTarget = hydration.recordIdentity\n          ? deleteDraft(hydration.recordIdentity)\n          : clearActiveDraftPointer();`,
+      '        const discardTarget = clearActiveDraftPointer();',
+    ),
+    testRenderedDiscard,
+  );
+  await expectMutationFailure(
+    'C App mount hydration',
+    read(appFile),
+    source => mutateOnce(source, '    void hydrate();', '    // mutation: initial hydration removed'),
+    testAppMountHydration,
+  );
+  await expectMutationFailure(
+    'D CPE message registration',
+    read(cpeFile),
+    source => mutateOnce(source, "    window.addEventListener('message', handler);", '    // mutation: message registration removed'),
+    testCpeMessageMount,
+  );
   console.log('session recovery UI consumer checks passed');
 }
 
