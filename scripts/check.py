@@ -48,6 +48,7 @@ CHECKS = [
             ROOT / "tests/test_session_recovery_node.js",
             ROOT / "tests/test_session_recovery_consumer.js",
             ROOT / "tests/test_session_recovery_ui_consumer.js",
+            ROOT / "tests/test_prompt_enhancement_frontend.js",
         )
     ],
     ("Frontend lint", [NPM, "run", "lint"], FRONTEND),

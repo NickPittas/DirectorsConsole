@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { ParameterPanel } from './components/ParameterWidgets';
+import { PromptEnhancementControls } from './components/PromptEnhancementControls';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
 import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
 import {
@@ -65,6 +66,13 @@ import {
 import { useCinemaStore } from '../store';
 import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
 import { api } from '../api/client';
+import {
+  buildEnhancementContext,
+  discoverEnhancementAssets,
+  getEffectiveDuration,
+  type EnhancementPreferences,
+  type EnhancementProfile,
+} from './services/prompt-enhancement';
 import {
   loadImageDimensions as _loadImageDimensions,
   formatFileSize,
@@ -254,6 +262,7 @@ export interface Panel {
   nodeId?: string; // Selected render node for this panel
   workflowId?: string; // Per-panel workflow selection
   parameterValues?: Record<string, unknown>; // Per-panel parameter values
+  enhancementPreferences?: EnhancementPreferences;
   // Phase 2: Canvas Architecture - Panel metadata
   name?: string; // User-editable panel name (default: "Panel_XX")
   locked?: boolean; // true once panel has generated images (prevents rename)
@@ -279,6 +288,13 @@ export interface Panel {
   batchSaveTriggered?: boolean; // Prevents duplicate batch saves
   errorMessage?: string;
 }
+
+const EMPTY_ENHANCEMENT_PREFERENCES: EnhancementPreferences = {
+  targetModel: '',
+  referenceDialect: '',
+  taskMode: 'auto',
+  referenceOrderConfirmed: false,
+};
 
 export interface Workflow {
   id: string;
@@ -430,6 +446,8 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [cameraAngles, setCameraAngles] = useState<Record<string, CameraAngle | null>>((initialSession?.cameraAngles || {}) as Record<string, CameraAngle | null>);
   const [globalPromptOverride, setGlobalPromptOverride] = useState<string>(initialSession?.globalPromptOverride || '');
   const [useGlobalPrompt, setUseGlobalPrompt] = useState(initialSession?.useGlobalPrompt ?? false);
+  const [enhancementProfiles, setEnhancementProfiles] = useState<EnhancementProfile[]>([]);
+  const [enhancementPreferences, setEnhancementPreferences] = useState<EnhancementPreferences>(EMPTY_ENHANCEMENT_PREFERENCES);
   
   // ---------------------------------------------------------------------------
   // State - Image Viewer
@@ -579,11 +597,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const parameterValuesRef = useRef<Record<string, any>>(parameterValues);
   const selectedPanelIdRef = useRef<number | null>(selectedPanelId);
   const panelsRef = useRef(panels);
+  const enhancementPreferencesRef = useRef<EnhancementPreferences>(enhancementPreferences);
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
   panelsRef.current = panels;
+  enhancementPreferencesRef.current = enhancementPreferences;
 
   // Ref for handleParameterChange — allows early effects to call it before it's declared
   const handleParameterChangeRef = useRef<(name: string, value: any) => void>(() => {});
@@ -1195,6 +1215,28 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [isResizingLeft, setIsResizingLeft] = useState(false);
   const [isResizingRight, setIsResizingRight] = useState(false);
 
+  // Prompt target/dialect metadata is backend-owned; do not duplicate a profile table here.
+  useEffect(() => {
+    let active = true;
+    api.getPromptEnhancementProfiles()
+      .then(result => {
+        if (active) setEnhancementProfiles(result.profiles || []);
+      })
+      .catch(error => console.warn('[PromptEnhancement] profiles unavailable:', error));
+    return () => { active = false; };
+  }, []);
+
+  // Keep the selected panel's enhancement preferences alongside its effective
+  // values. Non-selected panels never borrow the live sidebar state.
+  useEffect(() => {
+    const panel = panels.find(item => item.id === selectedPanelId);
+    const preferences = panel?.enhancementPreferences || EMPTY_ENHANCEMENT_PREFERENCES;
+    if (JSON.stringify(preferences) !== JSON.stringify(enhancementPreferencesRef.current)) {
+      setEnhancementPreferences(preferences);
+      enhancementPreferencesRef.current = preferences;
+    }
+  }, [panels, selectedPanelId]);
+
   // Session recovery stores work state only; catalogs, logs, active jobs, and provider credentials stay out.
   useEffect(() => {
     if (skipInitialSessionDraftWrite.current) {
@@ -1489,6 +1531,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       // Update ref BEFORE calling setParameterValues for consistency
       parameterValuesRef.current = newValues;
       setParameterValues(newValues);
+      const invalidated = { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false };
+      enhancementPreferencesRef.current = invalidated;
+      setEnhancementPreferences(invalidated);
+      if (selectedPanelIdRef.current !== null) {
+        setPanels(prev => prev.map(panel => panel.id === selectedPanelIdRef.current
+          ? { ...panel, enhancementPreferences: invalidated }
+          : panel));
+      }
     }
   }, [selectedWorkflowId]); // Only re-run when workflow selection changes, not workflows array
 
@@ -2431,13 +2481,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
    */
   const generateParallel = useCallback(async (panelId: number, backendIds: string[]) => {
     const panel = panels.find(p => p.id === panelId);
+    const isLivePanel = selectedPanelIdRef.current === panelId;
+    // The sidebar is live only for the selected panel. Other panels must use
+    // their own stored effective values/workflow, never another panel's ref.
+    const currentParameterValues = isLivePanel
+      ? parameterValuesRef.current
+      : (panel?.parameterValues || {});
     
-    // ALWAYS use the current UI values from the ref - this ensures parameter panel changes propagate
-    // The only modification allowed is seed changes for multi-node parallel generation
-    const currentParameterValues = parameterValuesRef.current;
-    
-    // Use the currently selected workflow from the UI dropdown
-    const workflowIdToUse = selectedWorkflowId || panel?.workflowId;
+    const workflowIdToUse = isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId;
     const workflow = workflows.find(w => w.id === workflowIdToUse);
     
     if (!panel || !workflow) {
@@ -2980,12 +3031,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       return;
     }
     
-    // ALWAYS use the current UI values from the ref - this ensures parameter panel changes propagate
-    // The only modification allowed is seed changes for multi-node parallel generation
-    const currentParameterValues = parameterValuesRef.current;
+    const isLivePanel = selectedPanelIdRef.current === panelId;
+    // Only the selected panel owns the live sidebar values. A background panel
+    // must generate from its own latest stored effective snapshot.
+    const currentParameterValues = isLivePanel
+      ? parameterValuesRef.current
+      : (panel?.parameterValues || {});
     
-    // Use the currently selected workflow from the UI dropdown
-    const workflowIdToUse = selectedWorkflowId || panel?.workflowId;
+    const workflowIdToUse = isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId;
     const workflow = workflows.find(w => w.id === workflowIdToUse);
     if (!workflow) {
       addLog('warning', 'No workflow selected');
@@ -3973,16 +4026,43 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     // Update the state (this triggers re-render but the functional form ensures consistency)
     setParameterValues(newValues);
       
+    const activeWorkflow = workflowsRef.current.find(item => item.id === selectedWorkflowIdRef.current);
+    const changedMedia = activeWorkflow?.config.some(config =>
+      config.name === name && ['image_input', 'image', 'image_list', 'video', 'video_list', 'media'].includes(config.type || '')
+    ) || false;
+    if (changedMedia) {
+      const invalidated = { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false };
+      enhancementPreferencesRef.current = invalidated;
+      setEnhancementPreferences(invalidated);
+    }
+
     // Also update the active panel's stored parameters so they're preserved
     if (selectedPanelId) {
       setPanels(panels => panels.map(p => 
         p.id === selectedPanelId 
-          ? { ...p, parameterValues: newValues }
+          ? {
+            ...p,
+            parameterValues: newValues,
+            ...(changedMedia ? {
+              enhancementPreferences: { ...enhancementPreferencesRef.current, referenceOrderConfirmed: false },
+            } : {}),
+          }
           : p
       ));
     }
   }, [selectedPanelId]);
   handleParameterChangeRef.current = handleParameterChange;
+
+  const handleEnhancementPreferencesChange = useCallback((preferences: EnhancementPreferences) => {
+    enhancementPreferencesRef.current = preferences;
+    setEnhancementPreferences(preferences);
+    const panelId = selectedPanelIdRef.current;
+    if (panelId !== null) {
+      setPanels(current => current.map(panel => panel.id === panelId
+        ? { ...panel, enhancementPreferences: preferences }
+        : panel));
+    }
+  }, []);
   
   // Handle camera angle changes for multi-angle LoRA
   const handleCameraAngleChange = useCallback((paramName: string, angle: CameraAngle | null) => {
@@ -3992,63 +4072,112 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   // Functions - AI Prompt Enhancement
   // ---------------------------------------------------------------------------
-  const handleEnhancePrompt = useCallback(async (prompt: string): Promise<string> => {
-    // Get the user's selected LLM settings
-    const llmSettings = getSelectedLlmSettings();
-    if (!llmSettings) {
-      throw new Error('No LLM provider configured. Please configure in Settings.');
-    }
-    
-    const { provider: llmProvider, model: llmModel } = llmSettings;
-    
-    // Get the configured providers to retrieve credentials
-    const configuredProviders = getConfiguredProviders();
-    const provider = configuredProviders.find(p => p.providerId === llmProvider);
-    
-    if (!provider) {
-      throw new Error('Selected provider not found. Please configure in Settings.');
+  const handleEnhancePrompt = useCallback(async (prompt: string, parameterName?: string): Promise<string | null> => {
+    const panelId = selectedPanelIdRef.current;
+    const panel = panelId === null ? undefined : panelsRef.current.find(item => item.id === panelId);
+    const workflowId = selectedWorkflowIdRef.current || panel?.workflowId;
+    const workflow = workflowsRef.current.find(item => item.id === workflowId);
+    const values = parameterValuesRef.current;
+    const preferences = panel?.enhancementPreferences || enhancementPreferencesRef.current;
+    const profile = enhancementProfiles.find(item => item.target_model === preferences.targetModel);
+
+    if (!workflow || !profile) {
+      const message = profile ? 'Select a workflow before enhancing.' : 'Select a verified video target and dialect before enhancing.';
+      showError(message);
+      throw new Error(message);
     }
 
-    const submittedOAuthToken = provider.credentials.oauthToken;
+    const built = buildEnhancementContext(workflow, values, profile, preferences);
+    if (!built.context) {
+      showError(built.error || 'The media mapping is not ready.');
+      throw new Error(built.error || 'The media mapping is not ready.');
+    }
+    const requestedPrompt = prompt.trim();
+    const mappingAtSubmit = built.mappingFingerprint;
+    const workflowAtSubmit = workflow.id;
+    const panelAtSubmit = panelId;
+    const submittedOAuthToken = getConfiguredProviders().find(item => item.providerId === getSelectedLlmSettings()?.provider)?.credentials.oauthToken;
+    const llmSettings = getSelectedLlmSettings();
+    if (!llmSettings) throw new Error('No LLM provider configured. Please configure in Settings.');
+    const provider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
+    if (!provider) throw new Error('Selected provider not found. Please configure in Settings.');
+
     try {
       const result = await api.enhancePrompt({
-        userPrompt: prompt.trim(),
-        llmProvider: llmProvider,
-        llmModel: llmModel,
-        targetModel: 'flux', // Default target model
+        userPrompt: requestedPrompt,
+        llmProvider: llmSettings.provider,
+        llmModel: llmSettings.model,
+        targetModel: profile.target_model,
         projectType: 'live_action',
         config: {} as any,
+        enhancementContext: {
+          task: built.context.task,
+          referenceDialect: built.context.reference_dialect,
+          durationSeconds: built.context.duration_seconds,
+          assets: built.context.assets.map(asset => ({
+            bindingId: asset.binding_id,
+            kind: asset.kind,
+            role: asset.role,
+            ordinal: asset.ordinal,
+            label: asset.label,
+            description: asset.description,
+            referenceName: asset.reference_name,
+          })),
+          referenceOrderConfirmed: built.context.reference_order_confirmed,
+        },
         credentials: {
           apiKey: provider.credentials.apiKey,
           endpoint: provider.credentials.endpoint,
           oauthToken: provider.credentials.oauthToken,
         },
       });
-      
-      const currentProvider = getConfiguredProviders().find(
-        current => current.providerId === llmProvider,
-      );
+
+      const currentPanel = panelAtSubmit === null ? undefined : panelsRef.current.find(item => item.id === panelAtSubmit);
+      const currentWorkflowId = panelAtSubmit === null
+        ? selectedWorkflowIdRef.current
+        : (selectedPanelIdRef.current === panelAtSubmit
+          ? (selectedWorkflowIdRef.current || currentPanel?.workflowId)
+          : currentPanel?.workflowId);
+      const currentValues = panelAtSubmit === null || selectedPanelIdRef.current === panelAtSubmit
+        ? parameterValuesRef.current
+        : (currentPanel?.parameterValues || {});
+      const currentProfile = enhancementProfiles.find(item => item.target_model === preferences.targetModel);
+      const currentWorkflow = workflowsRef.current.find(item => item.id === currentWorkflowId) || workflow;
+      const currentMapping = currentProfile
+        ? buildEnhancementContext(currentWorkflow, currentValues, currentProfile, currentPanel?.enhancementPreferences || enhancementPreferencesRef.current)
+        : undefined;
+      const promptStillCurrent = !parameterName || String(currentValues[parameterName] ?? '').trim() === requestedPrompt;
+      const currentTargetStillCurrent = enhancementPreferencesRef.current.targetModel === preferences.targetModel
+        && enhancementPreferencesRef.current.referenceDialect === preferences.referenceDialect;
+      if (
+        !result.success ||
+        panelAtSubmit !== selectedPanelIdRef.current ||
+        currentWorkflowId !== workflowAtSubmit ||
+        !promptStillCurrent ||
+        !currentTargetStillCurrent ||
+        currentMapping?.mappingFingerprint !== mappingAtSubmit
+      ) {
+        if (result.success) showWarning('Enhancement discarded because the prompt, panel, workflow, target, or media mapping changed.');
+        throw new Error(result.success ? 'Enhancement response discarded as stale.' : (result.error || 'Enhancement failed'));
+      }
+
+      const currentProvider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
       if (
         result.oauth_token &&
         submittedOAuthToken &&
-        getSelectedLlmSettings()?.provider === llmProvider &&
+        getSelectedLlmSettings()?.provider === llmSettings.provider &&
         currentProvider?.credentials.oauthToken === submittedOAuthToken
-      ) {
-        updateSavedOAuthToken(llmProvider, result.oauth_token);
-      }
+      ) updateSavedOAuthToken(llmSettings.provider, result.oauth_token);
 
-      if (result.success) {
-        showInfo('Prompt enhanced successfully');
-        return result.enhanced_prompt;
-      } else {
-        throw new Error(result.error || 'Enhancement failed');
-      }
+      showInfo('Prompt enhanced successfully');
+      return result.enhanced_prompt;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to enhance prompt';
-      showError(errorMsg);
+      if (!/discarded as stale/i.test(errorMsg)) showError(errorMsg);
+      if (/discarded as stale/i.test(errorMsg)) return null;
       throw error;
     }
-  }, [showInfo, showError]);
+  }, [enhancementProfiles, showInfo, showWarning, showError]);
   
   // ---------------------------------------------------------------------------
   // Render Helpers
@@ -4071,6 +4200,19 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   };
   
   const selectedWorkflow = workflows.find(w => w.id === selectedWorkflowId);
+  const selectedEnhancementPanel = selectedPanelId === null ? undefined : panels.find(panel => panel.id === selectedPanelId);
+  const selectedEnhancementValues = parameterValuesRef.current;
+  const selectedEnhancementPreferences = selectedEnhancementPanel?.enhancementPreferences || enhancementPreferences;
+  const enhancementDuration = selectedWorkflow
+    ? getEffectiveDuration(selectedWorkflow, selectedEnhancementValues)
+    : undefined;
+  const enhancementAssets = selectedWorkflow
+    ? discoverEnhancementAssets(selectedWorkflow, selectedEnhancementValues).map(asset => ({
+      ...asset,
+      ...selectedEnhancementPreferences.assets?.[asset.binding_id],
+      include: selectedEnhancementPreferences.assets?.[asset.binding_id]?.include ?? asset.include,
+    }))
+    : [];
   const exposedParameters = selectedWorkflow?.config.filter(c => c.exposed) || [];
   
   // ---------------------------------------------------------------------------
@@ -4346,6 +4488,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           notes: savedPanel?.notes ?? '',
           workflowId: savedPanel?.workflowId,
           parameterValues: savedPanel?.parameterValues,
+          enhancementPreferences: savedPanel?.enhancementPreferences,
           nodeId: savedPanel?.nodeId,
           imageHistory,
           historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
@@ -4382,6 +4525,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             notes: savedPanel.notes ?? '',
             workflowId: savedPanel.workflowId,
             parameterValues: savedPanel.parameterValues,
+            enhancementPreferences: savedPanel.enhancementPreferences,
             nodeId: savedPanel.nodeId,
             imageHistory: [],
             historyIndex: -1,
@@ -4425,6 +4569,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       // Restore camera angles if available
       if (result.state.camera_angles) {
         setCameraAngles(result.state.camera_angles as Record<string, CameraAngle | null>);
+      }
+      if (result.state.enhancement_preferences) {
+        setEnhancementPreferences(result.state.enhancement_preferences);
+        enhancementPreferencesRef.current = result.state.enhancement_preferences;
       }
       
       // Restore selected workflow
@@ -5307,6 +5455,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 )}
               </div>
               
+              <PromptEnhancementControls
+                profiles={enhancementProfiles}
+                assets={enhancementAssets}
+                preferences={selectedEnhancementPreferences}
+                durationSeconds={enhancementDuration}
+                onChange={handleEnhancementPreferencesChange}
+                disabled={false}
+              />
               <ParameterPanel
                 parameters={exposedParameters.map(p => ({
                   name: p.name,

@@ -4,7 +4,7 @@
  * Renders parameter widgets based on type (integer, float, seed, enum, boolean, prompt)
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { WorkflowParameter } from '../services/workflow-parser';
 import { bindingKey } from '../services/workflow-editor-options';
 import { ImageDropZone } from './ImageDropZone';
@@ -26,7 +26,7 @@ interface ParameterWidgetProps {
 }
 
 interface PromptWidgetProps extends ParameterWidgetProps {
-  onEnhance?: (prompt: string) => Promise<string>;
+  onEnhance?: (prompt: string, parameterName?: string) => Promise<string | null>;
   cameraAngle?: CameraAngle | null;
   onCameraAngleChange?: (angle: CameraAngle | null) => void;
 }
@@ -36,7 +36,7 @@ interface ParameterPanelProps {
   values: Record<string, any>;
   onChange: (name: string, value: any) => void;
   disabled?: boolean;
-  onEnhancePrompt?: (prompt: string) => Promise<string>;
+  onEnhancePrompt?: (prompt: string, parameterName?: string) => Promise<string | null>;
   cameraAngles?: Record<string, CameraAngle | null>;
   onCameraAngleChange?: (paramName: string, angle: CameraAngle | null) => void;
   comfyUrl?: string;
@@ -356,17 +356,20 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
   // Ensure value is always a string (handle non-string values from localStorage)
   const stringValue = typeof value === 'string' ? value : (value ? String(value) : '');
   const [localValue, setLocalValue] = useState(stringValue ?? parameter.default ?? '');
+  const localValueRef = useRef(localValue);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isAngleSelectorOpen, setIsAngleSelectorOpen] = useState(false);
   
   // Sync local state when value prop changes (e.g., when loading from a panel)
   useEffect(() => {
     const safeValue = typeof value === 'string' ? value : (value ? String(value) : '');
+    localValueRef.current = safeValue ?? parameter.default ?? '';
     setLocalValue(safeValue ?? parameter.default ?? '');
   }, [value, parameter.default]);
   
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
+    localValueRef.current = newValue;
     setLocalValue(newValue);
     onChange(parameter.name, newValue);
   }, [parameter.name, onChange]);
@@ -374,6 +377,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
   // Handle paste from CPE
   const handlePasteFromCPE = useCallback(() => {
     if (!cpePromptForStoryboard) return;
+    localValueRef.current = cpePromptForStoryboard;
     setLocalValue(cpePromptForStoryboard);
     onChange(parameter.name, cpePromptForStoryboard);
     // Clear the stored prompt after pasting
@@ -385,7 +389,12 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
     
     setIsEnhancing(true);
     try {
-      const enhanced = await onEnhance(localValue);
+      const requestedPrompt = localValue;
+      const enhanced = await onEnhance(requestedPrompt, parameter.name);
+      if (localValueRef.current !== requestedPrompt) return;
+      // The parent may discard a response after a panel/workflow/reference
+      // change. Never apply a discarded result at the widget boundary.
+      if (enhanced === null) return;
       setLocalValue(enhanced);
       onChange(parameter.name, enhanced);
     } catch (error) {
@@ -401,6 +410,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
     const cleanPrompt = removeAnglePrefix(localValue);
     // Prepend new angle
     const newPrompt = `${angle.prompt} ${cleanPrompt}`.trim();
+    localValueRef.current = newPrompt;
     setLocalValue(newPrompt);
     onChange(parameter.name, newPrompt);
     onCameraAngleChange?.(angle);
@@ -409,6 +419,7 @@ export function PromptWidget({ parameter, value, onChange, disabled, onEnhance, 
   // Clear angle
   const handleClearAngle = useCallback(() => {
     const cleanPrompt = removeAnglePrefix(localValue);
+    localValueRef.current = cleanPrompt;
     setLocalValue(cleanPrompt);
     onChange(parameter.name, cleanPrompt);
     onCameraAngleChange?.(null);
@@ -835,7 +846,7 @@ export function LoRAWidget({
 // ============================================================================
 
 interface ParameterWidgetRouterProps extends ParameterWidgetProps {
-  onEnhancePrompt?: (prompt: string) => Promise<string>;
+  onEnhancePrompt?: (prompt: string, parameterName?: string) => Promise<string | null>;
   cameraAngle?: CameraAngle | null;
   onCameraAngleChange?: (paramName: string, angle: CameraAngle | null) => void;
 }
