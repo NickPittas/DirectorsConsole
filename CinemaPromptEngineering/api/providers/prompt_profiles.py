@@ -369,8 +369,37 @@ def validate_context(
                 raise ValueError("Kling i2v named references require reference_name on reference_image assets")
         elif reference_assets:
             raise ValueError("i2v cannot mix keyframes with reference assets for this target")
+        if canonical_target in {"ltx_2.3", "ltx_2.5"} and not any(
+            asset.role == "first_frame" for asset in frame_assets
+        ):
+            raise ValueError(
+                f"{canonical_target} i2v requires a first_frame image; last-frame-only input is unsupported"
+            )
         if canonical_target == "ltx_2.3" and any(asset.role == "last_frame" for asset in frame_assets):
             raise ValueError("ltx_2.3 i2v does not have a verified ending-frame control")
+
+        # The local checkpoint follows the official base guide's fixed keyframe
+        # positions. Caller ordinals remain untouched for ref2v, where gaps are
+        # meaningful connection positions rather than base keyframe slots.
+        if dialect["id"] == "local_h3":
+            first = next((asset for asset in frame_assets if asset.role == "first_frame"), None)
+            last = next((asset for asset in frame_assets if asset.role == "last_frame"), None)
+            if first and last:
+                if first.ordinal != 1 or last.ordinal != 2:
+                    raise ValueError(
+                        "local_h3 I2VA requires first_frame ordinal 1 and last_frame ordinal 2; "
+                        "use ref2v for preserved ordinal gaps"
+                    )
+            elif first and first.ordinal != 1:
+                raise ValueError(
+                    "local_h3 I2VA first-only input must use first_frame ordinal 1; "
+                    "the official guide always names it Picture 1"
+                )
+            elif last and last.ordinal != 1:
+                raise ValueError(
+                    "local_h3 L2VA last-only input must use last_frame ordinal 1; "
+                    "the official guide always names it Picture 1"
+                )
     if context.task == "ref2v":
         if not reference_assets:
             raise ValueError("ref2v requires at least one reference_image, reference_video, or reference_audio")
@@ -399,7 +428,10 @@ def format_binding_context(
 ) -> str:
     """Describe caller bindings without pretending to inspect their media."""
     if not context.assets:
-        return "No media bindings were supplied. Do not invent references or source labels."
+        lines = ["No media bindings were supplied. Do not invent references or source labels."]
+        if context.duration_seconds is not None:
+            lines.append(f"CALLER-CONFIRMED EFFECTIVE VIDEO DURATION: {context.duration_seconds:.2f} seconds.")
+        return "\n".join(lines)
 
     lines = [
         "CALLER-CONFIRMED MEDIA BINDINGS:",
@@ -417,6 +449,14 @@ def format_binding_context(
             details.append(f"confirmed_name={asset.reference_name}")
         lines.append(f"- {token}: " + "; ".join(details))
     lines.append("Use only these confirmed bindings; do not infer additional media, visual details, or asset IDs.")
+    if context.duration_seconds is not None:
+        lines.append(f"CALLER-CONFIRMED EFFECTIVE VIDEO DURATION: {context.duration_seconds:.2f} seconds.")
+    alignment = _local_h3_keyframe_alignment(context) if dialect["id"] == "local_h3" else None
+    if alignment:
+        lines.extend([
+            "REQUIRED LOCAL H3 KEYFRAME ALIGNMENT (use this as the first line of the final prompt):",
+            alignment,
+        ])
     return "\n".join(lines)
 
 
@@ -435,35 +475,143 @@ def _source_tokens(context: EnhancementContext) -> set[str]:
     return {f"<{names[asset.kind]} {asset.ordinal}>" for asset in context.assets}
 
 
+def _local_h3_keyframe_alignment(context: EnhancementContext) -> str | None:
+    """Return the official base-guide alignment line for local H3 keyframes."""
+    if context.task != "i2v":
+        return None
+
+    first = next((asset for asset in context.assets if asset.role == "first_frame"), None)
+    last = next((asset for asset in context.assets if asset.role == "last_frame"), None)
+    if not first and not last:
+        return None
+    if last and context.duration_seconds is None:
+        return None
+    if first and last:
+        return (
+            "How the reference pictures align with the target video — "
+            "Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; "
+            f"Picture 2 (from Shot N) aligns with the {context.duration_seconds:.2f}-second mark "
+            "of the target video."
+        )
+    if first:
+        return (
+            "For the target video, at 0.00 seconds into the target video, "
+            "<Picture 1> (from [Shot 1]) is fully referenced."
+        )
+    return (
+        "How the reference pictures align with the target video — "
+        f"<Picture 1> (from [Shot N]) aligns with the {context.duration_seconds:.2f}-second mark "
+        "of the target video."
+    )
+
+
+def _parse_local_h3_sections(content: str, fields: tuple[str, ...]) -> tuple[dict[str, str], str | None]:
+    """Parse exact line-anchored named sections without rewriting their bodies."""
+    headers: list[tuple[str, int, str]] = []
+    for index, line in enumerate(content.splitlines()):
+        for field in fields:
+            if line.startswith(field) and line[len(field) :].lstrip().startswith(":"):
+                colon = line.find(":", len(field))
+                headers.append((field, index, line[colon + 1 :]))
+                break
+
+    if not headers or headers[0][0] != fields[0]:
+        return {}, f"local_h3 output must start with '{fields[0]}:'"
+    if len(headers) != len(fields):
+        return {}, "local_h3 output must contain each required section exactly once"
+    names = [header[0] for header in headers]
+    if names != list(fields):
+        return {}, "local_h3 output sections must be line-anchored, unique, and in order"
+
+    lines = content.splitlines()
+    sections: dict[str, str] = {}
+    for position, (name, line_index, first_body_line) in enumerate(headers):
+        end = headers[position + 1][1] if position + 1 < len(headers) else len(lines)
+        body_lines = [first_body_line, *lines[line_index + 1 : end]]
+        body = chr(10).join(body_lines)
+        if not body.strip():
+            return {}, f"local_h3 output section '{name}:' must not be empty"
+        sections[name] = body
+    return sections, None
+
+
+def _validate_local_h3_alignment_prefix(content: str, context: EnhancementContext) -> str | None:
+    """Require only the official base-guide prefix for I2V outputs."""
+    alignment = _local_h3_keyframe_alignment(context)
+    if alignment is None:
+        if any(asset.role == "last_frame" for asset in context.assets):
+            return "local_h3 keyframe alignment requires duration_seconds"
+        return "local_h3 I2VA output is missing a confirmed keyframe alignment"
+
+    lines = content.splitlines()
+    if len(lines) < 3 or lines[1] != "":
+        return "local_h3 I2VA output must contain only its required alignment line followed by one blank line"
+    if not lines[2].startswith("integrated_multimodal_description") or not lines[2][len("integrated_multimodal_description") :].lstrip().startswith(":"):
+        return "local_h3 I2VA output must place integrated_multimodal_description immediately after its alignment prefix"
+    actual = lines[0]
+    first = any(asset.role == "first_frame" for asset in context.assets)
+    last = any(asset.role == "last_frame" for asset in context.assets)
+    if first and last:
+        if not actual.startswith("How the reference pictures align with the target video — Picture 1 (from Shot 1)"):
+            return "local_h3 FL2VA output must use the official first/last-frame instruction"
+    elif first:
+        if not actual.startswith("For the target video, at 0.00 seconds into the target video,"):
+            return "local_h3 I2VA alignment must begin at 0.00 seconds"
+        if actual != alignment:
+            return "local_h3 I2VA output must use the official first-frame instruction"
+    elif not actual.startswith("How the reference pictures align with the target video — <Picture 1> (from "):
+        return "local_h3 L2VA output must use the official last-frame instruction"
+    if "Picture 1" not in actual:
+        return "local_h3 keyframe alignment must use Picture 1 for the first supplied base slot"
+    if last:
+        end = f"{context.duration_seconds:.2f}"
+        if end not in actual:
+            return f"local_h3 keyframe alignment must end at the supplied duration ({end} seconds)"
+        if first and "Picture 2" not in actual:
+            return "local_h3 FL2VA alignment must use Picture 2 for the last supplied base slot"
+    if not actual.endswith("of the target video.") and not actual.endswith("is fully referenced."):
+        return "local_h3 keyframe alignment must be a complete official guide instruction"
+    return None
+
+
 def validate_local_h3_output(
     content: str,
     context: EnhancementContext,
 ) -> str | None:
-    """Check only local-H3 structure and caller-supplied source markers."""
+    """Check local-H3 structure and caller-supplied source markers.
+
+    Validation intentionally stops at structure and provenance. It does not
+    attempt semantic sentence, word-count, or audio grammar validation.
+    """
     import re
 
     fields = (
-        [
+        (
             "subject_definitions",
             "summary",
             "retention_analysis",
             "detailed_description",
             "overall_soundscape",
             "non_diegetic_music",
-        ]
+        )
         if context.task == "ref2v"
-        else ["integrated_multimodal_description", "overall_soundscape", "non_diegetic_music"]
+        else ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
     )
-    positions: list[int] = []
-    for field in fields:
-        matches = re.findall(rf"(?m)^{re.escape(field)}\s*:", content)
-        if not matches:
-            return f"local_h3 output is missing required section '{field}:'"
-        if len(matches) > 1:
-            return f"local_h3 output repeats required section '{field}:'"
-        positions.append(re.search(rf"(?m)^{re.escape(field)}\s*:", content).start())
-    if positions != sorted(positions):
-        return "local_h3 output sections are out of order"
+    sections, structure_error = _parse_local_h3_sections(content, fields)
+    if structure_error:
+        return structure_error
+    lines = content.splitlines()
+    first_field = fields[0]
+    start_index = 2 if context.task == "i2v" else 0
+    if len(lines) <= start_index or not lines[start_index].startswith(first_field) or not lines[start_index][len(first_field) :].lstrip().startswith(":"):
+        return f"local_h3 output must begin with '{first_field}:' and contain no generic preamble"
+    if context.task == "i2v":
+        alignment_error = _validate_local_h3_alignment_prefix(content, context)
+        if alignment_error:
+            return alignment_error
+    narrative_field = "detailed_description" if context.task == "ref2v" else "integrated_multimodal_description"
+    if "[Shot 1]" not in sections[narrative_field]:
+        return f"local_h3 {narrative_field} must include [Shot 1]"
 
     actual_tokens = {
         f"<{kind} {number}>"

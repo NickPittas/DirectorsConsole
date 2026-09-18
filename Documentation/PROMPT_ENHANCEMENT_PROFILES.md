@@ -22,7 +22,7 @@ The backend exposes `GET /prompt-enhancement/profiles` as the authoritative targ
 
 The server validates shape, target/task/dialect capabilities, kind/role combinations, unique opaque binding IDs, and per-kind ordinal uniqueness. It cannot inspect media or a workflow graph and therefore does not claim that a binding exists. Ordinals are preserved, including gaps from excluded inputs. Invalid Pydantic fields return 422; semantic context errors return 400. Omitting context preserves legacy image requests. Video targets without context are treated as T2V with the profile default dialect.
 
-Local H3 uses the MiniMax-authored named-section formats and exact source tags; local last-frame alignment requires a supplied effective duration. Structured output is plain text, not JSON. The enhancer checks required section order, confirmed source-token set, and keyframe alignment only; provider output remains responsible for aesthetic and semantic quality.
+Local H3 uses the MiniMax-authored named-section formats and exact source tags; local last-frame alignment requires a supplied effective duration, which is carried to the LLM and rendered with a two-decimal end time. The official base keyframe contract is fixed: I2VA first-only is Picture 1, L2VA last-only is Picture 1, and FL2VA first/last is Picture 1/Picture 2. Contradictory base ordinals are rejected rather than renumbered; preserved ordinal gaps apply only to ref2v connection mapping, so a confirmed Picture 3 remains Picture 3 there. Structured output is plain text, not JSON. The enhancer requires line-anchored unique nonempty sections, an official I2V prefix only where required, and `[Shot 1]` in the main narrative. It checks confirmed source-token set and keyframe alignment but does not perform semantic word-count or soundscape grammar validation; provider output remains responsible for aesthetic and semantic quality.
 
 ## Sources and limitations
 
@@ -35,4 +35,4 @@ Local H3 uses the MiniMax-authored named-section formats and exact source tags; 
 - https://www.alibabacloud.com/help/en/model-studio/text-to-video-prompt
 - https://kling.ai/document-api/api/video/3-0-omni/video-omni.md
 
-These sources guide prompt text only. They do not establish local weights, provider credentials, account or region access, graph connections, media contents, or a video submission API in this backend.
+These sources guide prompt text only. They do not establish local weights, provider credentials, account or region access, graph connections, media contents, or a video submission API in this backend. The local H3 structural checks likewise cannot inspect media, graph bindings, dialogue semantics, or whether guidance-level sentence ranges were met.

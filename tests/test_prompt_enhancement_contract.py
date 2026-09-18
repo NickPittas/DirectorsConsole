@@ -67,7 +67,7 @@ def test_h3_defaults_local_and_h3_max_is_hosted(monkeypatch: pytest.MonkeyPatch)
     client = TestClient(main.app)
     local = AsyncMock(return_value=LLMResponse(
         success=True,
-        content="integrated_multimodal_description: x\n\noverall_soundscape: N/A\n\nnon_diegetic_music: N/A",
+        content="integrated_multimodal_description: [Shot 1] x\n\noverall_soundscape: N/A\n\nnon_diegetic_music: N/A",
         model_used="local",
     ))
     monkeypatch.setattr(main.llm_service, "enhance_prompt", local)
@@ -123,23 +123,60 @@ def test_local_h3_first_last_structure_and_exact_gaps() -> None:
         "local_h3",
         assets=[
             {"binding_id": "opening", "kind": "image", "role": "first_frame", "ordinal": 1},
-            {"binding_id": "ending", "kind": "image", "role": "last_frame", "ordinal": 3},
+            {"binding_id": "ending", "kind": "image", "role": "last_frame", "ordinal": 2},
         ],
     ).model_copy(update={"duration_seconds": 8.0})
-    valid = """How the reference pictures align with the target video — Picture 1 aligns with the 0.00-second mark; Picture 3 aligns with the 8.00-second mark.
+    valid = """How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 8.00-second mark of the target video.
 
-integrated_multimodal_description: [Shot 1] The supplied opening state changes continuously into <Picture 3>.
+integrated_multimodal_description: [Shot 1] The supplied opening state changes continuously into <Picture 2>.
 
 overall_soundscape: N/A
 
 non_diegetic_music: N/A"""
     assert validate_local_h3_output(valid, context) is None
-    with pytest.raises(ValueError, match="duration_seconds is required"):
+    with pytest.raises(ValueError, match="first_frame ordinal 1 and last_frame ordinal 2"):
         validate_context(
             "minimax_h3",
-            _context("i2v", "local_h3", assets=[{"binding_id": "ending", "kind": "image", "role": "last_frame", "ordinal": 3}]),
+            _context(
+                "i2v",
+                "local_h3",
+                assets=[
+                    {"binding_id": "opening", "kind": "image", "role": "first_frame", "ordinal": 1},
+                    {"binding_id": "ending", "kind": "image", "role": "last_frame", "ordinal": 3},
+                ],
+            ).model_copy(update={"duration_seconds": 8.0}),
         )
-    assert validate_local_h3_output(valid.replace("<Picture 3>", "<Picture 9>"), context)
+    assert validate_local_h3_output(valid.replace("<Picture 2>", "<Picture 9>"), context)
+
+
+def test_local_h3_base_slots_and_ltx_first_frame_policy() -> None:
+    with pytest.raises(ValueError, match="first-only input must use first_frame ordinal 1"):
+        validate_context(
+            "minimax_h3",
+            _context(
+                "i2v",
+                "local_h3",
+                assets=[{"binding_id": "first", "kind": "image", "role": "first_frame", "ordinal": 3}],
+            ),
+        )
+    with pytest.raises(ValueError, match="last-only input must use last_frame ordinal 1"):
+        validate_context(
+            "minimax_h3",
+            _context(
+                "i2v",
+                "local_h3",
+                assets=[{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 3}],
+            ).model_copy(update={"duration_seconds": 8.0}),
+        )
+    with pytest.raises(ValueError, match="ltx_2.5 i2v requires a first_frame"):
+        validate_context(
+            "ltx_2.5",
+            _context(
+                "i2v",
+                "ltx_native",
+                assets=[{"binding_id": "last", "kind": "image", "role": "last_frame", "ordinal": 1}],
+            ),
+        )
 
 
 def test_local_h3_endpoint_rejects_invalid_or_truncated_structured_output(
@@ -170,7 +207,7 @@ def test_local_h3_endpoint_rejects_invalid_or_truncated_structured_output(
         "enhance_prompt",
         AsyncMock(return_value=LLMResponse(
             success=True,
-            content="integrated_multimodal_description: x\n\noverall_soundscape: N/A\n\nnon_diegetic_music: N/A",
+            content="integrated_multimodal_description: [Shot 1] x\n\noverall_soundscape: N/A\n\nnon_diegetic_music: N/A",
             model_used="local",
             truncated=True,
         )),
@@ -199,7 +236,7 @@ summary:
 retention_analysis:
 <Subject 1>: fully_preserved
 detailed_description:
-<Subject 1> speaks.
+[Shot 1] <Subject 1> speaks.
 overall_soundscape:
 N/A
 non_diegetic_music:

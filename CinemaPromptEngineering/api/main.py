@@ -2419,7 +2419,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
 
             # Structured local H3 output must not be paragraph-deduplicated.
             enhanced = (
-                result.content.strip()
+                result.content
                 if dialect_id == "local_h3"
                 else _remove_duplicate_prompt(result.content)
             )

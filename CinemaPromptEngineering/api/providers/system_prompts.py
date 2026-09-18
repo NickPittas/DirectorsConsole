@@ -293,9 +293,16 @@ def build_enhancement_prompt(
     task_context = ""
     if enhancement_context is not None:
         dialect = dialect_id or enhancement_context.reference_dialect or "natural_prose"
+        effective_duration = ""
+        if enhancement_context.duration_seconds is not None:
+            effective_duration = (
+                "\nCALLER-CONFIRMED EFFECTIVE VIDEO DURATION (do not change or invent): "
+                f"{enhancement_context.duration_seconds:.2f} seconds."
+            )
         task_context = f"""\n\nENHANCEMENT TASK: {enhancement_context.task}
 PROMPT DIALECT: {dialect}
 {format_binding_context(enhancement_context, target_model, {"id": dialect})}
+{effective_duration}
 """
 
     return f"""TARGET MODEL:
@@ -312,6 +319,7 @@ CONSTRAINTS (MUST FOLLOW):
 - Do not contradict the user's scene; reconcile conflicts in favor of the provided configuration.
 - If a detail is not provided, do not add it unless the selected target guide requires a compatible cinematic bridge.
 - Follow the selected target guide's task, dialect, section, and source-binding contract.
+- Guide examples are illustrative; for ref2v use the caller-confirmed source tokens and ordinal gaps exactly, never example ordinals.
 - The server received metadata only and cannot inspect media or validate a workflow graph; use only confirmed bindings above.
 - Do not invent attachments, provider asset IDs, source contents, dialogue, durations, music, or API controls.
 
