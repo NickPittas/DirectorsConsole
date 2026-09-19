@@ -2047,7 +2047,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             {selectedLlmProvider && (
               <div style={styles.inputGroup}>
                 <label style={styles.inputLabel} htmlFor="llm-model-select">
-                  Model {isLoadingModels && <span style={{ color: 'var(--text-muted)' }}>(loading...)</span>}
+                  <span>Model</span> {isLoadingModels && <span style={{ color: 'var(--text-muted)' }}>(loading...)</span>}
                 </label>
                 <select
                   id="llm-model-select"

@@ -3438,7 +3438,7 @@ function App() {
       </div>
 
       {/* Configuration Panel */}
-      <div className="config-panel">
+      <div className="config-panel" key={projectType}>
         {projectType === 'live_action' ? (
           <>
             {/* Camera Section */}
@@ -3592,7 +3592,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.lens_family}>
-                  Lens Family
+                  <span>Lens Family</span>
                   {getLensFilterHint(liveActionConfig.camera.body) && (
                     <span className="field-hint">({getLensFilterHint(liveActionConfig.camera.body)})</span>
                   )}
@@ -3621,7 +3621,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.focal_length}>
-                  Focal Length (mm)
+                  <span>Focal Length (mm)</span>
                   {liveActionConfig.lens.family && (
                     <span className="field-hint">(available for {LENS_FAMILY_NAMES[liveActionConfig.lens.family] || liveActionConfig.lens.family.replace(/_/g, ' ')})</span>
                   )}
@@ -3702,7 +3702,7 @@ function App() {
               <h2>Movement</h2>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.movement_equipment}>
-                  Equipment 
+                  <span>Equipment</span>
                   {CAMERA_WEIGHTS[liveActionConfig.camera.body] === 'Heavy' && <span className="field-hint">(limited by camera weight)</span>}
                   {liveActionConfig.movement.movement_type === 'Dolly_Zoom' && <span className="field-hint">(Dolly Zoom requires Dolly/Slider)</span>}
                 </label>
@@ -3750,7 +3750,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.movement_type}>Movement Type <span className="field-hint">(filtered by equipment)</span></label>
+                <label title={FIELD_DESCRIPTIONS.movement_type}><span>Movement Type</span> <span className="field-hint">(filtered by equipment)</span></label>
                 <select
                   value={liveActionConfig.movement.movement_type}
                   onChange={(e) => {
@@ -3784,7 +3784,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.movement_timing}>
-                  Timing
+                  <span>Timing</span>
                   {liveActionConfig.movement.movement_type === 'Dolly_Zoom' && <span className="field-hint">(Dolly Zoom requires slower timing)</span>}
                 </label>
                 <select
@@ -3845,7 +3845,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.lighting_source}>
-                  Source 
+                  <span>Source</span>
                   <span className="field-hint">
                     {selectedLiveActionPreset 
                       ? (selectedLiveActionPreset.year < 2002 
@@ -3881,7 +3881,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.lighting_style}>Style <span className="field-hint">(filtered by time & mood)</span></label>
+                <label title={FIELD_DESCRIPTIONS.lighting_style}><span>Style</span> <span className="field-hint">(filtered by time & mood)</span></label>
                 <select
                   value={liveActionConfig.lighting.style}
                   onChange={(e) => updateLiveAction('lighting', { style: e.target.value })}
@@ -3911,7 +3911,7 @@ function App() {
               <h2>Visual Grammar</h2>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.shot_size}>
-                  Shot Size
+                  <span>Shot Size</span>
                   {getFocalLengthShotSizeHint(liveActionConfig.lens.focal_length_mm, liveActionConfig.visual_grammar.shot_size) && (
                     <span className="field-hint warning">
                       ({getFocalLengthShotSizeHint(liveActionConfig.lens.focal_length_mm, liveActionConfig.visual_grammar.shot_size)})
@@ -3943,7 +3943,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.mood}>
-                  Mood
+                  <span>Mood</span>
                   {selectedLiveActionPreset && selectedLiveActionPreset.disallowed_moods.length > 0 && (
                     <span className="field-hint">(filtered by preset)</span>
                   )}
@@ -4093,7 +4093,7 @@ function App() {
                 </select>
               </div>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.color_application}>Color Application {animationConfig.style_domain === 'Manga' && <span className="field-hint">(Manga: Monochrome only)</span>}</label>
+                <label title={FIELD_DESCRIPTIONS.color_application}><span>Color Application</span> {animationConfig.style_domain === 'Manga' && <span className="field-hint">(Manga: Monochrome only)</span>}</label>
                 <select
                   value={animationConfig.rendering.color_application}
                   onChange={(e) => updateAnimation('rendering', { color_application: e.target.value })}
@@ -4115,7 +4115,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.lighting_model}>
-                  Lighting Model
+                  <span>Lighting Model</span>
                   {animationConfig.style_domain === 'Manga' && <span className="field-hint">(Manga: Graphic only)</span>}
                   {animationConfig.style_domain === 'ThreeD' && <span className="field-hint">(3D: No Flat lighting)</span>}
                 </label>
@@ -4158,7 +4158,7 @@ function App() {
             <div className="section">
               <h2>Motion</h2>
               <div className="field">
-                <label title={FIELD_DESCRIPTIONS.motion_style}>Motion Style {(animationConfig.style_domain === 'Manga' || animationConfig.style_domain === 'Illustration') && <span className="field-hint">(static only)</span>}</label>
+                <label title={FIELD_DESCRIPTIONS.motion_style}><span>Motion Style</span> {(animationConfig.style_domain === 'Manga' || animationConfig.style_domain === 'Illustration') && <span className="field-hint">(static only)</span>}</label>
                 <select
                   value={animationConfig.motion.motion_style}
                   onChange={(e) => updateAnimation('motion', { motion_style: e.target.value })}
@@ -4180,7 +4180,7 @@ function App() {
               </div>
               <div className="field">
                 <label title={FIELD_DESCRIPTIONS.virtual_camera}>
-                  Virtual Camera 
+                  <span>Virtual Camera</span>
                   <span className="field-hint">
                     (filtered by domain/medium{animationConfig.motion.motion_style === 'None' ? '/motion' : ''})
                   </span>
