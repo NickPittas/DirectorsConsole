@@ -312,6 +312,12 @@ interface StoryboardUIProps {
 }
 
 export function StoryboardUI({ onProjectLoadingChange, initialSession }: StoryboardUIProps = {}) {
+  const projectType = useCinemaStore(state => state.projectType);
+  const liveActionConfig = useCinemaStore(state => state.liveActionConfig);
+  const animationConfig = useCinemaStore(state => state.animationConfig);
+  const selectedLiveActionPreset = useCinemaStore(state => state.selectedLiveActionPreset);
+  const selectedAnimationPreset = useCinemaStore(state => state.selectedAnimationPreset);
+
   // ---------------------------------------------------------------------------
   // Error Notifications
   // ---------------------------------------------------------------------------
@@ -592,14 +598,20 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const panelsRef = useRef(panels);
   const enhancementPreferencesRef = useRef<EnhancementPreferences>(enhancementPreferences);
   const enhancementRequestRevisionRef = useRef(0);
-  const enhancementProjectTypeRef = useRef<'live_action'>('live_action');
-  const enhancementConfigRef = useRef<Record<string, unknown>>({});
+  const enhancementProjectTypeRef = useRef(projectType);
+  const enhancementConfigRef = useRef(projectType === 'live_action' ? liveActionConfig : animationConfig);
+  const enhancementPresetIdRef = useRef<string | undefined>(
+    projectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id,
+  );
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
   panelsRef.current = panels;
   enhancementPreferencesRef.current = enhancementPreferences;
+  enhancementProjectTypeRef.current = projectType;
+  enhancementConfigRef.current = projectType === 'live_action' ? liveActionConfig : animationConfig;
+  enhancementPresetIdRef.current = projectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id;
 
   useEffect(() => () => {
     enhancementRequestRevisionRef.current += 1;
@@ -4214,7 +4226,9 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const panelAtSubmit = panelId;
     const targetModelAtSubmit = effectiveTargetAtSubmit.targetModel;
     const projectTypeAtSubmit = enhancementProjectTypeRef.current;
-    const configAtSubmit = JSON.stringify(enhancementConfigRef.current);
+    const configSnapshotAtSubmit = enhancementConfigRef.current;
+    const configAtSubmit = JSON.stringify(configSnapshotAtSubmit);
+    const presetIdAtSubmit = enhancementPresetIdRef.current;
     const requestRevision = enhancementRequestRevisionRef.current;
     const submittedOAuthToken = getConfiguredProviders().find(item => item.providerId === getSelectedLlmSettings()?.provider)?.credentials.oauthToken;
     const llmSettings = getSelectedLlmSettings();
@@ -4229,7 +4243,8 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         llmModel: llmSettings.model,
         targetModel: targetModelAtSubmit,
         projectType: projectTypeAtSubmit,
-        config: enhancementConfigRef.current as any,
+        config: configSnapshotAtSubmit as any,
+        presetId: presetIdAtSubmit,
         ...(built?.context ? {
           enhancementContext: {
             task: built.context.task,
@@ -4288,6 +4303,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         && currentPreferences.referenceDialect === preferences.referenceDialect
         && projectTypeAtSubmit === enhancementProjectTypeRef.current
         && configAtSubmit === JSON.stringify(enhancementConfigRef.current)
+        && presetIdAtSubmit === enhancementPresetIdRef.current
         && promptStillCurrent
         && currentTarget.targetModel === targetModelAtSubmit
         && (profile

@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useCinemaStore } from '@/store';
-import { api, type PromptEnhancementProfile } from '@/api/client';
+import { api, type EnhancementImage, type EnhancementImageMode, type ImageCapabilities, type PromptEnhancementProfile } from '@/api/client';
+import { EnhancementImageInputs } from '@/components/EnhancementImageInputs';
 import type { RuleSeverity, FilmPresetSummary, AnimationPresetSummary, CinematographyStyle, OptionsResponse } from '@/types';
 import Settings, { getConfiguredProviders, getSelectedLlmSettings, loadTargetModel, saveTargetModel, updateSavedOAuthToken, type ConfiguredProvider } from '@/components/Settings';
 
@@ -247,12 +248,6 @@ const TARGET_MODEL_NAMES: Record<string, string> = {
   'seedance_2.0': 'Seedance 2.0',
   'seedance_2.5': 'Seedance 2.5',
 };
-
-const IMAGE_MODEL_IDS = new Set([
-  'midjourney', 'flux.1', 'flux.1_pro', 'flux_kontext', 'flux_krea',
-  'dall-e_3', 'gpt-image', 'ideogram_2.0', 'leonardo_ai',
-  'sdxl', 'stable_diffusion_3', 'z-image_turbo', 'qwen_image',
-]);
 
 // Shot size abbreviation to full name mapping
 const SHOT_SIZE_NAMES: Record<string, string> = {
@@ -2242,20 +2237,36 @@ function App() {
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
   const [enhanceWarnings, setEnhanceWarnings] = useState<string[]>([]);
   const [enhancementProfiles, setEnhancementProfiles] = useState<PromptEnhancementProfile[]>([]);
+  const [imageCapabilities, setImageCapabilities] = useState<ImageCapabilities>();
   const [enhancementDialect, setEnhancementDialect] = useState('');
+  const [enhancementImages, setEnhancementImages] = useState<EnhancementImage[]>([]);
+  const [enhancementImageMode, setEnhancementImageMode] = useState<EnhancementImageMode>('description_only');
+  const [imageDialect, setImageDialect] = useState('');
   const enhancementRevisionRef = useRef(0);
   const userPromptRef = useRef(userPrompt);
   const projectTypeRef = useRef(projectType);
   const enhancementDialectRef = useRef(enhancementDialect);
   const enhancementConfigRef = useRef<unknown>(liveActionConfig);
+  const selectedProviderRef = useRef(selectedLlmProvider);
+  const selectedModelRef = useRef(selectedLlmModel);
+  const presetIdRef = useRef<string | undefined>(undefined);
+  const imagesRef = useRef(enhancementImages);
+  const imageModeRef = useRef(enhancementImageMode);
+  const imageDialectRef = useRef(imageDialect);
   userPromptRef.current = userPrompt;
   projectTypeRef.current = projectType;
   enhancementDialectRef.current = enhancementDialect;
   enhancementConfigRef.current = projectType === 'live_action' ? liveActionConfig : animationConfig;
+  selectedProviderRef.current = selectedLlmProvider;
+  selectedModelRef.current = selectedLlmModel;
+  presetIdRef.current = projectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id;
+  imagesRef.current = enhancementImages;
+  imageModeRef.current = enhancementImageMode;
+  imageDialectRef.current = imageDialect;
 
   useEffect(() => {
     enhancementRevisionRef.current += 1;
-  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect]);
+  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect, selectedLlmProvider, selectedLlmModel, selectedLiveActionPreset?.id, selectedAnimationPreset?.id, enhancementImages, enhancementImageMode, imageDialect]);
 
   useEffect(() => () => {
     enhancementRevisionRef.current += 1;
@@ -2267,23 +2278,8 @@ function App() {
   const [targetModelWarning, setTargetModelWarning] = useState<string | null>(null);
   const sessionHydrated = useCinemaStore(state => state.sessionHydrated);
 
-  const isImageModel = useMemo(() => {
-    const apiModel = availableTargetModels.find(model => model.id === targetModel);
-    if (apiModel) {
-      return apiModel.category === 'Image';
-    }
-    return IMAGE_MODEL_IDS.has(targetModel);
-  }, [availableTargetModels, targetModel]);
+  const activeImageCapability = imageCapabilities?.targets.find(item => item.target_model === targetModel);
 
-  const hasMovementSelection = useMemo(() => {
-    if (projectType === 'live_action') {
-      const movement = liveActionConfig.movement;
-      if (!movement) return false;
-      return movement.movement_type !== 'Static';
-    }
-    return false;
-  }, [projectType, liveActionConfig]);
-  
   // Preset panel state (right-docked collapsible panel) - with localStorage persistence
   const [isPresetPanelOpen, setIsPresetPanelOpen] = useState(() => {
     const saved = localStorage.getItem('cpe-ui-state');
@@ -2410,17 +2406,16 @@ function App() {
     const providers = getConfiguredProviders();
     setConfiguredProviders(providers);
     
-    // Reload LLM settings from localStorage (set in Settings panel)
+    // Reload only settings whose provider is still configured; custom endpoints
+    // are supplied by getConfiguredProviders rather than a fixed registry.
     const savedLlmSettings = getSelectedLlmSettings();
-    if (savedLlmSettings) {
+    if (savedLlmSettings && providers.some(provider => provider.providerId === savedLlmSettings.provider)) {
       setSelectedLlmProvider(savedLlmSettings.provider);
       setSelectedLlmModel(savedLlmSettings.model);
-    } else if (providers.length > 0 && !selectedLlmProviderRef.current) {
-      // Fallback: auto-select first provider if nothing saved
-      setSelectedLlmProvider(providers[0].providerId);
-      if (providers[0].models.length > 0) {
-        setSelectedLlmModel(providers[0].models[0]);
-      }
+    } else if (!providers.some(provider => provider.providerId === selectedLlmProviderRef.current)) {
+      const fallback = providers[0];
+      setSelectedLlmProvider(fallback?.providerId || '');
+      setSelectedLlmModel(fallback?.models[0] || '');
     }
   }, [isSettingsOpen]); // Reload when settings panel closes
 
@@ -2456,7 +2451,12 @@ function App() {
   useEffect(() => {
     let active = true;
     api.getPromptEnhancementProfiles()
-      .then(result => { if (active) setEnhancementProfiles(result.profiles || []); })
+      .then(result => {
+        if (active) {
+          setEnhancementProfiles(result.profiles || []);
+          setImageCapabilities(result.image_capabilities);
+        }
+      })
       .catch(error => console.warn('Failed to fetch prompt enhancement profiles:', error));
     return () => { active = false; };
   }, []);
@@ -2469,6 +2469,11 @@ function App() {
       setEnhancementDialect(profile.default_dialect);
     }
   }, [enhancementProfiles, targetModel, enhancementDialect]);
+
+  useEffect(() => {
+    const capability = imageCapabilities?.targets.find(item => item.target_model === targetModel);
+    setImageDialect(capability?.default_dialect ?? '');
+  }, [imageCapabilities, targetModel]);
 
   // Save preset panel state to localStorage (consolidated key)
   useEffect(() => {
@@ -2620,44 +2625,108 @@ function App() {
   // Handle LLM prompt enhancement
   const handleEnhancePrompt = useCallback(async () => {
     setEnhanceWarnings([]);
-    if (!userPrompt.trim()) {
-      setEnhanceError('Please enter a prompt idea to enhance');
+    const requestedPrompt = userPrompt.trim();
+    const requestedImages = enhancementImages.map(image => ({ ...image }));
+    if (!requestedPrompt && requestedImages.length === 0) {
+      setEnhanceError('Enter a prompt idea or add an image to enhance.');
       return;
     }
-    
+    const localImageRefs = [...requestedPrompt.matchAll(/(?<![\w@])@(img|image)([1-9]\d*)(?!\w)/g)];
+    const imageIds = new Set(requestedImages.map(image => image.id));
+    const missingImageRef = localImageRefs.find(match => !imageIds.has(Number(match[2])));
+    if (missingImageRef) {
+      setEnhanceError(`Prompt reference @${missingImageRef[1]}${missingImageRef[2]} has no matching uploaded image.`);
+      return;
+    }
+    if (requestedImages.length > 0) {
+      const dialect = activeImageCapability?.dialects.find(item => item.id === imageDialect)
+        ?? activeImageCapability?.dialects.find(item => item.id === activeImageCapability.default_dialect);
+      if (!imageCapabilities || !activeImageCapability || !dialect) {
+        setEnhanceError('Image capability metadata is unavailable for this target. Refresh CPE or choose a supported target before enhancing with images.');
+        return;
+      }
+      if ((enhancementImageMode !== 'description_only' && dialect.status === 'unsupported')
+        || (enhancementImageMode === 'reference' && !dialect.supports_reference)
+        || (enhancementImageMode === 'starting_frame' && !dialect.supports_starting_frame)) {
+        setEnhanceError('This model variant does not support the selected image use. Choose another variant or image use.');
+        return;
+      }
+      const limits = imageCapabilities.limits;
+      const imageLimit = enhancementImageMode === 'description_only' || enhancementImageMode === 'starting_frame'
+        ? Math.min(1, limits.max_images)
+        : dialect.reference_limit === null ? limits.max_images : Math.min(limits.max_images, dialect.reference_limit);
+      const imageBytes = requestedImages.map(image => Math.floor(image.data.length * 3 / 4)
+        - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0));
+      if (requestedImages.length > imageLimit) {
+        setEnhanceError(`You can use up to ${imageLimit} image${imageLimit === 1 ? '' : 's'} here. Remove extra images or choose a different image use.`);
+        return;
+      }
+      if (imageBytes.some(size => size > limits.max_image_bytes)
+        || imageBytes.reduce((total, size) => total + size, 0) > limits.max_total_image_bytes) {
+        setEnhanceError('The selected images exceed this target’s upload size limits. Remove images or choose smaller files.');
+        return;
+      }
+    }
+
     if (!selectedLlmProvider || !selectedLlmModel) {
       setEnhanceError('Please select an LLM provider and model. Configure providers in Settings.');
       return;
     }
-    
     const provider = configuredProviders.find(p => p.providerId === selectedLlmProvider);
     if (!provider) {
       setEnhanceError('Selected provider not found. Please configure in Settings.');
       return;
     }
-    
+
+    const requestedTarget = targetModel;
+    const requestedProjectType = projectType;
+    const submittedConfigJson = JSON.stringify(requestedProjectType === 'live_action' ? liveActionConfig : animationConfig);
+    const requestedConfig = JSON.parse(submittedConfigJson);
+    const requestedPresetId = requestedProjectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id;
+    const requestedProvider = selectedLlmProvider;
+    const requestedModel = selectedLlmModel;
+    const requestedMode = enhancementImageMode;
+    const requestedImageDialectState = imageDialect;
+    const requestedImageDialect = imageDialect || activeImageCapability?.default_dialect || '';
+    const selectedProfile = enhancementProfiles.find(profile => profile.target_model === requestedTarget);
+    const requestedDialect = selectedProfile?.dialects.some(item => item.id === enhancementDialect)
+      ? enhancementDialect
+      : selectedProfile?.default_dialect ?? '';
+    const requestRevision = enhancementRevisionRef.current;
+    const requestStillCurrent = () => requestRevision === enhancementRevisionRef.current
+      && userPromptRef.current.trim() === requestedPrompt
+      && targetModelRef.current === requestedTarget
+      && projectTypeRef.current === requestedProjectType
+      && enhancementDialectRef.current === enhancementDialect
+      && JSON.stringify(enhancementConfigRef.current) === submittedConfigJson
+      && selectedProviderRef.current === requestedProvider
+      && selectedModelRef.current === requestedModel
+      && presetIdRef.current === requestedPresetId
+      && imageModeRef.current === requestedMode
+      && imageDialectRef.current === requestedImageDialectState
+      && imagesRef.current.length === requestedImages.length
+      && imagesRef.current.every((image, index) => image.id === requestedImages[index].id
+        && image.mimeType === requestedImages[index].mimeType && image.data === requestedImages[index].data);
+
     setIsEnhancing(true);
     setEnhanceError(null);
     const submittedOAuthToken = provider.credentials.oauthToken;
-    const requestedPrompt = userPrompt.trim();
-    const requestedTarget = targetModel;
-    const requestedProjectType = projectType;
-    const requestedConfig = JSON.stringify(enhancementConfigRef.current);
-    const requestRevision = enhancementRevisionRef.current;
-    const selectedProfile = enhancementProfiles.find(profile => profile.target_model === targetModel);
-    const requestedDialect = selectedProfile?.dialects.some(item => item.id === enhancementDialect)
-      ? enhancementDialect
-      : selectedProfile?.default_dialect;
-    
+    const submittedOAuthRefreshToken = provider.credentials.oauthRefreshToken;
     try {
       const result = await api.enhancePrompt({
         userPrompt: requestedPrompt,
-        llmProvider: selectedLlmProvider,
-        llmModel: selectedLlmModel,
+        llmProvider: requestedProvider,
+        llmModel: requestedModel,
         targetModel: requestedTarget,
         projectType: requestedProjectType,
-        config: requestedProjectType === 'live_action' ? liveActionConfig : animationConfig,
-        ...(selectedProfile ? {
+        config: requestedConfig,
+        ...(requestedPresetId ? { presetId: requestedPresetId } : {}),
+        ...(requestedImages.length ? {
+          images: requestedImages,
+          imageMode: requestedMode,
+          imageDialect: requestedImageDialect,
+        } : {}),
+        ...(!requestedImages.length && selectedProfile ? {
           enhancementContext: {
             task: 't2v' as const,
             ...(requestedDialect ? { referenceDialect: requestedDialect } : {}),
@@ -2671,57 +2740,31 @@ function App() {
           oauthToken: provider.credentials.oauthToken,
         },
       });
-      
-      const currentProvider = getConfiguredProviders().find(
-        current => current.providerId === selectedLlmProvider,
-      );
-      if (
-        result.oauth_token &&
-        submittedOAuthToken &&
-        getSelectedLlmSettings()?.provider === selectedLlmProvider &&
-        currentProvider?.credentials.oauthToken === submittedOAuthToken
-      ) {
-        updateSavedOAuthToken(selectedLlmProvider, result.oauth_token);
+
+      const currentProvider = getConfiguredProviders().find(current => current.providerId === requestedProvider);
+      if (result.oauth_token && submittedOAuthToken && selectedLlmProviderRef.current === requestedProvider
+        && getSelectedLlmSettings()?.provider === requestedProvider
+        && currentProvider?.credentials.oauthToken === submittedOAuthToken
+        && currentProvider?.credentials.oauthRefreshToken === submittedOAuthRefreshToken) {
+        updateSavedOAuthToken(requestedProvider, result.oauth_token);
         setConfiguredProviders(getConfiguredProviders());
       }
-
+      if (!requestStillCurrent()) return;
       if (result.success) {
-        // Read current refs after the await. The callback closure may describe
-        // the request that was submitted, not the request still visible in the UI.
-        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
-          && userPromptRef.current.trim() === requestedPrompt
-          && targetModelRef.current === requestedTarget
-          && projectTypeRef.current === requestedProjectType
-          && enhancementDialectRef.current === requestedDialect
-          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
-        if (!requestStillCurrent) {
-          setEnhanceError('Enhancement discarded because the request changed while it was running.');
-          return;
-        }
-        // Set the enhanced prompt separately from the simple generated prompt.
         setEnhancedPrompt(result.enhanced_prompt);
         setEnhanceWarnings(result.warnings ?? []);
       } else {
-        const requestStillCurrent = requestRevision === enhancementRevisionRef.current
-          && userPromptRef.current.trim() === requestedPrompt
-          && targetModelRef.current === requestedTarget
-          && projectTypeRef.current === requestedProjectType
-          && enhancementDialectRef.current === requestedDialect
-          && JSON.stringify(enhancementConfigRef.current) === requestedConfig;
-        if (!requestStillCurrent) {
-          setEnhanceError('Enhancement discarded because the request changed while it was running.');
-          return;
-        }
         setEnhanceError(result.error || 'Enhancement failed');
       }
     } catch (error) {
-      console.error('Failed to enhance prompt:', error);
-      setEnhanceError(error instanceof Error ? error.message : 'Enhancement failed');
-      setEnhanceWarnings([]);
+      if (requestStillCurrent()) {
+        setEnhanceError(error instanceof Error ? error.message : 'Enhancement failed');
+        setEnhanceWarnings([]);
+      }
     } finally {
       setIsEnhancing(false);
     }
-  }, [userPrompt, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, enhancementProfiles, enhancementDialect, setEnhancedPrompt]);
+  }, [userPrompt, enhancementImages, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, selectedLiveActionPreset, selectedAnimationPreset, enhancementProfiles, enhancementDialect, enhancementImageMode, imageDialect, activeImageCapability, imageCapabilities, setEnhancedPrompt]);
 
   const getSeverityClass = (severity: RuleSeverity) => {
     switch (severity) {
@@ -2738,20 +2781,33 @@ function App() {
       style={{ '--preset-panel-width': `${presetPanelWidth}px` } as React.CSSProperties}
     >
       <header className="header cpe-toolbar">
-        <textarea
-          className="toolbar-prompt"
-          value={userPrompt}
-          onChange={(e) => setUserPrompt(e.target.value)}
-          placeholder="Describe your scene..."
-          aria-label="Scene description"
-          rows={3}
-        />
+        <EnhancementImageInputs
+          images={enhancementImages}
+          onImagesChange={setEnhancementImages}
+          mode={enhancementImageMode}
+          onModeChange={setEnhancementImageMode}
+          dialect={imageDialect}
+          capability={activeImageCapability}
+          limits={imageCapabilities?.limits}
+          disabled={isEnhancing}
+        >
+          <textarea
+            className="toolbar-prompt"
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
+            placeholder="Describe your scene..."
+            aria-label="Scene description"
+            rows={3}
+          />
+        </EnhancementImageInputs>
         <div className="cpe-toolbar-controls">
         <select 
           className="toolbar-model"
           value={targetModel} 
           onChange={(e) => {
             setTargetModelWarning(null);
+            setEnhanceWarnings([]);
+            setEnhanceError(null);
             setTargetModel(e.target.value);
           }}
           disabled={isLoadingTargetModels}
@@ -2806,18 +2862,21 @@ function App() {
             </>
           )}
         </select>
-        {enhancementProfiles.find(profile => profile.target_model === targetModel) && (
-          <select
-            className="toolbar-model"
-            aria-label="Enhancement dialect"
-            value={enhancementDialect || enhancementProfiles.find(profile => profile.target_model === targetModel)?.default_dialect || ''}
-            onChange={event => setEnhancementDialect(event.target.value)}
-          >
-            {enhancementProfiles.find(profile => profile.target_model === targetModel)?.dialects.map(dialect => (
-              <option key={dialect.id} value={dialect.id}>{dialect.label}</option>
-            ))}
-          </select>
-        )}
+        {(() => {
+          const profile = enhancementProfiles.find(item => item.target_model === targetModel);
+          const variants = enhancementImages.length ? activeImageCapability?.dialects ?? [] : profile?.dialects ?? [];
+          const selected = enhancementImages.length
+            ? imageDialect || activeImageCapability?.default_dialect || ''
+            : enhancementDialect || profile?.default_dialect || '';
+          return variants.length > 1 && <select className="toolbar-model" aria-label="Model variant" value={selected} onChange={event => {
+            if (enhancementImages.length) {
+              setImageDialect(event.target.value);
+              if (profile?.dialects.some(item => item.id === event.target.value)) setEnhancementDialect(event.target.value);
+            } else setEnhancementDialect(event.target.value);
+          }}>
+            {variants.map(variant => <option key={variant.id} value={variant.id}>{variant.label}</option>)}
+          </select>;
+        })()}
         {targetModelWarning && (
           <span role="status" style={{ color: 'var(--text-warning, #f59e0b)', fontSize: '0.75rem' }}>
             {targetModelWarning}
@@ -2826,7 +2885,7 @@ function App() {
         <button className="toolbar-btn primary" onClick={handleGenerate} disabled={isGenerating}>
           {isGenerating ? 'Generating...' : 'Generate'}
         </button>
-        <button className="toolbar-btn" onClick={handleEnhancePrompt} disabled={isEnhancing || !userPrompt.trim()}>
+        <button className="toolbar-btn" onClick={handleEnhancePrompt} disabled={isEnhancing || (!userPrompt.trim() && enhancementImages.length === 0)}>
           {isEnhancing ? 'Enhancing...' : 'Enhance with AI'}
         </button>
         <button className="toolbar-settings" onClick={() => setIsSettingsOpen(true)}>
@@ -2840,22 +2899,6 @@ function App() {
 
       {/* Settings Modal */}
       <Settings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-
-      {isImageModel && hasMovementSelection && (
-        <div
-          style={{
-            margin: '0.75rem 1.25rem',
-            padding: '0.6rem 0.8rem',
-            borderRadius: '6px',
-            backgroundColor: 'rgba(245, 158, 11, 0.12)',
-            color: 'var(--text-primary)',
-            border: '1px solid rgba(245, 158, 11, 0.4)',
-            fontSize: '0.85rem',
-          }}
-        >
-          Motion settings are ignored for image models. Switch to a video model or set movement to Static.
-        </div>
-      )}
 
       {/* Prompt Generation Panel */}
       <div className="output-panel">

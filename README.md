@@ -81,7 +81,7 @@ Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, 
 
 - **Generation Progress Sidebar** — Dedicated sidebar panel showing detailed progress for all active generations. Per-node workflow stage display (e.g., "Loading Checkpoint", "KSampler", "VAE Decode"), multi-phase progress for multi-KSampler workflows, and step counters. Replaces intrusive panel overlays with a minimal bottom bar indicator.
 
-- **AI-Enhanced Prompts** — Connect the configured LLM provider to refine prompts for a separate canonical image or video target model. The current video profile catalog includes versioned LTX, MiniMax H3, Seedance, Wan 3.0, and Kling 3.0/Omni guidance.
+- **AI-Enhanced Prompts** — Refine text or attached images with a configured LLM for a separate image/video target. The prompt composer supports a + picker, drag-and-drop, previews, and image-use controls; every enhancement includes the full active configuration and selected preset/style.
 
 - **Model-Specific Output** — Prompts are formatted for the selected target generator; image and video targets use different guides, tasks, and dialects.
 
@@ -658,14 +658,20 @@ Each preset configures: **medium** (2D / 3D / Hybrid / Stop Motion), **style dom
 
 ### AI-Enhanced Prompts
 
-Beyond rule-based generation, CPE can send a structured prompt to an enhancing LLM. The **target model** is the image/video generator whose prompt is being written; the **LLM provider and model** are the service that rewrites it. Configure those separately in Settings. Do not treat the enhancing provider as the generation target.
+CPE uses a chat-style prompt composer. **Enhance with AI** sends the active prompt, full active configuration JSON, full selected official preset/style, and any attached images to the configured enhancing LLM. Attachments require that LLM to support image input; text-only enhancement does not. It does not execute or upload to the selected generator. Current selections override preset defaults, explicit edits override photographed pose, and image text is untrusted input.
 
 #### Cinema Prompt Engineering page
 
-1. Choose the canonical target from the **General**, **Image**, or **Video** target dropdown. The scene prompt is a full-width row above these target controls.
-2. For a registered video target, choose its available dialect (for example, `local_h3` or `minimax_api`). Dialects are model-specific; prose targets are not all one JSON template.
-3. Configure an LLM provider/model in **Settings**, enter the scene idea and cinematography selections, and click **Enhance with AI**.
-4. Review/copy the AI-Enhanced Prompt, or use **Send to Storyboard**. Image targets use their family guide; profiled video targets use the selected video profile and default to a text-to-video enhancement context on this page because it has no workflow media mapping.
+- Click **+** to choose PNG, JPEG, or WebP files. Drop file-manager images anywhere on the composer. Previews use stable aliases (`@img1`, `@img2`, …); removing one does not renumber the others.
+- Enhance with optional text, or images only. **Image use** choices: **Describe image** (one image, standalone text, default), **Use as reference** (supported variants/workflows and native markers), or **Use as starting image** (one image; video start-frame or still-image edit/init semantics).
+- The existing toolbar has one target selector and, only when multiple choices exist, a contextual variant selector. There is no second selector below the prompt. Settings provider/model is distinct from the generator target.
+- Enhance sends every active config field, including motion and future/null/array fields, plus the full selected official preset/style. Images go only to the chosen LLM when Enhance is clicked; no generator execution or upload is implied.
+
+#### Storyboard
+
+Storyboard remains metadata-only and adds no image uploader. It forwards the active configuration and selected preset/style, preserving confirmed ordinals and mapping for workflow media. Its video/audio metadata path is distinct from CPE attached image pixels.
+
+See [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) for target modes, aliases, limits, and confirmed video conventions.
 
 ### Image target guide families
 
@@ -681,7 +687,7 @@ The canonical image catalog preserves all older targets and adds these 14 prompt
 
 These are prompt-text guides, not image-generation integrations. Hosted/API model pages, open-weight releases, local checkpoints, and ComfyUI nodes are separate availability questions: Krea 2 includes open-weight releases, but that does not make every Krea service or feature local; likewise, a catalog target never promises local weights, a hosted endpoint, credentials, account/region access, or a ComfyUI workflow. FLUX 3 Image is intentionally excluded pending verified API/prompt availability.
 
-Both the CPE page and Storyboard AI Enhance use the same target catalog and guides. Image enhancement has no separate image task, mode, or reference-mapping selector: the user's wording must identify a new generation or the exact edit. For edits, state what changes and what caller-provided identity, composition, lighting, or text must remain; the enhancer receives metadata only and does not inspect image bytes or invent reference contents. The Storyboard gear remains the place for video dialect/task and confirmed media mapping controls.
+Both CPE and Storyboard AI Enhance use the same target catalog and guides. CPE can send attached image pixels through its image-use controls; Storyboard still sends only caller-confirmed workflow-media metadata, not image/video/audio bytes. For edits, state what changes and what identity, composition, lighting, or text must remain. The enhancer must not invent contents of metadata-only references. The Storyboard gear remains the place for video dialect/task and confirmed media mapping controls.
 
 Official image sources: [Krea 2](https://www.krea.ai/blog/explorative-prompting-krea-2), [FLUX.2 prompting](https://docs.bfl.ai/guides/prompting_guide_flux2), [GPT Image prompting](https://developers.openai.com/api/docs/guides/image-prompting), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation), and [Seedream 5.0 Pro/Lite](https://seed.bytedance.com/en/blog/beyond-generation-it-understands-design-introducing-seedream-5-0-pro).
 
@@ -732,6 +738,10 @@ This is the authoritative Google setup path. No new provider is needed: the prov
 
 This Google AI Studio API key is **not** an OAuth client secret and does not log you into **Antigravity**. Available models, quotas, billing, and service eligibility depend on the key/account and Google service; successful connection or model listing does not guarantee access to every Gemini feature. Never put a real key in this README, examples, issues, logs, or source control. The generic `google` OAuth configuration is a separate path and is not the Gemini API-key option.
 
+
+### Named-compatible endpoints
+
+Settings supports named OpenAI-compatible endpoints (including LM Studio/custom) and Anthropic-compatible endpoints. Configure each base URL and model discovery there; blank keys are allowed only for the corresponding local/compatible service, not as a universal provider bypass. The OpenAI Codex catalog source, warning, and fallback behavior are handled by the app, and OAuth refresh uses the existing credential flow. A fallback is not proof that an account is available. API requests default to 30 seconds; Enhance requests use 90 seconds.
 
 ### OAuth Providers
 

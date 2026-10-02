@@ -7,7 +7,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -37,11 +40,23 @@ from api.providers.credential_storage import (
     StoredSettings,
 )
 from api.providers.prompt_profiles import (
+    EnhancementAsset,
     EnhancementContext,
+    get_dialect,
     get_profile,
     profile_metadata,
     validate_context,
     validate_local_h3_output,
+)
+from api.providers.enhancement_images import (
+    EnhancementImage,
+    ImageMode,
+    format_image_context,
+    image_capability_metadata,
+    image_native_tokens,
+    resolve_image_aliases,
+    validate_image_mode,
+    validate_images,
 )
 
 # Import template router
@@ -1834,7 +1849,7 @@ async def _refresh_expiring_saved_oauth(
     provider_id: str,
     requested_credentials: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
-    """Refresh a matching, known-expiring saved OAuth token before enhancement."""
+    """Refresh a matching, known-expiring saved OAuth token before an LLM request."""
     if not _is_standard_oauth_provider(provider_id):
         return requested_credentials, None
 
@@ -1906,6 +1921,7 @@ async def refresh_oauth_token(provider_id: str) -> dict:
 
 class CredentialUpdate(BaseModel):
     """Request to update credentials for a provider."""
+    name: str | None = None
     api_key: str | None = None
     endpoint: str | None = None
     oauth_token: str | None = None
@@ -1951,6 +1967,7 @@ async def get_all_credentials() -> dict[str, Any]:
     
     for provider_id, creds in settings.providers.items():
         result["providers"][provider_id] = {
+            "name": creds.name,
             "has_api_key": bool(creds.api_key),
             "has_oauth_token": bool(creds.oauth_token),
             "has_refresh_token": bool(creds.oauth_refresh_token),
@@ -1979,6 +1996,7 @@ async def get_provider_credentials(provider_id: str) -> dict[str, Any]:
     
     return {
         "exists": True,
+        "name": creds.name,
         "api_key": creds.api_key,
         "endpoint": creds.endpoint,
         "oauth_token": creds.oauth_token,
@@ -2007,6 +2025,7 @@ async def update_provider_credentials(provider_id: str, update: CredentialUpdate
     if existing:
         # Merge with existing
         creds = ProviderCredentials(
+            name=update.name if update.name is not None else existing.name,
             api_key=update.api_key if update.api_key is not None else existing.api_key,
             endpoint=update.endpoint if update.endpoint is not None else existing.endpoint,
             oauth_token=update.oauth_token if update.oauth_token is not None else existing.oauth_token,
@@ -2017,6 +2036,7 @@ async def update_provider_credentials(provider_id: str, update: CredentialUpdate
         )
     else:
         creds = ProviderCredentials(
+            name=update.name,
             api_key=update.api_key,
             endpoint=update.endpoint,
             oauth_token=update.oauth_token,
@@ -2109,7 +2129,6 @@ from api.providers.llm_service import llm_service, LLMCredentials
 from api.providers.system_prompts import (
     get_system_prompt,
     build_enhancement_prompt,
-    is_video_model,
 )
 
 
@@ -2138,6 +2157,9 @@ class FetchModelsResponse(BaseModel):
     models: list[ModelInfo] = []
     default_model: str | None = None
     error: str | None = None
+    source: str | None = None
+    warning: str | None = None
+    oauth_token: str | None = None
 
 
 @app.post("/llm/models")
@@ -2153,10 +2175,20 @@ async def fetch_llm_models(request: FetchModelsRequest) -> FetchModelsResponse:
     - ollama/lmstudio: Fetches from local servers
     """
     try:
+        request_credentials, refresh_error = await _refresh_expiring_saved_oauth(
+            request.provider, request.credentials,
+        )
+        if refresh_error:
+            return FetchModelsResponse(success=False, error=refresh_error)
+        refreshed_oauth_token = (
+            request_credentials.get("oauth_token")
+            if request_credentials.get("oauth_token") != request.credentials.get("oauth_token")
+            else None
+        )
         creds = LLMCredentials(
-            api_key=request.credentials.get("api_key"),
-            endpoint=request.credentials.get("endpoint"),
-            oauth_token=request.credentials.get("oauth_token"),
+            api_key=request_credentials.get("api_key"),
+            endpoint=request_credentials.get("endpoint"),
+            oauth_token=request_credentials.get("oauth_token"),
         )
         
         result = await llm_service.fetch_provider_models(
@@ -2183,11 +2215,17 @@ async def fetch_llm_models(request: FetchModelsRequest) -> FetchModelsResponse:
                 success=True,
                 models=models,
                 default_model=result.get("default_model"),
+                source=result.get("source"),
+                warning=result.get("warning"),
+                oauth_token=refreshed_oauth_token,
             )
         else:
             return FetchModelsResponse(
                 success=False,
                 error=result.get("error", "Unknown error"),
+                source=result.get("source"),
+                warning=result.get("warning"),
+                oauth_token=refreshed_oauth_token,
             )
     except Exception as e:
         return FetchModelsResponse(
@@ -2244,6 +2282,10 @@ class EnhancePromptRequest(BaseModel):
     config: dict[str, Any]
     credentials: dict[str, Any]
     enhancement_context: EnhancementContext | None = None
+    preset_id: str | None = None
+    images: Any = None
+    image_mode: ImageMode = "description_only"
+    image_dialect: str | None = None
 
 
 class EnhancePromptResponse(BaseModel):
@@ -2258,10 +2300,96 @@ class EnhancePromptResponse(BaseModel):
     error: str | None = None
 
 
+@app.exception_handler(RequestValidationError)
+async def sanitize_enhance_validation_errors(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    if not request.url.path.endswith("/enhance-prompt"):
+        return await request_validation_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [
+                {key: error[key] for key in ("loc", "type", "msg") if key in error}
+                for error in exc.errors()
+            ]
+        },
+    )
+
+
+def _enhancement_preset_context(
+    request: EnhancePromptRequest,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    is_live_action = request.project_type == ProjectType.LIVE_ACTION
+    selected_id = (
+        request.preset_id if request.preset_id is not None else
+        request.config.get("film_preset" if is_live_action else "style_preset")
+    )
+    if selected_id is None:
+        return None, None
+    if not isinstance(selected_id, str) or not selected_id.strip():
+        raise ValueError("Preset ID must be a non-empty string.")
+
+    expected = LIVE_ACTION_PRESETS if is_live_action else ANIMATION_PRESETS
+    other = ANIMATION_PRESETS if is_live_action else LIVE_ACTION_PRESETS
+    preset = expected.get(selected_id)
+    if preset is None:
+        if selected_id in other:
+            raise ValueError(f"Preset '{selected_id}' does not match project type '{request.project_type.value}'.")
+        raise ValueError(f"Unknown preset: {selected_id}")
+
+    style = CINEMATOGRAPHY_STYLES.get(selected_id)
+    return (
+        preset.model_dump(mode="json"),
+        style.model_dump(mode="json") if style is not None else None,
+    )
+
+
+def _uploaded_enhancement_context(
+    request: EnhancePromptRequest,
+    images: list[EnhancementImage],
+    target_model: str,
+) -> tuple[EnhancementContext | None, str | None]:
+    profile = get_profile(target_model)
+    if profile is None:
+        return None, None
+    dialect_id = (
+        request.enhancement_context.reference_dialect
+        if request.enhancement_context else profile["default_dialect"]
+    )
+    if request.image_dialect and get_dialect(profile, request.image_dialect):
+        dialect_id = request.image_dialect
+    dialect = get_dialect(profile, dialect_id) or get_dialect(profile, None)
+    if request.image_mode == "description_only":
+        task, assets = "t2v", []
+    elif request.image_mode == "starting_frame":
+        task = "i2v"
+        assets = [EnhancementAsset(binding_id=f"upload-{images[0].id}", kind="image", role="first_frame", ordinal=1, label=f"@img{images[0].id}")]
+    else:
+        task = "ref2v"
+        assets = [
+            EnhancementAsset(binding_id=f"upload-{image.id}", kind="image", role="reference_image", ordinal=index, label=f"@img{image.id}")
+            for index, image in enumerate(images, start=1)
+        ]
+    if dialect is None or task not in dialect["tasks"] or task not in profile["tasks"]:
+        return None, None
+    context = EnhancementContext(
+        task=task,
+        reference_dialect=dialect["id"],
+        assets=assets,
+        reference_order_confirmed=True,
+    )
+    _, _, validated_dialect = validate_context(target_model, context)
+    return context, validated_dialect["id"]
+
+
 @app.get("/prompt-enhancement/profiles")
 async def get_prompt_enhancement_profiles() -> dict[str, Any]:
     """Return the authoritative target/task/dialect metadata for prompt enhancement."""
-    return {"profiles": profile_metadata()}
+    return {
+        "profiles": profile_metadata(),
+        "image_capabilities": image_capability_metadata(),
+    }
 
 
 def _remove_duplicate_prompt(content: str) -> str:
@@ -2320,54 +2448,82 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
     the target image/video generation model.
     """
     refreshed_oauth_token: str | None = None
+    image_request = request.images is not None
+    image_preflight_complete = False
+    uploaded_images: list[EnhancementImage] = []
     try:
-        # Validate semantic context before touching credentials or a provider.
-        target_profile = get_profile(request.target_model)
+        # Validate images, modes, and semantic context before touching credentials.
+        if image_request:
+            uploaded_images = validate_images(request.images)
+        from cinema_rules.target_models import normalize_target_model
+
+        canonical_target = (
+            normalize_target_model(request.target_model) if image_request else request.target_model
+        )
+        image_dialect = None
+        native_tokens: list[str] = []
+        image_context = None
+        if image_request:
+            image_dialect = validate_image_mode(
+                canonical_target, request.image_mode, uploaded_images, request.image_dialect
+            )
+        if uploaded_images:
+            native_tokens = image_native_tokens(
+                canonical_target, image_dialect, request.image_mode, uploaded_images
+            )
+        if image_request:
+            user_prompt = resolve_image_aliases(request.user_prompt, uploaded_images, native_tokens)
+        else:
+            user_prompt = request.user_prompt
+
         effective_context = request.enhancement_context
-        canonical_target = request.target_model
+        target_profile = get_profile(canonical_target)
         dialect_id: str | None = None
-        if effective_context is not None:
+        if uploaded_images:
+            effective_context, dialect_id = _uploaded_enhancement_context(
+                request, uploaded_images, canonical_target
+            )
+            capability_notes = []
+            if image_dialect["status"] == "unknown":
+                capability_notes.append("Target image-reference capability is unknown; do not claim native support.")
+            capability_notes.append("Image pixels are provided to the enhancement model; target workflow inputs must be connected separately.")
+            if image_dialect["reference_scope"] == "style":
+                capability_notes.append("This target dialect supports style-only image reference; do not claim identity or scene locking.")
+            image_context = format_image_context(
+                uploaded_images, request.image_mode, native_tokens, " ".join(capability_notes)
+            )
+            if not user_prompt.strip():
+                user_prompt = ""
+        elif effective_context is not None:
             canonical_target, target_profile, dialect = validate_context(
-                request.target_model, effective_context
+                canonical_target, effective_context
             )
             dialect_id = dialect["id"]
         elif target_profile is not None:
-            # Video targets without metadata retain legacy calls as T2V while
-            # still selecting the target's verified default dialect.
+            # Keep omitted-images calls on the legacy T2V path.
             effective_context = EnhancementContext(
                 task="t2v", assets=[], reference_order_confirmed=True
             )
             dialect_id = target_profile["default_dialect"]
-            canonical_target = request.target_model
 
+        preset_context, style_context = _enhancement_preset_context(request)
+        image_preflight_complete = True
         # Get system prompt for target model and project type.
         # Animation projects use animation-specific prompts without camera references.
         system_prompt = get_system_prompt(canonical_target, request.project_type.value)
 
         warnings: list[str] = []
-        if not is_video_model(canonical_target):
-            movement = request.config.get("movement", {})
-            motion_style = request.config.get("motion", {}).get("motion_style")
-            has_motion = (
-                movement.get("equipment") and movement.get("equipment") != "Static"
-            ) or (
-                movement.get("movement_type") and movement.get("movement_type") != "Static"
-            ) or (
-                motion_style and motion_style != "None"
-            )
-            if has_motion:
-                warnings.append(
-                    "Movement settings are ignored for image models; only framing and composition are used."
-                )
-        
         # Build the full prompt with cinematic context
         full_prompt = build_enhancement_prompt(
-            request.user_prompt,
+            user_prompt,
             request.config,
             request.project_type.value,
             canonical_target,
             effective_context,
             dialect_id,
+            preset_context=preset_context,
+            style_context=style_context,
+            image_context=image_context,
         )
         
         # Refresh only a matching, known-expiring saved standard OAuth token.
@@ -2399,6 +2555,7 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             model=request.llm_model,
             credentials=creds,
             output_token_budget=4096 if dialect_id == "local_h3" else None,
+            images=uploaded_images or None,
         )
 
         if result.success:
@@ -2439,12 +2596,14 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
                 error=result.error,
             )
     except ValueError as exc:
+        if image_request and image_preflight_complete:
+            return EnhancePromptResponse(success=False, error="Image enhancement failed. Check the image and provider settings.")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:
         return EnhancePromptResponse(
             success=False,
             oauth_token=refreshed_oauth_token,
-            error=f"Enhancement failed: {str(e)}",
+            error=("Image enhancement failed. Check the image and provider settings." if image_request else f"Enhancement failed: {str(e)}"),
         )
 
 

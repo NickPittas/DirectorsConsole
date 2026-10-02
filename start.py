@@ -1454,6 +1454,14 @@ Examples:
         pm.cleanup_all()
         sys.exit(1)
 
+    import threading
+
+    threading.Thread(
+        target=stream_output,
+        args=(cpe_process, "CPE", Colors.BLUE),
+        daemon=True,
+    ).start()
+
     print("  Waiting for CPE Backend ", end="", flush=True)
 
     if wait_for_health(cpe_config.health_endpoint, timeout=30, prefix="CPE"):

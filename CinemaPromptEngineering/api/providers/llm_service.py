@@ -19,6 +19,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
+from api.providers.enhancement_images import EnhancementImage, ensure_payload_size
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +88,118 @@ def _local_endpoint_url(endpoint: str, provider: str, resource: str) -> str:
     return urlunsplit(parsed._replace(path=f"{path}{api_suffix}/{resource}"))
 
 
+def _compatible_endpoint_url(endpoint: str, resource: str, *, anthropic: bool = False) -> str:
+    """Validate a compatible API URL and build its inference or discovery route."""
+    try:
+        parsed = urlsplit(endpoint)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Endpoint must be a valid absolute HTTP(S) URL") from exc
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or (port is not None and not 1 <= port <= 65535)
+        or any(char.isspace() for char in parsed.netloc)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or "?" in endpoint
+        or "#" in endpoint
+    ):
+        raise ValueError("Endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment")
+
+    path = parsed.path.rstrip("/")
+    explicit_route = path.endswith(("/chat/completions", "/messages", "/models"))
+    for suffix in ("/chat/completions", "/messages", "/models"):
+        if path == suffix or path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+
+    if not path:
+        path = "/v1"
+    elif anthropic and not explicit_route and not path.endswith("/v1"):
+        path += "/v1"
+    return urlunsplit(parsed._replace(path=f"{path}/{resource}"))
+
+
+def openai_user_content(
+    user_prompt: str, images: list[EnhancementImage] | None = None
+) -> str | list[dict]:
+    if not images:
+        return user_prompt
+    return [
+        {"type": "text", "text": user_prompt},
+        *({"type": "image_url", "image_url": {"url": image.data_url}} for image in images),
+    ]
+
+
+def image_request_error(provider: str, status: int) -> LLMResponse:
+    messages = {
+        400: "Request rejected (400). Check the request format and whether the selected model supports image input.",
+        401: "Authentication failed (401). Check the provider credentials.",
+        403: "Access denied (403). Check account access and image-input permissions.",
+        413: "Image request is too large (413). Reduce the image data or prompt text.",
+        429: "Provider quota or rate limit reached (429). Wait and try again.",
+    }
+    return LLMResponse(
+        success=False,
+        error=f"{provider} {messages.get(status, f'request failed ({status})')}",
+    )
+
+
+def _openai_chat_body(
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    token_budget: int,
+    images: list[EnhancementImage] | None = None,
+) -> dict:
+    model_id = model.lower().rsplit("/", 1)[-1]
+    generation = model_id.removeprefix("gpt-").split("-", 1)[0].split(".", 1)[0]
+    newer_gpt = model_id.startswith("gpt-") and generation.isdigit() and int(generation) >= 5
+    o_series = model_id.startswith("o") and model_id[1:2].isdigit()
+    reasoning = newer_gpt or o_series
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": openai_user_content(user_prompt, images)},
+        ],
+        "max_completion_tokens" if reasoning else "max_tokens": token_budget,
+    }
+    if not reasoning:
+        body["temperature"] = 0.7
+    return body
+
+
+def _is_non_chat_openai_model(model_id: str) -> bool:
+    return any(
+        category in model_id.lower()
+        for category in (
+            "embed", "audio", "tts", "whisper", "transcrib", "dall-e", "image",
+            "moderation", "realtime", "search", "instruct", "davinci", "babbage",
+            "curie", "ada",
+        )
+    )
+
+
+def _format_anthropic_models(items: list) -> list[dict]:
+    return [
+        {
+            "id": model["id"],
+            "name": model.get("display_name") or model["id"],
+            "recommended": False,
+            "description": model.get("description", ""),
+            "context_window": model.get("context_window"),
+        }
+        for model in items
+        if isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"]
+    ]
+
+
 # =============================================================================
 # LLM SERVICE CLASS
 # =============================================================================
@@ -105,6 +219,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """
         Enhance a prompt using the specified LLM provider.
@@ -121,39 +236,78 @@ class LLMService:
             LLMResponse with enhanced prompt or error
         """
         provider_lower = provider.lower()
+        image_kwargs = {"images": images} if images else {}
 
         try:
-            if provider_lower == "openai":
-                return await self._call_openai(user_prompt, system_prompt, model, credentials, output_token_budget)
+            if provider_lower.startswith("openai-compatible-"):
+                return await self._call_openai(
+                    user_prompt, system_prompt, model, credentials, output_token_budget,
+                    allow_keyless=True, **image_kwargs
+                )
+            elif provider_lower.startswith("anthropic-compatible-"):
+                return await self._call_anthropic(
+                    user_prompt, system_prompt, model, credentials, output_token_budget,
+                    allow_keyless=True, **image_kwargs
+                )
+            elif provider_lower == "openai":
+                return await self._call_openai(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             elif provider_lower == "anthropic":
-                return await self._call_anthropic(user_prompt, system_prompt, model, credentials, output_token_budget)
+                return await self._call_anthropic(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             elif provider_lower == "google":
-                return await self._call_google(user_prompt, system_prompt, model, credentials, output_token_budget)
+                return await self._call_google(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             elif provider_lower == "openrouter":
-                return await self._call_openrouter(user_prompt, system_prompt, model, credentials, output_token_budget)
+                return await self._call_openrouter(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             elif provider_lower in ("ollama", "lmstudio"):
                 return await self._call_local(
-                    user_prompt, system_prompt, model, credentials, provider_lower, output_token_budget
+                    user_prompt, system_prompt, model, credentials, provider_lower, output_token_budget,
+                    **image_kwargs
                 )
             elif provider_lower == "github_copilot":
                 return await self._call_github_copilot(
-                    user_prompt, system_prompt, model, credentials, output_token_budget
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
                 )
             elif provider_lower == "antigravity":
-                return await self._call_antigravity(user_prompt, system_prompt, model, credentials, output_token_budget)
+                return await self._call_antigravity(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             elif provider_lower == "github_models":
                 return await self._call_github_models(
-                    user_prompt, system_prompt, model, credentials, output_token_budget
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
                 )
             elif provider_lower == "openai_codex":
-                return await self._call_openai_codex(user_prompt, system_prompt, model, credentials, output_token_budget)
+                return await self._call_openai_codex(
+                    user_prompt, system_prompt, model, credentials, output_token_budget, **image_kwargs
+                )
             else:
                 return LLMResponse(success=False, error=f"Unsupported provider: {provider}")
         except asyncio.TimeoutError:
+            if images:
+                return LLMResponse(success=False, error="Image request failed; check model image support and retry.")
             return LLMResponse(success=False, error="Request timed out")
         except aiohttp.ClientError as e:
+            if images:
+                return LLMResponse(success=False, error="Image request failed; check model image support and retry.")
             return LLMResponse(success=False, error=f"Network error: {str(e)}")
+        except ValueError as e:
+            if images:
+                message = str(e)
+                if message.startswith("Image request payload"):
+                    return LLMResponse(success=False, error=message)
+                return LLMResponse(success=False, error="Image request failed; check model image support and retry.")
+            logger.exception(f"LLM call failed for provider {provider}")
+            return LLMResponse(success=False, error=str(e))
         except Exception as e:
+            if images:
+                logger.error("Image request failed for provider %s", provider)
+                return LLMResponse(success=False, error="Image request failed; check model image support and retry.")
             logger.exception(f"LLM call failed for provider {provider}")
             return LLMResponse(success=False, error=str(e))
 
@@ -168,82 +322,86 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        allow_keyless: bool = False,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
-        """Call OpenAI API."""
-        if not credentials.api_key:
+        """Call OpenAI or an OpenAI-compatible API."""
+        if not credentials.api_key and not allow_keyless:
             return LLMResponse(success=False, error="OpenAI API key required")
+        if allow_keyless and not credentials.endpoint:
+            return LLMResponse(success=False, error="Compatible provider endpoint required")
 
         if not model:
             return LLMResponse(
                 success=False, error="No model selected. Fetch available models first."
             )
 
-        endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["openai"]
-        output_token_budget = output_token_budget or 1000
-
-        # Debug logging for 404 investigation
-        logger.info(f"OpenAI request - model: '{model}', endpoint: '{endpoint}'")
-        logger.info(
-            f"OpenAI API key prefix: {credentials.api_key[:12]}..."
-            if credentials.api_key
-            else "No API key"
+        endpoint = _compatible_endpoint_url(
+            credentials.endpoint or PROVIDER_ENDPOINTS["openai"], "chat/completions"
         )
+        output_token_budget = output_token_budget or 4096
+        headers = {"Content-Type": "application/json"}
+        if credentials.api_key:
+            headers["Authorization"] = f"Bearer {credentials.api_key}"
+
+        payload = _openai_chat_body(model, system_prompt, user_prompt, output_token_budget, images)
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 endpoint,
-                headers={
-                    "Authorization": f"Bearer {credentials.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": output_token_budget,
-                    "temperature": 0.7,
-                },
+                headers=headers,
+                json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
-                data = await response.json()
+                if images and response.status != 200:
+                    return image_request_error("OpenAI", response.status)
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    if images:
+                        return LLMResponse(success=False, error="OpenAI returned an invalid response for the image request.")
+                    raise
+                return self._openai_response(data, response.status, model)
 
-                # Log full response for debugging
-                logger.info(f"OpenAI response status: {response.status}")
-                if response.status != 200:
-                    logger.error(f"OpenAI error response: {data}")
+    def _openai_response(self, data: dict, status: int, model: str) -> LLMResponse:
+        if status == 401:
+            return LLMResponse(success=False, error="OpenAI authentication failed (401)")
+        if status == 404:
+            return LLMResponse(
+                success=False, error="OpenAI-compatible API returned 404. Check endpoint and model."
+            )
+        if status != 200:
+            error_msg = data.get("error", {}).get("message", str(data))
+            return LLMResponse(success=False, error=f"OpenAI error ({status}): {error_msg}")
 
-                if response.status != 200:
-                    error_msg = data.get("error", {}).get("message", str(data))
-                    # Provide helpful error for common issues
-                    if response.status == 404:
-                        # Log more details about 404
-                        logger.error(f"OpenAI 404 - endpoint: {endpoint}, model: {model}")
-                        return LLMResponse(
-                            success=False,
-                            error=f"OpenAI API returned 404. Check endpoint and model. Model: '{model}', Endpoint: '{endpoint}'",
-                        )
-                    elif response.status == 401:
-                        return LLMResponse(
-                            success=False,
-                            error="Invalid OpenAI API key. Check your key in Settings.",
-                        )
-                    return LLMResponse(
-                        success=False, error=f"OpenAI error ({response.status}): {error_msg}"
-                    )
-
-                choice = data["choices"][0]
-                content = choice["message"]["content"]
-                tokens = data.get("usage", {}).get("total_tokens", 0)
-
-                return LLMResponse(
-                    success=True,
-                    content=content,
-                    tokens_used=tokens,
-                    model_used=model,
-                    truncated=choice.get("finish_reason") in {"length", "max_tokens"},
-                )
+        choices = data.get("choices") or []
+        if not choices:
+            return LLMResponse(success=False, error="The model returned no completion choices.")
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                block.get("text", "") for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        truncated = choice.get("finish_reason") in {"length", "max_tokens"}
+        if not isinstance(content, str) or not content.strip():
+            error = "The model returned no text."
+            if truncated:
+                error += " Its token budget was exhausted, possibly by reasoning."
+            elif message.get("refusal"):
+                error = "The model declined this request."
+            return LLMResponse(success=False, error=error, model_used=model, truncated=truncated)
+        return LLMResponse(
+            success=True,
+            content=content,
+            tokens_used=data.get("usage", {}).get("total_tokens", 0),
+            model_used=model,
+            truncated=truncated,
+        )
 
     # -------------------------------------------------------------------------
     # Anthropic
@@ -256,50 +414,74 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        allow_keyless: bool = False,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
-        """Call Anthropic API."""
-        if not credentials.api_key:
+        """Call Anthropic or an Anthropic-compatible API."""
+        if not credentials.api_key and not allow_keyless:
             return LLMResponse(success=False, error="Anthropic API key required")
+        if allow_keyless and not credentials.endpoint:
+            return LLMResponse(success=False, error="Compatible provider endpoint required")
 
-        endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["anthropic"]
+        endpoint = _compatible_endpoint_url(
+            credentials.endpoint or PROVIDER_ENDPOINTS["anthropic"], "messages", anthropic=True
+        )
         output_token_budget = output_token_budget or 1000
+        headers = {"anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        if credentials.api_key:
+            headers["x-api-key"] = credentials.api_key
+
+        payload = {
+            "model": model,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": user_prompt},
+                *({"type": "image", "source": {
+                    "type": "base64", "media_type": image.mime_type, "data": image.data
+                }} for image in images or []),
+            ] if images else user_prompt}],
+            "max_tokens": output_token_budget,
+        }
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                endpoint,
-                headers={
-                    "x-api-key": credentials.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "system": system_prompt,
-                    "messages": [
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": output_token_budget,
-                },
+                endpoint, headers=headers, json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
-                data = await response.json()
+                if images and response.status != 200:
+                    return image_request_error("Anthropic", response.status)
+                return self._anthropic_response(await response.json(), response.status, model)
 
-                if response.status != 200:
-                    error_msg = data.get("error", {}).get("message", str(data))
-                    return LLMResponse(success=False, error=f"Anthropic error: {error_msg}")
-
-                content = data["content"][0]["text"]
-                tokens = data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get(
-                    "output_tokens", 0
-                )
-
-                return LLMResponse(
-                    success=True,
-                    content=content,
-                    tokens_used=tokens,
-                    model_used=model,
-                    truncated=data.get("stop_reason") == "max_tokens",
-                )
+    def _anthropic_response(self, data: dict, status: int, model: str) -> LLMResponse:
+        if status == 401:
+            return LLMResponse(success=False, error="Anthropic authentication failed (401)")
+        if status != 200:
+            error_msg = data.get("error", {}).get("message", str(data))
+            return LLMResponse(success=False, error=f"Anthropic error: {error_msg}")
+        usage = data.get("usage", {})
+        content = "".join(
+            block.get("text", "")
+            for block in (data.get("content") or [])
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        )
+        if not content.strip():
+            return LLMResponse(
+                success=False,
+                error="The model returned no text.",
+                model_used=model,
+                truncated=data.get("stop_reason") == "max_tokens",
+            )
+        return LLMResponse(
+            success=True,
+            content=content,
+            tokens_used=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            model_used=model,
+            truncated=data.get("stop_reason") == "max_tokens",
+        )
 
     # -------------------------------------------------------------------------
     # Google Gemini
@@ -312,6 +494,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call Google Gemini API."""
         if not credentials.api_key:
@@ -320,32 +503,41 @@ class LLMService:
         endpoint = PROVIDER_ENDPOINTS["google"].format(model=model) + f"?key={credentials.api_key}"
         output_token_budget = output_token_budget or 1000
 
+        parts = [{"text": f"{system_prompt}\n\n{user_prompt}"}]
+        if images:
+            parts.extend({"inline_data": {"mime_type": image.mime_type, "data": image.data}} for image in images)
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"maxOutputTokens": output_token_budget, "temperature": 0.7},
+        }
+        if images:
+            ensure_payload_size(payload)
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                endpoint,
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
-                    "generationConfig": {
-                        "maxOutputTokens": output_token_budget,
-                        "temperature": 0.7,
-                    },
-                },
+                endpoint, headers={"Content-Type": "application/json"}, json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
+                if images and response.status != 200:
+                    return image_request_error("Google", response.status)
                 data = await response.json()
 
                 if response.status != 200:
                     error_msg = data.get("error", {}).get("message", str(data))
                     return LLMResponse(success=False, error=f"Google error: {error_msg}")
 
-                candidate = data["candidates"][0]
-                content = candidate["content"]["parts"][0]["text"]
-
+                if not images:
+                    candidate = data["candidates"][0]
+                    content = candidate["content"]["parts"][0]["text"]
+                else:
+                    candidates = data.get("candidates", [])
+                    candidate = candidates[0] if candidates else {}
+                    response_parts = candidate.get("content", {}).get("parts", [])
+                    content = "".join(part.get("text", "") for part in response_parts if isinstance(part, dict) and isinstance(part.get("text"), str))
+                    if not content.strip():
+                        return LLMResponse(success=False, error="Google returned no text for the image request.", model_used=model)
                 return LLMResponse(
-                    success=True,
-                    content=content,
-                    model_used=model,
+                    success=True, content=content, model_used=model,
                     truncated=candidate.get("finishReason") in {"MAX_TOKENS", "LENGTH"},
                 )
 
@@ -360,6 +552,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call OpenRouter API (OpenAI-compatible)."""
         if not credentials.api_key:
@@ -367,6 +560,18 @@ class LLMService:
 
         endpoint = credentials.endpoint or PROVIDER_ENDPOINTS["openrouter"]
         output_token_budget = output_token_budget or 1000
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": openai_user_content(user_prompt, images)},
+            ],
+            "max_tokens": output_token_budget,
+            "temperature": 0.7,
+        }
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -377,18 +582,17 @@ class LLMService:
                     "HTTP-Referer": "https://cinema-prompt-engineering.local",
                     "X-Title": "Cinema Prompt Engineering",
                 },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": output_token_budget,
-                    "temperature": 0.7,
-                },
+                json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
-                data = await response.json()
+                if images and response.status != 200:
+                    return image_request_error("OpenRouter", response.status)
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    if images:
+                        return LLMResponse(success=False, error="OpenRouter returned an invalid response for the image request.")
+                    raise
 
                 if response.status != 200:
                     error_msg = data.get("error", {}).get("message", str(data))
@@ -418,6 +622,7 @@ class LLMService:
         credentials: LLMCredentials,
         provider: str,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call local LLM providers (Ollama or LM Studio)."""
         default_endpoint = PROVIDER_ENDPOINTS.get(provider, PROVIDER_ENDPOINTS["ollama"])
@@ -437,7 +642,11 @@ class LLMService:
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                        **({"images": [image.data for image in images]} if images else {}),
+                    },
                 ],
                 "stream": False,
                 **({"options": {"num_predict": output_token_budget}} if output_token_budget else {}),
@@ -448,11 +657,14 @@ class LLMService:
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": openai_user_content(user_prompt, images)},
                 ],
                 "max_tokens": output_token_budget or 1000,
                 "temperature": 0.7,
             }
+
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -461,7 +673,14 @@ class LLMService:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
-                data = await response.json()
+                if images and response.status != 200:
+                    return image_request_error("Ollama" if provider == "ollama" else "LM Studio", response.status)
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    if images:
+                        return LLMResponse(success=False, error="Local provider returned an invalid image-request response.")
+                    raise
 
                 if response.status != 200:
                     error_msg = data.get("error", {})
@@ -476,6 +695,8 @@ class LLMService:
                     # LM Studio uses OpenAI-compatible format with choices array
                     choices = data.get("choices")
                     if not choices or not isinstance(choices, list) or len(choices) == 0:
+                        if images:
+                            return LLMResponse(success=False, error="LM Studio returned no completion choices for the image request.")
                         error_info = data.get("error", "No choices returned in response")
                         return LLMResponse(
                             success=False, error=f"LM Studio response error: {error_info}"
@@ -503,6 +724,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call GitHub Copilot API via OAuth token.
 
@@ -557,12 +779,14 @@ class LLMService:
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": openai_user_content(user_prompt, images)},
             ],
             "max_tokens": output_token_budget,
             "temperature": 0.7,
             "stream": False,
         }
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -574,6 +798,8 @@ class LLMService:
                 # Get response content, handling both JSON and text responses
                 content_type = response.headers.get("Content-Type", "")
 
+                if images and response.status != 200:
+                    return image_request_error("GitHub Copilot", response.status)
                 if response.status != 200:
                     # Handle error responses (may be text/plain)
                     if "application/json" in content_type:
@@ -620,6 +846,8 @@ class LLMService:
                 try:
                     data = await response.json()
                 except Exception as e:
+                    if images:
+                        return LLMResponse(success=False, error="GitHub Copilot returned an invalid response for the image request.")
                     text = await response.text()
                     return LLMResponse(
                         success=False, error=f"GitHub Copilot returned invalid JSON: {text[:200]}"
@@ -646,6 +874,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call GitHub Models API (models.github.ai).
 
@@ -666,6 +895,17 @@ class LLMService:
 
         endpoint = PROVIDER_ENDPOINTS["github_models"]
         output_token_budget = output_token_budget or 2000
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": openai_user_content(user_prompt, images)},
+            ],
+            "max_tokens": output_token_budget,
+            "temperature": 0.7,
+        }
+        if images:
+            ensure_payload_size(payload)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -676,18 +916,17 @@ class LLMService:
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": output_token_budget,
-                    "temperature": 0.7,
-                },
+                json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
-                data = await response.json()
+                if images and response.status != 200:
+                    return image_request_error("GitHub Models", response.status)
+                try:
+                    data = await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    if images:
+                        return LLMResponse(success=False, error="GitHub Models returned an invalid response for the image request.")
+                    raise
 
                 if response.status != 200:
                     error_msg = data.get("error", {}).get("message", str(data))
@@ -716,6 +955,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call Antigravity API (Google Cloud AI Companion).
 
@@ -752,9 +992,12 @@ class LLMService:
         }
 
         # Build the INNER request (standard Gemini format)
+        parts = [{"text": f"{system_prompt}\n\n{user_prompt}"}]
+        if images:
+            parts.extend({"inline_data": {"mime_type": image.mime_type, "data": image.data}} for image in images)
         inner_request = {
             "contents": [
-                {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}
+                {"role": "user", "parts": parts}
             ],
             "generationConfig": {
                 "maxOutputTokens": output_token_budget or 2000,
@@ -770,6 +1013,9 @@ class LLMService:
             "request": inner_request,
         }
 
+        if images:
+            ensure_payload_size(request_body)
+
         last_error = None
         async with aiohttp.ClientSession() as session:
             for endpoint in endpoints:
@@ -780,7 +1026,13 @@ class LLMService:
                         json=request_body,
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
-                        data = await response.json()
+                        if images and response.status != 200:
+                            try:
+                                data = await response.json()
+                            except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                                data = {}
+                        else:
+                            data = await response.json()
 
                         if response.status == 200:
                             # Success - extract response
@@ -794,6 +1046,11 @@ class LLMService:
                                 content = candidates[0].get("content", {})
                                 parts = content.get("parts", [])
                                 text = parts[0].get("text", "") if parts else ""
+                                if images:
+                                    text = "".join(part["text"] for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str))
+                                    if not text.strip():
+                                        last_error = "Antigravity returned no text for the image request."
+                                        continue
 
                                 usage = response_data.get("usageMetadata", {})
                                 tokens = usage.get("totalTokenCount", 0)
@@ -807,7 +1064,7 @@ class LLMService:
                                     truncated=finish_reason in {"MAX_TOKENS", "LENGTH"},
                                 )
                             except (KeyError, IndexError) as e:
-                                last_error = f"Failed to parse response: {e}"
+                                last_error = "Failed to parse Antigravity image response" if images else f"Failed to parse response: {e}"
                                 continue
 
                         # Check for quota/rate limit - try next endpoint
@@ -819,7 +1076,7 @@ class LLMService:
                             logger.warning(
                                 f"Antigravity quota exhausted on {endpoint}, trying next..."
                             )
-                            last_error = f"Quota exhausted: {error_msg}"
+                            last_error = "Quota exhausted" if images else f"Quota exhausted: {error_msg}"
                             continue
 
                         # Auth errors - don't retry, return immediately
@@ -835,10 +1092,10 @@ class LLMService:
                             )
 
                         # Other error - try next endpoint
-                        last_error = f"Antigravity error: {error_msg}"
+                        last_error = "Antigravity image request failed" if images else f"Antigravity error: {error_msg}"
 
                 except aiohttp.ClientError as e:
-                    last_error = f"Network error on {endpoint}: {e}"
+                    last_error = "Antigravity image request network error" if images else f"Network error on {endpoint}: {e}"
                     continue
 
             # All endpoints failed
@@ -859,6 +1116,7 @@ class LLMService:
         model: str,
         credentials: LLMCredentials,
         output_token_budget: int | None = None,
+        images: list[EnhancementImage] | None = None,
     ) -> LLMResponse:
         """Call OpenAI Codex API via ChatGPT backend.
 
@@ -896,14 +1154,19 @@ class LLMService:
                 {
                     "type": "message",
                     "role": "user",
-                    "content": [{"type": "input_text", "text": user_prompt}],
+                    "content": [
+                        {"type": "input_text", "text": user_prompt},
+                        *({"type": "input_image", "image_url": image.data_url} for image in images or []),
+                    ],
                 }
             ],
             "reasoning": {"effort": "medium", "summary": "auto"},
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
-            **({"max_output_tokens": output_token_budget} if output_token_budget else {}),
         }
+
+        if images:
+            ensure_payload_size(request_body)
 
         # Required headers for Codex backend
         # Header names match the reference implementation exactly
@@ -916,8 +1179,6 @@ class LLMService:
             "originator": "codex_cli_rs",
         }
 
-        logger.info(f"Calling Codex API: model={normalized_model}, account={account_id[:8]}...")
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 endpoint,
@@ -925,11 +1186,12 @@ class LLMService:
                 json=request_body,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
+                if images and response.status != 200:
+                    return image_request_error("OpenAI Codex", response.status)
                 if response.status != 200:
                     # Try to parse error from response
                     try:
                         error_text = await response.text()
-                        logger.error(f"Codex API error {response.status}: {error_text[:500]}")
 
                         # Try JSON first
                         try:
@@ -986,7 +1248,7 @@ class LLMService:
                     )
 
                 # Parse SSE stream to get the final response
-                content, tokens, truncated = await self._parse_codex_sse_response(response)
+                content, tokens, truncated = await self._parse_codex_sse_response(response, image_safe=bool(images))
 
                 if not content:
                     return LLMResponse(
@@ -1077,7 +1339,7 @@ class LLMService:
 
         return model_map.get(model.lower(), model)
 
-    async def _parse_codex_sse_response(self, response: aiohttp.ClientResponse) -> tuple[str, int, bool]:
+    async def _parse_codex_sse_response(self, response: aiohttp.ClientResponse, image_safe: bool = False) -> tuple[str, int, bool]:
         """Parse SSE stream from Codex API to extract final response.
 
         The stream contains multiple events, we're looking for:
@@ -1138,7 +1400,10 @@ class LLMService:
                     continue
 
         except Exception as e:
-            logger.warning(f"Error parsing Codex SSE response: {e}")
+            if image_safe:
+                logger.warning("Error parsing Codex SSE image response")
+            else:
+                logger.warning(f"Error parsing Codex SSE response: {e}")
 
         return content, tokens, truncated
 
@@ -1168,6 +1433,10 @@ class LLMService:
                 return await self._fetch_antigravity_models(credentials)
             elif provider_lower == "openai_codex":
                 return await self._fetch_openai_codex_models(credentials)
+            elif provider_lower.startswith("openai-compatible-"):
+                return await self._fetch_openai_models(credentials, compatible=True)
+            elif provider_lower.startswith("anthropic-compatible-"):
+                return await self._fetch_anthropic_models(credentials, compatible=True)
             elif provider_lower == "openai":
                 return await self._fetch_openai_models(credentials)
             elif provider_lower == "anthropic":
@@ -1355,86 +1624,122 @@ class LLMService:
         },
     ]
 
+    def _format_codex_models(self, model_list: list) -> list[dict]:
+        models = []
+        for item in model_list:
+            if not isinstance(item, dict):
+                continue
+            slug = item.get("slug")
+            visibility = item.get("visibility")
+            if (
+                not isinstance(slug, str)
+                or not slug
+                or isinstance(visibility, str) and visibility.lower() in {"hide", "hidden"}
+            ):
+                continue
+            levels = item.get("supported_reasoning_levels", [])
+            reasoning_levels = [
+                level if isinstance(level, str) else level.get("effort")
+                for level in levels
+                if isinstance(level, (str, dict))
+            ] if isinstance(levels, list) else []
+            reasoning_levels = [level for level in reasoning_levels if isinstance(level, str)]
+            priority = item.get("priority", 999)
+            if not isinstance(priority, (int, float)):
+                priority = 999
+            display_name = item.get("display_name")
+            if not isinstance(display_name, str) or not display_name:
+                display_name = slug
+            models.append({
+                "id": slug,
+                "name": display_name,
+                "recommended": priority <= 1,
+                "description": item.get("description", ""),
+                "context_window": item.get("context_window"),
+                "priority": priority,
+                "supports_reasoning": bool(reasoning_levels),
+                "default_reasoning_level": item.get("default_reasoning_level", "none"),
+                "reasoning_levels": reasoning_levels,
+            })
+        models.sort(key=lambda model: (model.get("priority", 999), model["name"]))
+        return models
+
+    async def _fetch_codex_live_models(
+        self, token: str, account_id: str
+    ) -> tuple[list[dict] | None, str | None, bool]:
+        endpoint = "https://chatgpt.com/backend-api/codex/models"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "ChatGPT-Account-Id": account_id,
+            "originator": "codex_cli_rs",
+            "Accept": "application/json",
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    endpoint,
+                    headers=headers,
+                    params={"client_version": "0.159.3"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status in (401, 403):
+                        error = "Codex model catalogue authentication failed" if response.status == 401 else "Codex model catalogue access denied"
+                        return None, error, False
+                    if response.status != 200:
+                        return None, f"Live Codex catalogue returned HTTP {response.status}", True
+                    try:
+                        payload = await response.json()
+                    except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                        return None, "Live Codex catalogue returned non-JSON data", True
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return None, "Unable to reach the live Codex model catalogue", True
+
+        raw_models = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(raw_models, list):
+            return None, "Live Codex catalogue response has no models list", True
+        if not raw_models:
+            return None, "Live Codex model catalogue is empty", False
+        models = self._format_codex_models(raw_models)
+        if not models:
+            return None, "Live Codex catalogue contains no valid model slugs", False
+        return models, None, False
+
     async def _fetch_openai_codex_models(self, credentials: LLMCredentials) -> dict:
-        """Fetch available models for OpenAI Codex (ChatGPT backend).
-
-        Uses bundled models list (like the official Codex CLI) as the source of truth.
-        The official CLI at https://github.com/openai/codex bundles models.json and
-        uses it directly - there is no public /codex/models API endpoint.
-
-        Optionally tries to fetch fresh models from GitHub, falls back to bundled list.
-        """
+        """Fetch the signed-in ChatGPT account's Codex catalogue first."""
         if not credentials.oauth_token:
-            return {
-                "success": False,
-                "error": "OpenAI Codex OAuth required. Click 'Connect' to authenticate with your ChatGPT Plus/Pro account.",
-                "models": [],
-            }
-
-        # Verify token is valid by extracting account ID
+            return {"success": False, "error": "OpenAI Codex OAuth required", "models": [], "source": "live", "warning": None}
         account_id = self._extract_chatgpt_account_id(credentials.oauth_token)
         if not account_id:
-            return {
-                "success": False,
-                "error": "Invalid or expired OAuth token. Please re-authenticate: Settings → OpenAI Codex → Connect",
-                "models": [],
-            }
+            return {"success": False, "error": "Invalid or expired OAuth token", "models": [], "source": "live", "warning": None}
 
-        # Try to fetch fresh models from GitHub (optional, non-blocking)
-        fresh_models = await self._try_fetch_codex_models_from_github()
+        models, live_error, fallback = await self._fetch_codex_live_models(
+            credentials.oauth_token, account_id
+        )
+        if models is not None:
+            return {"success": True, "models": models, "source": "live", "warning": None}
+        if not fallback:
+            return {"success": False, "error": live_error, "models": [], "source": "live", "warning": None}
 
-        # Use fresh models if available, otherwise use bundled list
-        model_list = fresh_models if fresh_models else self.CODEX_BUNDLED_MODELS
-        source = "GitHub" if fresh_models else "bundled"
-
-        models = []
-        for model_info in model_list:
-            slug = model_info.get("slug", "")
-            if not slug:
-                continue
-
-            # Skip hidden models (visibility: "hide")
-            visibility = model_info.get("visibility", "list")
-            if visibility == "hide":
-                continue
-
-            display_name = model_info.get("display_name", slug)
-            description = model_info.get("description", "")
-            context_window = model_info.get("context_window")
-            priority = model_info.get("priority", 999)
-
-            # Check for reasoning support
-            reasoning_levels = model_info.get("supported_reasoning_levels", [])
-            supports_reasoning = len(reasoning_levels) > 0
-            default_reasoning = model_info.get("default_reasoning_level", "none")
-
-            # Determine if recommended (priority 0-1 are latest/best models)
-            is_recommended = priority <= 1
-
-            models.append(
-                {
-                    "id": slug,
-                    "name": display_name,
-                    "recommended": is_recommended,
-                    "description": description,
-                    "context_window": context_window,
-                    "priority": priority,
-                    "supports_reasoning": supports_reasoning,
-                    "default_reasoning_level": default_reasoning,
-                    "reasoning_levels": reasoning_levels
-                    if isinstance(reasoning_levels, list)
-                    and all(isinstance(r, str) for r in reasoning_levels)
-                    else [r.get("effort") for r in reasoning_levels]
-                    if reasoning_levels
-                    else [],
+        warning = live_error or "Live Codex catalogue unavailable"
+        github_models = await self._try_fetch_codex_models_from_github()
+        if github_models:
+            models = self._format_codex_models(github_models)
+            if models:
+                return {
+                    "success": True,
+                    "models": models,
+                    "source": "github",
+                    "warning": f"{warning}; using the GitHub catalogue.",
                 }
-            )
-
-        # Sort by priority (lower = better), then by name
-        models.sort(key=lambda m: (m.get("priority", 999), m["name"]))
-        logger.info(f"[Codex Models] Loaded {len(models)} models from {source}")
-
-        return {"success": True, "models": models}
+        models = self._format_codex_models(self.CODEX_BUNDLED_MODELS)
+        if models:
+            return {
+                "success": True,
+                "models": models,
+                "source": "bundled",
+                "warning": f"{warning}; GitHub catalogue unavailable, using bundled models.",
+            }
+        return {"success": False, "error": "No Codex models are available", "models": [], "source": "bundled", "warning": warning}
 
     async def _try_fetch_codex_models_from_github(self) -> list | None:
         """Try to fetch fresh models.json from GitHub. Returns None on failure."""
@@ -1452,7 +1757,7 @@ class LLMService:
                         logger.debug(f"[Codex Models] GitHub fetch returned {response.status}")
                         return None
 
-                    data = await response.json()
+                    data = await response.json(content_type=None)
                     models = data.get("models", [])
 
                     if models:
@@ -1460,20 +1765,21 @@ class LLMService:
                         return models
                     return None
 
-        except Exception as e:
-            logger.debug(f"[Codex Models] GitHub fetch failed (using bundled): {e}")
+        except Exception:
+            logger.debug("[Codex Models] GitHub fetch failed (using bundled)")
             return None
 
-    async def _fetch_openai_models(self, credentials: LLMCredentials) -> dict:
-        """Fetch available models from OpenAI API."""
-        if not credentials.api_key:
+    async def _fetch_openai_models(self, credentials: LLMCredentials, compatible: bool = False) -> dict:
+        """Fetch available models from OpenAI or an OpenAI-compatible API."""
+        if not credentials.api_key and not compatible:
             return {"success": False, "error": "API key required", "models": []}
+        if compatible and not credentials.endpoint:
+            return {"success": False, "error": "Compatible provider endpoint required", "models": []}
 
-        endpoint = "https://api.openai.com/v1/models"
-
-        headers = {
-            "Authorization": f"Bearer {credentials.api_key}",
-        }
+        endpoint = _compatible_endpoint_url(
+            credentials.endpoint or PROVIDER_ENDPOINTS["openai"], "models"
+        )
+        headers = {"Authorization": f"Bearer {credentials.api_key}"} if credentials.api_key else {}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -1482,40 +1788,32 @@ class LLMService:
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as response:
                 if response.status != 200:
-                    error_text = await response.text()
-                    return {
-                        "success": False,
-                        "error": f"API error {response.status}: {error_text[:200]}",
-                        "models": [],
-                    }
+                    error = (
+                        "OpenAI authentication failed (401)"
+                        if response.status == 401
+                        else f"OpenAI API error {response.status}"
+                    )
+                    return {"success": False, "error": error, "models": []}
 
                 data = await response.json()
 
-                # Filter to chat models only
                 chat_models = []
                 for model in data.get("data", []):
+                    if not isinstance(model, dict):
+                        continue
                     model_id = model.get("id", "")
-                    # Include GPT models suitable for chat
-                    if any(
-                        prefix in model_id for prefix in ["gpt-4", "gpt-3.5", "o1", "o3", "chatgpt"]
-                    ):
-                        # Recommend newer, commonly available models
-                        is_recommended = any(name in model_id for name in ["gpt-4o", "gpt-4-turbo"])
-                        chat_models.append(
-                            {
-                                "id": model_id,
-                                "name": model_id,
-                                "recommended": is_recommended,
-                            }
-                        )
+                    if not isinstance(model_id, str) or not model_id:
+                        continue
+                    if not compatible and _is_non_chat_openai_model(model_id):
+                        continue
+                    chat_models.append({"id": model_id, "name": model_id, "recommended": False})
 
-                # Sort recommended first
-                chat_models.sort(key=lambda m: (not m["recommended"], m["name"]))
+                chat_models.sort(key=lambda model: model["name"])
 
                 if not chat_models:
                     return {
                         "success": False,
-                        "error": "No chat models available for this API key. Check your OpenAI account permissions.",
+                        "error": "No chat models available from this OpenAI API endpoint.",
                         "models": [],
                     }
 
@@ -1698,61 +1996,64 @@ class LLMService:
 
                 return {"success": True, "models": models}
 
-    async def _fetch_anthropic_models(self, credentials: LLMCredentials) -> dict:
-        """Fetch available models from Anthropic API dynamically."""
-        if not credentials.api_key:
+    async def _fetch_anthropic_models_page(
+        self, session: aiohttp.ClientSession, endpoint: str, headers: dict, cursor: str | None
+    ) -> tuple[dict | None, int | None]:
+        params: dict[str, str | int] = {"limit": 100}
+        if cursor:
+            params["after_id"] = cursor
+        async with session.get(
+            endpoint, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)
+        ) as response:
+            if response.status != 200:
+                return None, response.status
+            return await response.json(), None
+
+    async def _fetch_anthropic_models(
+        self, credentials: LLMCredentials, compatible: bool = False
+    ) -> dict:
+        """Fetch Anthropic models, following the API's pagination cursor."""
+        if not credentials.api_key and not compatible:
             return {"success": False, "error": "API key required", "models": []}
+        if compatible and not credentials.endpoint:
+            return {"success": False, "error": "Compatible provider endpoint required", "models": []}
 
-        endpoint = "https://api.anthropic.com/v1/models"
+        endpoint = _compatible_endpoint_url(
+            credentials.endpoint or PROVIDER_ENDPOINTS["anthropic"], "models", anthropic=True
+        )
+        headers = {"anthropic-version": "2023-06-01"}
+        if credentials.api_key:
+            headers["x-api-key"] = credentials.api_key
 
-        headers = {
-            "x-api-key": credentials.api_key,
-            "anthropic-version": "2023-06-01",
-        }
-
+        models: list[dict] = []
+        cursors: set[str] = set()
+        cursor: str | None = None
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                endpoint,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    if response.status == 404:
-                        return {
-                            "success": False,
-                            "error": "Anthropic models API endpoint not available. The API may have changed.",
-                            "models": [],
-                        }
-                    return {
-                        "success": False,
-                        "error": f"API error {response.status}: {error_text[:200]}",
-                        "models": [],
-                    }
+            while True:
+                data, status = await self._fetch_anthropic_models_page(
+                    session, endpoint, headers, cursor
+                )
+                if status is not None:
+                    return {"success": False, "error": f"Anthropic API error {status}", "models": []}
+                if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+                    return {"success": False, "error": "Invalid Anthropic models response", "models": []}
 
-                data = await response.json()
+                models.extend(_format_anthropic_models(data["data"]))
+                if not data.get("has_more"):
+                    break
+                next_cursor = data.get("last_id")
+                if (
+                    not isinstance(next_cursor, str)
+                    or not next_cursor.strip()
+                    or next_cursor != next_cursor.strip()
+                    or next_cursor in cursors
+                ):
+                    return {"success": False, "error": "Invalid Anthropic model pagination cursor", "models": []}
+                cursors.add(next_cursor)
+                cursor = next_cursor
 
-                models = []
-                for model in data.get("data", []):
-                    model_id = model.get("id", "")
-                    display_name = model.get("display_name", model_id)
-
-                    # Recommend latest models
-                    is_recommended = "sonnet-4" in model_id or "3-5-sonnet" in model_id
-
-                    models.append(
-                        {
-                            "id": model_id,
-                            "name": display_name,
-                            "recommended": is_recommended,
-                            "description": model.get("description", ""),
-                            "context_window": model.get("context_window"),
-                        }
-                    )
-
-                models.sort(key=lambda m: (not m["recommended"], m["name"]))
-
-                return {"success": True, "models": models}
+        models.sort(key=lambda model: model["name"])
+        return {"success": True, "models": models}
 
     async def _fetch_github_copilot_models_oauth(self, credentials: LLMCredentials) -> dict:
         """Fetch available models for GitHub Copilot (OAuth-based) dynamically.

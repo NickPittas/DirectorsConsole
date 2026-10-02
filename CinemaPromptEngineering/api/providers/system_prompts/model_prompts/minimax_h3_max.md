@@ -12,7 +12,7 @@ This guide is for the hosted `MiniMax-H3-Max` API variant only. It does not impl
 
 Use the hosted API dialect's natural-language brief: establish the subject and setting, describe sequential physical actions, then the shot scale, natural camera movement, light, palette, and supplied sound. For a supplied first or last frame, describe only the motion from that established state or the path that resolves into it. For reference generation, describe each caller-confirmed image, video, or audio binding by its supplied role; do not invent numbered assets, provider IDs, dialogue, language, or negative fields.
 
-Image-to-video keyframes and reference-to-video inputs are mutually exclusive in the documented API. The enhancer can validate the caller's declared roles, but cannot inspect media or verify graph bindings. Preserve user-provided dialogue and audio instructions; never add dialogue merely because audio exists. Keep camera motion natural in the prose rather than appending unverified command syntax.
+Image-to-video keyframes and reference-to-video inputs are mutually exclusive in the documented API. The enhancement LLM can inspect image content only when actual image pixels are included in this enhancement request; metadata-only image, video, and audio references remain uninspected. It cannot verify graph bindings, and inspecting supplied pixels does not imply the generator automatically receives uploads. Preserve user-provided dialogue and audio instructions; never add dialogue merely because audio exists. Keep camera motion natural in the prose rather than appending unverified command syntax.
 
 ## Output contract
 

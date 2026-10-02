@@ -14,4 +14,8 @@ Put supplied dialogue in quotation marks and preserve its words and language. Do
 
 ## Output contract
 
-Return one final flowing prompt paragraph with no headings, explanations, citations, alternatives, or duplicated paragraphs.
+For `ltx_native`, return one final flowing prompt paragraph with no headings, explanations, citations, alternatives, or duplicated paragraphs.
+
+For the explicitly selected `ltx_ingredients` IC-LoRA workflow, the input is ONE already-composed reference sheet, not independent image uploads. Return exactly two parts: `Reference sheet: <describe the supplied panels and their roles> / Generated video: <the requested visible action and cinematic treatment>`. Do not invent panels, assemble a sheet, or claim that the generator received it. Inspect panels only when actual sheet pixels accompany the enhancement request.
+
+Ingredients source: https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters.md (LTX-2.3 Ingredients adapter and LTX-2.5 workflow).

@@ -59,6 +59,7 @@ export interface ProviderConfig {
 }
 
 export interface ProviderCredentials {
+  name?: string;
   apiKey?: string;
   endpoint?: string;
   oauthToken?: string;
@@ -94,7 +95,7 @@ const LLM_PROVIDERS: ProviderConfig[] = [
     id: 'openai',
     name: 'OpenAI',
     type: 'api_key',
-    description: 'GPT-4, GPT-4V for prompt enhancement and analysis',
+    description: 'Current OpenAI API models for prompt enhancement and analysis',
     defaultEndpoint: 'https://api.openai.com/v1',
     docsUrl: 'https://platform.openai.com/docs',
   },
@@ -181,10 +182,46 @@ const LLM_PROVIDERS: ProviderConfig[] = [
     id: 'openai_codex',
     name: 'OpenAI Codex (ChatGPT Plus/Pro)',
     type: 'oauth',
-    description: 'OAuth for GPT-5.x models with ChatGPT subscription',
+    description: 'OAuth for current account models with ChatGPT subscription',
     docsUrl: 'https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan',
   },
 ];
+
+type CompatibleProtocol = 'openai-compatible' | 'anthropic-compatible';
+
+const compatibleProtocolFor = (providerId: string): CompatibleProtocol | null =>
+  providerId.startsWith('openai-compatible-') ? 'openai-compatible'
+    : providerId.startsWith('anthropic-compatible-') ? 'anthropic-compatible' : null;
+
+const isCompatibleProvider = (providerId: string): boolean => compatibleProtocolFor(providerId) !== null;
+
+function isValidCompatibleEndpoint(endpoint: string | undefined): boolean {
+  if (typeof endpoint !== 'string' || !endpoint.trim() || /[?#]/.test(endpoint)) return false;
+  try {
+    const url = new URL(endpoint.trim());
+    return ['http:', 'https:'].includes(url.protocol)
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function getProviderConfigs(credentials: Record<string, ProviderCredentials>): ProviderConfig[] {
+  return [
+    ...LLM_PROVIDERS,
+    ...Object.entries(credentials).flatMap(([id, creds]) => {
+      const protocol = compatibleProtocolFor(id);
+      if (!protocol) return [];
+      const service = protocol === 'openai-compatible' ? 'OpenAI-compatible' : 'Anthropic-compatible';
+      return [{
+        id,
+        name: creds.name?.trim() || `${service} endpoint`,
+        type: 'api_key' as const,
+        description: `${service} custom endpoint`,
+      }];
+    }),
+  ];
+}
 
 // =============================================================================
 // Styles
@@ -458,6 +495,7 @@ async function loadSettingsFromServer(): Promise<SavedSettings> {
     const fullCreds = await api.getProviderCredentials(providerId);
     if (fullCreds.exists) {
       providers[providerId] = {
+        name: fullCreds.name,
         apiKey: fullCreds.api_key,
         endpoint: fullCreds.endpoint,
         oauthToken: fullCreds.oauth_token,
@@ -478,6 +516,7 @@ async function loadSettingsFromServer(): Promise<SavedSettings> {
 async function saveCredentialsToServer(providerId: string, creds: ProviderCredentials): Promise<void> {
   try {
     const result = await api.updateProviderCredentials(providerId, {
+      name: creds.name,
       api_key: creds.apiKey,
       endpoint: creds.endpoint,
       oauth_token: creds.oauthToken,
@@ -489,17 +528,17 @@ async function saveCredentialsToServer(providerId: string, creds: ProviderCreden
     if (!result.success) {
       throw new Error(`Credential update for ${providerId} was not accepted`);
     }
-  } catch (e) {
-    console.error(`Failed to save credentials for ${providerId} to server:`, e);
-    throw e;
+  } catch {
+    console.error('Failed to save provider credentials to server.');
+    throw new Error('Failed to save provider credentials to server.');
   }
 }
 
 async function saveSettingsToServer(activeProvider: string | null, selectedModel: string | null): Promise<void> {
   try {
     await api.updateSettings({
-      active_provider: activeProvider || undefined,
-      selected_model: selectedModel || undefined,
+      active_provider: activeProvider || '',
+      selected_model: selectedModel || '',
     });
   } catch (e) {
     console.error('Failed to save settings to server:', e);
@@ -621,6 +660,14 @@ function saveLlmSettingsToLocalStorage(settings: LlmSettings): void {
     localStorage.setItem(LLM_SETTINGS_KEY, JSON.stringify(settings));
   } catch (e) {
     console.error('Failed to save LLM settings to localStorage:', e);
+  }
+}
+
+function clearLlmSettingsFromLocalStorage(): void {
+  try {
+    localStorage.removeItem(LLM_SETTINGS_KEY);
+  } catch {
+    console.error('Failed to clear LLM settings from localStorage.');
   }
 }
 
@@ -747,16 +794,31 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
+  const [settingsSaveError, setSettingsSaveError] = useState<string | null>(null);
+  const [deletedCompatibleProviders, setDeletedCompatibleProviders] = useState<Set<string>>(new Set());
+  const [hasCompatibleChanges, setHasCompatibleChanges] = useState(false);
+  const originalCompatibleProvidersRef = useRef<Record<string, ProviderCredentials>>({});
+  const [newEndpointProtocol, setNewEndpointProtocol] = useState<CompatibleProtocol>('openai-compatible');
+  const [newEndpointName, setNewEndpointName] = useState('');
+  const [newEndpointUrl, setNewEndpointUrl] = useState('');
+  const [newEndpointApiKey, setNewEndpointApiKey] = useState('');
+  const [newEndpointError, setNewEndpointError] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   
   // Default LLM model selection state
   const [selectedLlmProvider, setSelectedLlmProvider] = useState<string>('');
+  const selectedLlmProviderRef = useRef(selectedLlmProvider);
+  selectedLlmProviderRef.current = selectedLlmProvider;
   const [selectedLlmModel, setSelectedLlmModel] = useState<string>('');
   const selectedLlmModelRef = useRef(selectedLlmModel);
   selectedLlmModelRef.current = selectedLlmModel;
   const [availableModels, setAvailableModels] = useState<Array<{id: string, name: string, recommended: boolean}>>([]);
+  const [modelSource, setModelSource] = useState<string | null>(null);
+  const [modelWarning, setModelWarning] = useState<string | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelRefreshVersion, setModelRefreshVersion] = useState(0);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   
   // Device flow OAuth state
@@ -956,6 +1018,12 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         setActiveProvider(saved.activeProvider);
         setCredentials(saved.providers);
         credentialsRef.current = saved.providers;
+        originalCompatibleProvidersRef.current = Object.fromEntries(
+          Object.entries(saved.providers).filter(([id]) => isCompatibleProvider(id)),
+        );
+        setDeletedCompatibleProviders(new Set());
+        setHasCompatibleChanges(false);
+        setSettingsSaveError(null);
         setConnectionStatus('disconnected');
         setConnectionError(null);
         setSettingsLoadError(null);
@@ -973,7 +1041,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           setSelectedLlmModel(llmSettings.model);
         }
       } catch (error) {
-        console.error('Failed to load settings from server, falling back to localStorage:', error);
+        console.error('Failed to load settings from server, falling back to localStorage.');
 
         if (!isMounted) return;
 
@@ -989,6 +1057,12 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         setActiveProvider(saved.activeProvider);
         credentialsRef.current = saved.providers;
         setCredentials(saved.providers);
+        originalCompatibleProvidersRef.current = Object.fromEntries(
+          Object.entries(saved.providers).filter(([id]) => isCompatibleProvider(id)),
+        );
+        setDeletedCompatibleProviders(new Set());
+        setHasCompatibleChanges(false);
+        setSettingsSaveError(null);
         setHasUnsavedChanges(false);
         
         // Load LLM model settings from localStorage
@@ -1007,68 +1081,104 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
     };
   }, [isOpen, refreshExpiredTokens]);
 
-  // Fetch LLM models when selected provider changes
+  const modelCredentials = credentials[selectedLlmProvider];
+
+  // Fetch LLM models when the provider changes or the user explicitly refreshes.
   useEffect(() => {
     if (!selectedLlmProvider) {
       setAvailableModels([]);
+      setModelSource(null);
+      setModelWarning(null);
+      setModelError(null);
+      setIsLoadingModels(false);
       return;
     }
-    
-    // Use credentials state (loaded from server) instead of localStorage
-    const creds = credentials[selectedLlmProvider];
-    const providerConfig = LLM_PROVIDERS.find(p => p.id === selectedLlmProvider);
-    
-    // Check if provider has credentials
-    const hasCredentials = 
-      (providerConfig?.type === 'api_key' && creds?.apiKey) ||
-      (providerConfig?.type === 'oauth' && creds?.oauthToken) ||
-      (providerConfig?.type === 'local' && (creds?.endpoint || providerConfig?.defaultEndpoint));
-    
+
+    let current = true;
+    const providerId = selectedLlmProvider;
+    const isCustom = isCompatibleProvider(providerId);
+    const creds = credentialsRef.current[providerId];
+    const providerConfig = getProviderConfigs(credentialsRef.current).find(p => p.id === providerId);
+    const hasCredentials = isCustom
+      ? isValidCompatibleEndpoint(creds?.endpoint)
+      : (providerConfig?.type === 'api_key' && Boolean(creds?.apiKey))
+        || (providerConfig?.type === 'oauth' && Boolean(creds?.oauthToken))
+        || (providerConfig?.type === 'local' && Boolean(creds?.endpoint || providerConfig?.defaultEndpoint));
+
+    setAvailableModels([]);
+    setModelSource(null);
+    setModelWarning(null);
+    setModelError(null);
+
     if (!hasCredentials) {
-      // No credentials - show instruction message instead of models
-      const instruction = MODEL_FETCH_INSTRUCTIONS[selectedLlmProvider] || 'Configure credentials to fetch available models.';
-      setAvailableModels([{ id: '', name: `⚠️ ${instruction}`, recommended: false }]);
-      setSelectedLlmModel('');
-      return;
+      setIsLoadingModels(false);
+      setModelError(MODEL_FETCH_INSTRUCTIONS[providerId] || 'Configure a valid endpoint to fetch available models.');
+      if (!isCustom) setSelectedLlmModel('');
+      return () => { current = false; };
     }
-    
+
+    const submittedOAuthToken = creds?.oauthToken;
+    const submittedOAuthRefreshToken = creds?.oauthRefreshToken;
     setIsLoadingModels(true);
     api.fetchLlmModels({
-      provider: selectedLlmProvider,
+      provider: providerId,
       credentials: {
         apiKey: creds?.apiKey,
         endpoint: creds?.endpoint,
-        oauthToken: creds?.oauthToken,
+        oauthToken: submittedOAuthToken,
       },
-    })
-      .then(result => {
-        if (result.success && result.models.length > 0) {
-          setAvailableModels(result.models);
-          // Auto-select first recommended or first model if current selection is invalid
-          if (!result.models.find(m => m.id === selectedLlmModelRef.current)) {
-            const recommended = result.models.find(m => m.recommended);
-            setSelectedLlmModel(recommended?.id || result.models[0]?.id || '');
-          }
-        } else {
-          // API returned no models - show error
-          const errorMsg = result.error || 'No models available. Check your credentials or provider status.';
-          setAvailableModels([{ id: '', name: `❌ ${errorMsg}`, recommended: false }]);
-          setSelectedLlmModel('');
-        }
-      })
-      .catch((error) => {
-        // Network or API error - show error message
-        const errorMsg = error?.message || 'Failed to fetch models. Check your connection and credentials.';
-        setAvailableModels([{ id: '', name: `❌ ${errorMsg}`, recommended: false }]);
-        setSelectedLlmModel('');
-      })
-      .finally(() => setIsLoadingModels(false));
-  }, [selectedLlmProvider, credentials]);
+    }).then(result => {
+      if (!current || selectedLlmProviderRef.current !== providerId) return;
+      if (
+        result.oauth_token && result.oauth_token !== submittedOAuthToken
+        && (submittedOAuthToken || submittedOAuthRefreshToken)
+        && selectedLlmProviderRef.current === providerId
+        && credentialsRef.current[providerId]?.oauthToken === submittedOAuthToken
+        && credentialsRef.current[providerId]?.oauthRefreshToken === submittedOAuthRefreshToken
+      ) {
+        const refreshed = { ...credentialsRef.current[providerId], oauthToken: result.oauth_token };
+        const updated = { ...credentialsRef.current, [providerId]: refreshed };
+        credentialsRef.current = updated;
+        setCredentials(updated);
+        updateSavedOAuthToken(providerId, result.oauth_token);
+      }
 
-  // Get the currently selected provider config
-  const selectedProvider = activeProvider 
-    ? LLM_PROVIDERS.find(p => p.id === activeProvider) 
+      setModelSource(result.source || null);
+      setModelWarning(result.warning || null);
+      const models = result.success ? result.models.filter(model => Boolean(model.id)) : [];
+      setAvailableModels(models);
+      if (result.success && models.length > 0) {
+        if (isCustom) {
+          if (!selectedLlmModelRef.current) {
+            const recommended = models.find(model => model.recommended);
+            setSelectedLlmModel(recommended?.id || models[0].id);
+          }
+        } else if (!models.find(model => model.id === selectedLlmModelRef.current)) {
+          const recommended = models.find(model => model.recommended);
+          setSelectedLlmModel(recommended?.id || models[0].id);
+        }
+      } else {
+        setModelError(result.error || 'No models available. Check your credentials or provider status.');
+        if (!isCustom) setSelectedLlmModel('');
+      }
+    }).catch(() => {
+      if (!current || selectedLlmProviderRef.current !== providerId) return;
+      setModelError(isCustom
+        ? 'Failed to fetch models. Check the endpoint and credentials, or enter a model ID manually.'
+        : 'Failed to fetch models. Check your connection and credentials.');
+      if (!isCustom) setSelectedLlmModel('');
+    }).finally(() => {
+      if (current && selectedLlmProviderRef.current === providerId) setIsLoadingModels(false);
+    });
+
+    return () => { current = false; };
+  }, [selectedLlmProvider, modelCredentials?.apiKey, modelCredentials?.endpoint, modelCredentials?.oauthToken, modelCredentials?.oauthRefreshToken, modelRefreshVersion]);
+
+  const providerConfigs = getProviderConfigs(credentials);
+  const selectedProvider = activeProvider
+    ? providerConfigs.find(p => p.id === activeProvider)
     : null;
+  const selectedProviderIsCompatible = Boolean(activeProvider && isCompatibleProvider(activeProvider));
   
   // Get credentials for the selected provider
   const currentCredentials = activeProvider ? credentials[activeProvider] || {} : {};
@@ -1099,30 +1209,87 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
     setHasUnsavedChanges(true);
   }, []);
 
+  const handleAddCompatibleEndpoint = useCallback(() => {
+    const name = newEndpointName.trim();
+    const endpoint = newEndpointUrl.trim();
+    if (!name) {
+      setNewEndpointError('Enter a name for this endpoint.');
+      return;
+    }
+    if (!isValidCompatibleEndpoint(endpoint)) {
+      setNewEndpointError('Enter a valid http(s) URL without user info, query, or fragment.');
+      return;
+    }
+
+    const providerId = `${newEndpointProtocol}-${crypto.randomUUID()}`;
+    const updated = {
+      ...credentialsRef.current,
+      [providerId]: {
+        name,
+        endpoint,
+        ...(newEndpointApiKey.trim() ? { apiKey: newEndpointApiKey } : {}),
+      },
+    };
+    credentialsRef.current = updated;
+    setCredentials(updated);
+    setActiveProvider(providerId);
+    selectedLlmProviderRef.current = providerId;
+    setSelectedLlmProvider(providerId);
+    setSelectedLlmModel('');
+    setNewEndpointName('');
+    setNewEndpointUrl('');
+    setNewEndpointApiKey('');
+    setNewEndpointError(null);
+    setConnectionStatus('disconnected');
+    setConnectionError(null);
+    setHasCompatibleChanges(true);
+    setHasUnsavedChanges(true);
+  }, [newEndpointProtocol, newEndpointName, newEndpointUrl, newEndpointApiKey]);
+
+  const handleDeleteCompatibleEndpoint = useCallback(() => {
+    if (!activeProvider || !isCompatibleProvider(activeProvider)) return;
+    const name = credentials[activeProvider]?.name || selectedProvider?.name || 'this endpoint';
+    if (!window.confirm(`Delete "${name}"? This will take effect when you save.`)) return;
+
+    const providerId = activeProvider;
+    const updated = { ...credentialsRef.current };
+    delete updated[providerId];
+    credentialsRef.current = updated;
+    setCredentials(updated);
+    setDeletedCompatibleProviders(previous => new Set(previous).add(providerId));
+    setHasCompatibleChanges(true);
+    setHasUnsavedChanges(true);
+    setActiveProvider(null);
+    setConnectionStatus('disconnected');
+    setConnectionError(null);
+    if (selectedLlmProvider === providerId) {
+      selectedLlmProviderRef.current = '';
+      setSelectedLlmProvider('');
+      setSelectedLlmModel('');
+    }
+  }, [activeProvider, credentials, selectedProvider?.name, selectedLlmProvider]);
+
   // Handle credential updates (with immediate server persist for OAuth tokens)
   const updateCredential = useCallback((field: keyof ProviderCredentials, value: string | number | null) => {
     if (!activeProvider) return;
-    
-    setCredentials(prev => {
-      const updated = {
-        ...prev,
-        [activeProvider]: {
-          ...prev[activeProvider],
-          [field]: value,
-        },
-      };
-      
-      // For OAuth tokens and client credentials, persist immediately to server (fire and forget)
-      if (field === 'oauthToken' || field === 'oauthRefreshToken' || field === 'oauthExpiresAt' || field === 'oauthClientId' || field === 'oauthClientSecret') {
-        const creds = updated[activeProvider];
-        saveCredentialsToServer(activeProvider, creds).catch((err) => {
-          console.error(`Failed to persist ${field} to server:`, err);
-        });
-      }
-      
-      credentialsRef.current = updated;
-      return updated;
-    });
+
+    if (isCompatibleProvider(activeProvider)) setHasCompatibleChanges(true);
+    const updated = {
+      ...credentialsRef.current,
+      [activeProvider]: {
+        ...credentialsRef.current[activeProvider],
+        [field]: value,
+      },
+    };
+    credentialsRef.current = updated;
+    setCredentials(updated);
+
+    if (field === 'oauthToken' || field === 'oauthRefreshToken' || field === 'oauthExpiresAt' || field === 'oauthClientId' || field === 'oauthClientSecret') {
+      saveCredentialsToServer(activeProvider, updated[activeProvider]).catch(() => {
+        setConnectionStatus('error');
+        setConnectionError('Failed to save OAuth credentials.');
+      });
+    }
     setHasUnsavedChanges(true);
     setConnectionStatus('disconnected');
   }, [activeProvider]);
@@ -1174,18 +1341,31 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
 
     try {
       const creds = credentials[activeProvider] || {};
-      const result = await api.testProviderConnection(activeProvider, {
-        endpoint: creds.endpoint,
-        apiKey: creds.apiKey,
-      });
-      
-      setConnectionStatus(result.status);
-      if (!result.success) {
-        setConnectionError(result.message);
+      if (isCompatibleProvider(activeProvider)) {
+        if (!isValidCompatibleEndpoint(creds.endpoint)) {
+          setConnectionStatus('error');
+          setConnectionError('Enter a valid http(s) endpoint URL first.');
+          return;
+        }
+        const result = await api.fetchLlmModels({
+          provider: activeProvider,
+          credentials: { endpoint: creds.endpoint, apiKey: creds.apiKey },
+        });
+        setConnectionStatus(result.success ? 'connected' : 'error');
+        if (!result.success) setConnectionError(result.error || 'Unable to fetch models from this endpoint.');
+      } else {
+        const result = await api.testProviderConnection(activeProvider, {
+          endpoint: creds.endpoint,
+          apiKey: creds.apiKey,
+        });
+        setConnectionStatus(result.status);
+        if (!result.success) setConnectionError(result.message);
       }
     } catch (error) {
       setConnectionStatus('error');
-      setConnectionError(error instanceof Error ? error.message : 'Connection test failed');
+      setConnectionError(isCompatibleProvider(activeProvider)
+        ? 'Unable to connect to this endpoint. Check its URL and credentials.'
+        : error instanceof Error ? error.message : 'Connection test failed');
     } finally {
       setIsTesting(false);
     }
@@ -1523,62 +1703,93 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
 
   // Save settings to server
   const handleSave = useCallback(async () => {
+    setSettingsSaveError(null);
+    if (newEndpointName.trim() || newEndpointUrl.trim() || newEndpointApiKey.trim()) {
+      setSettingsSaveError('Add or clear the endpoint form before saving.');
+      return;
+    }
+    const invalidEndpoint = Object.entries(credentials).some(([id, creds]) =>
+      isCompatibleProvider(id) && (!creds.name?.trim() || !isValidCompatibleEndpoint(creds.endpoint)),
+    );
+    if (invalidEndpoint) {
+      setSettingsSaveError('Each compatible endpoint needs a name and a valid http(s) URL without user info, query, or fragment.');
+      return;
+    }
+
+    let compatibleSaveAttempted = false;
     try {
-      // Save each provider's credentials to server
+      for (const providerId of deletedCompatibleProviders) {
+        if (!originalCompatibleProvidersRef.current[providerId]) continue;
+        const result = await api.deleteProviderCredentials(providerId);
+        if (!result.success) throw new Error('Endpoint deletion was not accepted.');
+        delete originalCompatibleProvidersRef.current[providerId];
+        setDeletedCompatibleProviders(previous => {
+          const pending = new Set(previous);
+          pending.delete(providerId);
+          return pending;
+        });
+      }
+
       for (const [providerId, creds] of Object.entries(credentials)) {
-        // Only save if there's actual data
-        if (creds.apiKey || creds.endpoint || creds.oauthToken) {
+        if (creds.apiKey || creds.endpoint || creds.oauthToken || (isCompatibleProvider(providerId) && creds.name)) {
+          if (isCompatibleProvider(providerId)) compatibleSaveAttempted = true;
           await saveCredentialsToServer(providerId, creds);
         }
       }
-      
-      // Save settings (active provider, selected model) to server
-      const modelString = selectedLlmProvider && selectedLlmModel 
+
+      const modelString = selectedLlmProvider && selectedLlmModel
         ? `${selectedLlmProvider}:${selectedLlmModel}`
         : null;
       await saveSettingsToServer(activeProvider, modelString);
-      
-      // Also save to localStorage as backup
-      const settings: SavedSettings = {
-        activeProvider,
-        providers: credentials,
-      };
+
+      const settings: SavedSettings = { activeProvider, providers: credentials };
       saveSettings(settings);
-      
-      // Also save LLM model selection to localStorage
       if (selectedLlmProvider && selectedLlmModel) {
         saveLlmSettings({ provider: selectedLlmProvider, model: selectedLlmModel });
+      } else {
+        clearLlmSettingsFromLocalStorage();
       }
-      
+
+      originalCompatibleProvidersRef.current = Object.fromEntries(
+        Object.entries(credentials).filter(([id]) => isCompatibleProvider(id)),
+      );
+      setDeletedCompatibleProviders(new Set());
+      setHasCompatibleChanges(false);
       setHasUnsavedChanges(false);
       onClose();
-    } catch (error) {
-      console.error('Failed to save settings to server:', error);
-      
-      // Fallback: save to localStorage only
-      const settings: SavedSettings = {
-        activeProvider,
-        providers: credentials,
-      };
+    } catch {
+      if (hasCompatibleChanges || compatibleSaveAttempted) {
+        setSettingsSaveError('Failed to save endpoint changes. They remain unsaved; check the server and try again.');
+        return;
+      }
+
+      // Preserve the existing local-only fallback for built-in provider settings.
+      const settings: SavedSettings = { activeProvider, providers: credentials };
       saveSettings(settings);
-      
       if (selectedLlmProvider && selectedLlmModel) {
         saveLlmSettings({ provider: selectedLlmProvider, model: selectedLlmModel });
+      } else {
+        clearLlmSettingsFromLocalStorage();
       }
-      
       setHasUnsavedChanges(false);
       onClose();
     }
-  }, [activeProvider, credentials, selectedLlmProvider, selectedLlmModel, onClose]);
+  }, [activeProvider, credentials, deletedCompatibleProviders, hasCompatibleChanges, selectedLlmProvider, selectedLlmModel, newEndpointName, newEndpointUrl, newEndpointApiKey, onClose]);
 
   // Cancel without saving
   const handleCancel = useCallback(() => {
-    if (hasUnsavedChanges) {
+    const hasEndpointDraft = Boolean(newEndpointName.trim() || newEndpointUrl.trim() || newEndpointApiKey.trim());
+    if (hasUnsavedChanges || hasEndpointDraft) {
       const confirmed = window.confirm('You have unsaved changes. Discard them?');
       if (!confirmed) return;
     }
+    setNewEndpointName('');
+    setNewEndpointUrl('');
+    setNewEndpointApiKey('');
+    setNewEndpointError(null);
+    setSettingsSaveError(null);
     onClose();
-  }, [hasUnsavedChanges, onClose]);
+  }, [hasUnsavedChanges, newEndpointName, newEndpointUrl, newEndpointApiKey, onClose]);
 
   if (!isOpen) return null;
 
@@ -1614,6 +1825,60 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         </header>
 
         <div style={styles.content}>
+          <section style={styles.section}>
+            <h3 style={styles.sectionTitle}>Compatible Endpoints</h3>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel} htmlFor="compatible-protocol">Protocol</label>
+              <select
+                id="compatible-protocol"
+                style={styles.select}
+                value={newEndpointProtocol}
+                onChange={(event) => setNewEndpointProtocol(event.target.value as CompatibleProtocol)}
+              >
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="anthropic-compatible">Anthropic-compatible</option>
+              </select>
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel} htmlFor="new-endpoint-name">Name</label>
+              <input
+                id="new-endpoint-name"
+                type="text"
+                style={styles.input}
+                value={newEndpointName}
+                onChange={(event) => { setNewEndpointName(event.target.value); setNewEndpointError(null); }}
+                placeholder="e.g. Work AI"
+              />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel} htmlFor="new-endpoint-url">Endpoint URL</label>
+              <input
+                id="new-endpoint-url"
+                type="text"
+                style={styles.input}
+                value={newEndpointUrl}
+                onChange={(event) => { setNewEndpointUrl(event.target.value); setNewEndpointError(null); }}
+                placeholder="https://host.example/v1"
+                autoComplete="url"
+              />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel} htmlFor="new-endpoint-api-key">API key (optional)</label>
+              <input
+                id="new-endpoint-api-key"
+                type="password"
+                style={styles.input}
+                value={newEndpointApiKey}
+                onChange={(event) => { setNewEndpointApiKey(event.target.value); setNewEndpointError(null); }}
+                autoComplete="new-password"
+              />
+            </div>
+            {newEndpointError && <p style={styles.errorText} role="alert">{newEndpointError}</p>}
+            <button style={{ ...styles.button, ...styles.buttonSecondary }} onClick={handleAddCompatibleEndpoint}>
+              Add Endpoint
+            </button>
+          </section>
+
           {/* Provider Selection */}
           <section style={styles.section}>
             <label style={styles.label} htmlFor="provider-select">
@@ -1627,10 +1892,17 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             >
               <option value="">-- Select a provider --</option>
               <optgroup label="Cloud API (API Key)">
-                {LLM_PROVIDERS.filter(p => p.type === 'api_key').map(p => (
+                {providerConfigs.filter(p => p.type === 'api_key' && !isCompatibleProvider(p.id)).map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </optgroup>
+              {providerConfigs.some(p => isCompatibleProvider(p.id)) && (
+                <optgroup label="Compatible Endpoints">
+                  {providerConfigs.filter(p => isCompatibleProvider(p.id)).map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              )}
               <optgroup label="Local (No Auth)">
                 {LLM_PROVIDERS.filter(p => p.type === 'local').map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -1647,6 +1919,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           {settingsLoadError && (
             <p style={styles.errorText} role="alert">{settingsLoadError}</p>
           )}
+          {settingsSaveError && (
+            <p style={styles.errorText} role="alert">{settingsSaveError}</p>
+          )}
 
           {/* Provider Configuration */}
           {selectedProvider && (
@@ -1660,9 +1935,21 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                 {/* API Key providers */}
                 {selectedProvider.type === 'api_key' && (
                   <>
+                    {selectedProviderIsCompatible && (
+                      <div style={styles.inputGroup}>
+                        <label style={styles.inputLabel} htmlFor="endpoint-name">Name</label>
+                        <input
+                          id="endpoint-name"
+                          type="text"
+                          style={styles.input}
+                          value={currentCredentials.name || ''}
+                          onChange={(event) => updateCredential('name', event.target.value)}
+                        />
+                      </div>
+                    )}
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel} htmlFor="api-key">
-                        API Key
+                        {selectedProviderIsCompatible ? 'API Key (optional)' : 'API Key'}
                       </label>
                       <div style={{ position: 'relative' }}>
                         <input
@@ -1697,16 +1984,19 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
 
                     <div style={styles.inputGroup}>
                       <label style={styles.inputLabel} htmlFor="endpoint">
-                        Custom Endpoint (optional)
+                        {selectedProviderIsCompatible ? 'Endpoint URL' : 'Custom Endpoint (optional)'}
                       </label>
                       <input
                         id="endpoint"
                         type="text"
                         style={styles.input}
-                        placeholder={selectedProvider.defaultEndpoint}
+                        placeholder={selectedProviderIsCompatible ? 'https://host.example/v1' : selectedProvider.defaultEndpoint}
                         value={currentCredentials.endpoint || ''}
                         onChange={(e) => updateCredential('endpoint', e.target.value)}
                       />
+                      {selectedProviderIsCompatible && currentCredentials.endpoint && !isValidCompatibleEndpoint(currentCredentials.endpoint) && (
+                        <p style={styles.errorText}>Use an http(s) URL without user info, query, or fragment.</p>
+                      )}
                     </div>
 
                     <div style={styles.buttonRow}>
@@ -1717,10 +2007,20 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                           opacity: isTesting ? 0.6 : 1,
                         }}
                         onClick={handleTestConnection}
-                        disabled={!currentCredentials.apiKey || isTesting}
+                        disabled={isTesting || (selectedProviderIsCompatible
+                          ? !isValidCompatibleEndpoint(currentCredentials.endpoint)
+                          : !currentCredentials.apiKey)}
                       >
                         {isTesting ? 'Testing...' : 'Test Connection'}
                       </button>
+                      {selectedProviderIsCompatible && (
+                        <button
+                          style={{ ...styles.button, ...styles.buttonSecondary }}
+                          onClick={handleDeleteCompatibleEndpoint}
+                        >
+                          Delete Endpoint
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -2017,19 +2317,20 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                 style={styles.select}
                 value={selectedLlmProvider}
                 onChange={(e) => {
+                  selectedLlmProviderRef.current = e.target.value;
                   setSelectedLlmProvider(e.target.value);
                   setSelectedLlmModel(''); // Reset model when provider changes
                   setHasUnsavedChanges(true);
                 }}
               >
                 <option value="">-- Select provider --</option>
-                {LLM_PROVIDERS.map(p => {
-                  // Use the credentials state (loaded from server) instead of localStorage
+                {providerConfigs.map(p => {
                   const creds = credentials[p.id];
-                  const hasCredentials = 
-                    (p.type === 'api_key' && creds?.apiKey) ||
-                    (p.type === 'oauth' && creds?.oauthToken) ||
-                    (p.type === 'local' && (creds?.endpoint || p.defaultEndpoint));
+                  const hasCredentials = isCompatibleProvider(p.id)
+                    ? isValidCompatibleEndpoint(creds?.endpoint)
+                    : (p.type === 'api_key' && Boolean(creds?.apiKey))
+                      || (p.type === 'oauth' && Boolean(creds?.oauthToken))
+                      || (p.type === 'local' && Boolean(creds?.endpoint || p.defaultEndpoint));
                   
                   return (
                     <option 
@@ -2049,23 +2350,53 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                 <label style={styles.inputLabel} htmlFor="llm-model-select">
                   <span>Model</span> {isLoadingModels && <span style={{ color: 'var(--text-muted)' }}>(loading...)</span>}
                 </label>
-                <select
-                  id="llm-model-select"
-                  style={styles.select}
-                  value={selectedLlmModel}
-                  onChange={(e) => {
-                    setSelectedLlmModel(e.target.value);
-                    setHasUnsavedChanges(true);
-                  }}
-                  disabled={isLoadingModels || availableModels.length === 0}
-                >
-                  <option value="">-- Select model --</option>
-                  {availableModels.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} {m.recommended ? '(recommended)' : ''}
-                    </option>
-                  ))}
-                </select>
+                <div style={styles.buttonRow}>
+                  <select
+                    id="llm-model-select"
+                    style={{ ...styles.select, flex: 1 }}
+                    value={availableModels.some(model => model.id === selectedLlmModel) ? selectedLlmModel : ''}
+                    onChange={(e) => {
+                      setSelectedLlmModel(e.target.value);
+                      setHasUnsavedChanges(true);
+                    }}
+                    disabled={isLoadingModels || availableModels.length === 0}
+                  >
+                    <option value="">-- Select model --</option>
+                    {availableModels.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} {m.recommended ? '(recommended)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    style={{ ...styles.button, ...styles.buttonSecondary }}
+                    onClick={() => setModelRefreshVersion(version => version + 1)}
+                    disabled={isLoadingModels}
+                  >
+                    Refresh Models
+                  </button>
+                </div>
+                {isCompatibleProvider(selectedLlmProvider) && (
+                  <input
+                    type="text"
+                    style={{ ...styles.input, marginTop: '0.5rem' }}
+                    aria-label="Manual model ID"
+                    placeholder="Enter model ID manually"
+                    value={selectedLlmModel}
+                    onChange={(event) => {
+                      setSelectedLlmModel(event.target.value);
+                      setHasUnsavedChanges(true);
+                    }}
+                  />
+                )}
+                {(modelSource || modelWarning) && (
+                  <p style={{ ...styles.providerDescription, marginTop: '0.5rem' }}>
+                    {modelSource && <>Source: {modelSource}</>}
+                    {modelSource && modelWarning && ' · '}
+                    {modelWarning}
+                  </p>
+                )}
+                {modelError && <p style={styles.errorText} role="status">{modelError}</p>}
               </div>
             )}
           </section>
@@ -2183,27 +2514,27 @@ export interface ConfiguredProvider {
 export function getConfiguredProviders(): ConfiguredProvider[] {
   const settings = loadSettings();
   const configured: ConfiguredProvider[] = [];
-  
-  for (const provider of LLM_PROVIDERS) {
+
+  for (const provider of getProviderConfigs(settings.providers)) {
     const creds = settings.providers[provider.id];
-    // Check if provider has credentials (API key or OAuth token or is local with endpoint)
-    const hasCredentials = 
-      (provider.type === 'api_key' && creds?.apiKey) ||
-      (provider.type === 'oauth' && creds?.oauthToken) ||
-      (provider.type === 'local' && (creds?.endpoint || provider.defaultEndpoint));
-    
+    const hasCredentials = isCompatibleProvider(provider.id)
+      ? isValidCompatibleEndpoint(creds?.endpoint)
+      : (provider.type === 'api_key' && Boolean(creds?.apiKey))
+        || (provider.type === 'oauth' && Boolean(creds?.oauthToken))
+        || (provider.type === 'local' && Boolean(creds?.endpoint || provider.defaultEndpoint));
+
     if (hasCredentials) {
       configured.push({
         providerId: provider.id,
         providerName: provider.name,
         providerType: provider.type,
         credentials: creds || {},
-        models: [], // Models must be fetched dynamically via API
+        models: [],
         isActive: settings.activeProvider === provider.id,
       });
     }
   }
-  
+
   return configured;
 }
 

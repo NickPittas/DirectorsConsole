@@ -75,7 +75,7 @@ The canonical prompt-target catalog now also includes these versioned image fami
 | Nano Banana | 2, Pro, 2 Lite | Use complete scene instructions; Lite is not optimized for multiple references or multi-turn sequential editing. |
 | Seedream 5.0 | Pro, Lite | Express supplied layout, hierarchy, typography, and concrete edits in natural language. |
 
-These guides are shared by Cinema Prompt Engineering and Storyboard AI Enhance. The user's wording distinguishes new generation from editing; there is no separate image task/mode or reference-mapping selector. FLUX 3 Image remains excluded pending verified API/prompt availability.
+CPE prompt enhancement can attach and send image pixels through explicit image modes; Storyboard AI Enhance remains metadata-only for legacy workflow video/audio mappings. See [Prompt enhancement profiles](../../Documentation/PROMPT_ENHANCEMENT_PROFILES.md) for the current distinction, limits, aliases, and target conventions. FLUX 3 Image remains excluded pending verified API/prompt availability.
 
 ### 1. MIDJOURNEY V6
 

@@ -125,7 +125,7 @@ PROFILE_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "ltx_2.3": {
         "label": "LTX-2.3",
-        "tasks": ["t2v", "i2v"],
+        "tasks": ["t2v", "i2v", "ref2v"],
         "default_dialect": "ltx_native",
         "dialects": [
             {
@@ -134,16 +134,24 @@ PROFILE_REGISTRY: dict[str, dict[str, Any]] = {
                 "tasks": ["t2v", "i2v"],
                 "reference_style": "natural_prose",
                 "requires_order_confirmation": False,
-            }
+            },
+            {
+                "id": "ltx_ingredients",
+                "label": "Local Ingredients IC-LoRA (one composite sheet)",
+                "tasks": ["ref2v"],
+                "reference_style": "composite_sheet",
+                "requires_order_confirmation": True,
+            },
         ],
         "source_urls": [
+            "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters.md",
             "https://docs.ltx.io/api-documentation/implementation-guides/prompting-guide",
             "https://github.com/Lightricks/LTX-2/blob/main/MODELS-LTX-2.3.md",
         ],
     },
     "ltx_2.5": {
         "label": "LTX-2.5",
-        "tasks": ["t2v", "i2v"],
+        "tasks": ["t2v", "i2v", "ref2v"],
         "default_dialect": "ltx_native",
         "dialects": [
             {
@@ -152,9 +160,17 @@ PROFILE_REGISTRY: dict[str, dict[str, Any]] = {
                 "tasks": ["t2v", "i2v"],
                 "reference_style": "natural_prose",
                 "requires_order_confirmation": False,
-            }
+            },
+            {
+                "id": "ltx_ingredients",
+                "label": "Local Ingredients IC-LoRA (one composite sheet)",
+                "tasks": ["ref2v"],
+                "reference_style": "composite_sheet",
+                "requires_order_confirmation": True,
+            },
         ],
         "source_urls": [
+            "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters.md",
             "https://docs.ltx.io/api-documentation/implementation-guides/prompting-guide",
             "https://docs.ltx.io/models/ltx-2-5",
         ],
@@ -375,8 +391,6 @@ def validate_context(
             raise ValueError(
                 f"{canonical_target} i2v requires a first_frame image; last-frame-only input is unsupported"
             )
-        if canonical_target == "ltx_2.3" and any(asset.role == "last_frame" for asset in frame_assets):
-            raise ValueError("ltx_2.3 i2v does not have a verified ending-frame control")
 
         # The local checkpoint follows the official base guide's fixed keyframe
         # positions. Caller ordinals remain untouched for ref2v, where gaps are
@@ -406,6 +420,11 @@ def validate_context(
         if frame_assets:
             raise ValueError("ref2v uses reference assets, not first_frame or last_frame roles")
 
+    if dialect["id"] == "ltx_ingredients" and (
+        len(context.assets) != 1 or context.assets[0].role != "reference_image"
+    ):
+        raise ValueError("LTX Ingredients requires one already-composed reference sheet image")
+
     if dialect["id"] == "local_h3":
         if (
             context.task == "i2v"
@@ -425,6 +444,8 @@ def format_binding_context(
     context: EnhancementContext,
     target_model: str,
     dialect: dict[str, Any],
+    *,
+    pixels_supplied: bool = False,
 ) -> str:
     """Describe caller bindings without pretending to inspect their media."""
     if not context.assets:
@@ -435,7 +456,12 @@ def format_binding_context(
 
     lines = [
         "CALLER-CONFIRMED MEDIA BINDINGS:",
-        "The server received metadata only; it cannot inspect media or verify graph connections.",
+        (
+            "Image pixels accompany these image bindings; video/audio metadata remains uninspected. "
+            "The server cannot verify downstream graph connections."
+            if pixels_supplied else
+            "The server received metadata only; it cannot inspect media or verify graph connections."
+        ),
         "Ordinals are caller-confirmed original per-kind connection positions; preserve gaps and do not renumber.",
     ]
     for asset in context.assets:
@@ -448,9 +474,19 @@ def format_binding_context(
         if asset.reference_name:
             details.append(f"confirmed_name={asset.reference_name}")
         lines.append(f"- {token}: " + "; ".join(details))
-    lines.append("Use only these confirmed bindings; do not infer additional media, visual details, or asset IDs.")
+    lines.append(
+        "Use only these confirmed bindings and supplied image pixels; do not invent additional media or asset IDs."
+        if pixels_supplied else
+        "Use only these confirmed bindings; do not infer additional media, visual details, or asset IDs."
+    )
     if context.duration_seconds is not None:
         lines.append(f"CALLER-CONFIRMED EFFECTIVE VIDEO DURATION: {context.duration_seconds:.2f} seconds.")
+    if dialect["id"] == "ltx_ingredients":
+        lines.append(
+            "Use ONE already-composed reference sheet; output exactly "
+            "Reference sheet: <visible panels and roles> / Generated video: <requested action>. "
+            "Do not invent panels or assemble a new sheet."
+        )
     alignment = _local_h3_keyframe_alignment(context) if dialect["id"] == "local_h3" else None
     if alignment:
         lines.extend([
@@ -466,6 +502,13 @@ def _asset_token(asset: EnhancementAsset, dialect_id: str) -> str:
         return f"<{names[asset.kind]} {asset.ordinal}>"
     if dialect_id == "kling_api" and asset.reference_name:
         return f"@{asset.reference_name}"
+    if dialect_id == "kling_api" and asset.kind == "image" and asset.role == "reference_image":
+        return f"@image_{asset.ordinal}"
+    if dialect_id == "kling_legacy" and asset.kind == "image":
+        return f"<<<image_{asset.ordinal}>>>"
+    if dialect_id == "seedance_api":
+        names = {"image": "Image", "video": "Video", "audio": "Audio"}
+        return f"@{names[asset.kind]}{asset.ordinal}"
     names = {"image": "Image", "video": "Video", "audio": "Audio"}
     return f"{names[asset.kind]} {asset.ordinal}"
 

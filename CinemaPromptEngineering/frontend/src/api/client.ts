@@ -60,18 +60,66 @@ export interface PromptEnhancementProfile {
   source_urls: string[];
 }
 
+export interface EnhancementImage {
+  id: number;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+  data: string;
+}
+
+export type EnhancementImageMode = 'reference' | 'starting_frame' | 'description_only';
+
+export interface ImageReferenceDialect {
+  id: string;
+  label: string;
+  status: 'native' | 'workflow' | 'unsupported' | 'unknown';
+  supports_reference: boolean;
+  supports_starting_frame: boolean;
+  reference_limit: number | null;
+  reference_scope: 'identity_scene' | 'style' | 'edit' | 'composite_sheet' | 'none';
+  reference_format: string;
+  requires_composite_sheet: boolean;
+  source_urls: string[];
+  notes: string;
+}
+
+export interface ImageTargetCapability {
+  target_model: string;
+  label: string;
+  default_dialect: string;
+  dialects: ImageReferenceDialect[];
+}
+
+export interface ImageCapabilities {
+  limits: {
+    max_images: number;
+    max_image_bytes: number;
+    max_total_image_bytes: number;
+    max_source_bytes: number;
+    max_edge: number;
+    max_payload_bytes: number;
+  };
+  targets: ImageTargetCapability[];
+}
+
 export interface PromptEnhancementProfilesResponse {
   profiles: PromptEnhancementProfile[];
+  image_capabilities?: ImageCapabilities;
 }
 
 class ApiClient {
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
+      signal: options?.signal ?? AbortSignal.timeout(path === '/enhance-prompt' ? 90_000 : 30_000),
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
       },
+    }).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        throw new Error('The backend did not respond in time. Check that CPE is running, then retry.');
+      }
+      throw error;
     });
 
     if (!response.ok) {
@@ -565,6 +613,10 @@ class ApiClient {
     projectType: 'live_action' | 'animation';
     config: LiveActionConfig | AnimationConfig;
     enhancementContext?: EnhancementContext;
+    presetId?: string;
+    images?: EnhancementImage[];
+    imageMode?: EnhancementImageMode;
+    imageDialect?: string;
     credentials: {
       apiKey?: string;
       endpoint?: string;
@@ -589,6 +641,12 @@ class ApiClient {
         target_model: options.targetModel,
         project_type: options.projectType,
         config: options.config,
+        ...(options.presetId !== undefined ? { preset_id: options.presetId } : {}),
+        ...(options.images !== undefined ? {
+          images: options.images.map(image => ({ id: image.id, mime_type: image.mimeType, data: image.data })),
+        } : {}),
+        ...(options.imageMode !== undefined ? { image_mode: options.imageMode } : {}),
+        ...(options.imageDialect !== undefined ? { image_dialect: options.imageDialect } : {}),
         ...(options.enhancementContext ? {
           enhancement_context: {
             task: options.enhancementContext.task,
@@ -642,6 +700,9 @@ class ApiClient {
     }>;
     default_model?: string;
     error?: string;
+    source?: string;
+    warning?: string;
+    oauth_token?: string;
   }> {
     return this.fetch('/llm/models', {
       method: 'POST',
@@ -676,6 +737,7 @@ class ApiClient {
       has_refresh_token: boolean;
       oauth_expires_at?: number | null;
       endpoint: string | null;
+      name?: string | null;
       updated_at: string | null;
     }>;
   }> {
@@ -685,6 +747,7 @@ class ApiClient {
   /** Get full credentials for a specific provider */
   async getProviderCredentials(providerId: string): Promise<{
     exists: boolean;
+    name?: string;
     api_key?: string;
     endpoint?: string;
     oauth_token?: string;
@@ -701,6 +764,7 @@ class ApiClient {
   async updateProviderCredentials(
     providerId: string,
     credentials: {
+      name?: string;
       api_key?: string;
       endpoint?: string;
       oauth_token?: string;
@@ -713,6 +777,7 @@ class ApiClient {
     return this.fetch(`/credentials/${providerId}`, {
       method: 'PUT',
       body: JSON.stringify({
+        name: credentials.name,
         api_key: credentials.api_key,
         endpoint: credentials.endpoint,
         oauth_token: credentials.oauth_token,
@@ -742,8 +807,8 @@ class ApiClient {
 
   /** Update non-credential settings */
   async updateSettings(settings: {
-    active_provider?: string;
-    selected_model?: string;
+    active_provider?: string | null;
+    selected_model?: string | null;
     target_model?: string;
   }): Promise<{ success: boolean }> {
     return this.fetch('/settings', {
@@ -760,6 +825,7 @@ class ApiClient {
   async importCredentials(data: {
     activeProvider?: string;
     providers?: Record<string, {
+      name?: string;
       apiKey?: string;
       endpoint?: string;
       oauthToken?: string;

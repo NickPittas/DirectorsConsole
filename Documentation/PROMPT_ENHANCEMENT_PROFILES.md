@@ -4,17 +4,25 @@ Prompt enhancement is available now in both the **Cinema Prompt Engineering** pa
 
 A **target model** is the image/video generator whose prompt is being written. The **enhancing LLM provider and model** are separate: they rewrite the text and are configured in Settings. Selecting an LLM provider does not select a generation target.
 
-These profiles guide prompt text only. They do not establish local weights, ComfyUI nodes, provider credentials, account or region access, media upload, API submission, or visual quality.
+These profiles guide prompt text and attachment formatting only. They do not establish local weights, ComfyUI nodes, provider credentials, account or region access, generator upload/execution, or visual quality. CPE image attachments are separate from Storyboard's legacy metadata-only media mappings.
 
 ## Cinema Prompt Engineering page
 
 1. Choose a canonical target from the **General**, **Image**, or **Video** target dropdown.
-2. For a registered video target, choose the dialect shown beside the target. Dialects are model-specific; prose guides are not one shared JSON template.
+2. When multiple variants are available, choose the variant beside the target in the existing toolbar. Without attachments this control selects the video prompting dialect; with attachments it selects the documented image variant/workflow.
 3. Configure the enhancing LLM provider/model in **Settings**.
-4. Enter the scene idea and cinematography settings, then click **Enhance with AI**.
+4. Enter a scene idea and cinematography settings. Optionally click **+** or drop PNG/JPEG/WebP images into the composer, select their **Image use**, then click **Enhance with AI**. Images alone are also accepted.
 5. Review or copy the AI-Enhanced Prompt, or click **Send to Storyboard**. The scene prompt is presented as a full-width row above the model-selection controls.
 
-The CPE page has no workflow-media mapping, so a profiled video enhancement is submitted as `t2v` with no assets. Image targets use their family guide and do not show video reference controls.
+CPE sends attached image pixels for the selected image mode; Storyboard remains metadata-only and sends legacy workflow video/audio metadata. CPE also forwards the full active configuration JSON and selected official preset/style, including motion and future/null/array fields. The additive `image_capabilities` object from `GET /prompt-enhancement/profiles` covers all 53 canonical targets independently of the nine-target VIDEO profile registry.
+
+### Image attachments and limits
+
+The composer accepts PNG, JPEG, and WebP attachments, with stable aliases `@imgN` and `@imageN`. Missing IDs fail validation; contiguous target markers map to stable IDs only at formatting time. Preserve pictured identity and scene except for requested edits. Application limits are **30 images maximum** (single-image modes and lower documented native caps take precedence; unknown native caps are not claimed), **20 MiB** per source, **4 MiB** decoded per image, **12 MiB** decoded total, and an aspect-preserving **2048px** long-edge canvas. Complete inline JSON must remain strictly below **20,000,000 bytes**.
+
+Incompatible target, mode, or variant preserves attachments and blocks Enhance until resolved; nothing is automatically dropped. Attachments are tab-memory-only: never localStorage or server image files. Base64 stays separate from prompt text and is excluded from validation/provider error details. The selected LLM provider receives the image data and its own retention policies still apply. Unknown model vision capability is not automatically blocked: the selected upstream provider returns support errors, with no provider switching, text fallback, or discovery.
+
+Modes include **Describe image** (one image, standalone text, default), **Use as reference** (supported variants/workflows and native markers), and **Use as starting image** (one image; video start frame or still-image edit/init).
 
 ## Storyboard AI Enhance
 
@@ -26,7 +34,7 @@ The CPE page has no workflow-media mapping, so a profiled video enhancement is s
 
 Preferences are stored with the selected panel and project draft. Draft recovery restores work state, but cannot guarantee the final keystroke. Changing the prompt, panel, workflow, target, or mapping while a request is running causes its content response to be discarded rather than applied to the wrong context.
 
-For an image edit, write the exact requested change and the caller-provided identity, composition, lighting, or text that must remain. The enhancer receives metadata only; it does not inspect image bytes, infer image contents, or invent references. These targets guide text only and do not establish hosted/API access, local weights, provider credentials, or ComfyUI availability.
+For image edits, write the exact requested change; pictured identity, composition, lighting, and text remain unless changed explicitly. CPE attached pixels are sent only when Enhance is clicked to the chosen vision-capable enhancing LLM; no generator execution or upload is implied. Storyboard sends metadata only and does not inspect bytes. Profiles do not establish hosted/API access, local weights, credentials, account availability, visual quality, or guaranteed vision support.
 
 ### Image target guide matrix
 
@@ -51,7 +59,7 @@ Krea 2 has open-weight releases, but a target catalog entry does not promise tha
 - A local MiniMax H3 last-frame I2V mapping requires the workflow's effective duration. The UI derives it from duration or frame-rate settings and sends metadata only.
 - The frontend only surfaces populated media found through the reachable workflow schema and known managed/reference inputs. It does not inspect the media contents or invent a graph binding.
 
-Only metadata is sent to the enhancer: binding ID, media kind, role, ordinal, optional label/description, and an explicitly confirmed Kling reference name where applicable. File paths, URLs, data URLs, media bytes, and imaginary vision results are not sent. Missing target catalogs or profiles block the request and expose a retry action. Paid requests are not automatically retried. A returned OAuth refresh token is retained only through the existing selected-provider/account guard, independently of whether the content response is stale or failed.
+Storyboard sends only metadata to the enhancer: binding ID, media kind, role, ordinal, optional label/description, and an explicitly confirmed Kling reference name where applicable. File paths, URLs, data URLs, media bytes, and imaginary vision results are not sent. Missing target catalogs or profiles block the request and expose a retry action. Paid requests are not automatically retried. A returned OAuth refresh token is retained only through the existing selected-provider/account guard, independently of whether the content response is stale or failed.
 
 ## Registered video profile matrix
 
@@ -59,17 +67,21 @@ The task column is the enhancement profile's accepted task metadata. It is not a
 
 | Canonical target | Profile tasks | Dialect | Important guide constraint |
 |---|---|---|---|
-| `ltx_2.3` | T2V, I2V | LTX native prose | I2V requires a first frame; last-frame-only and a generic identity-reference mode are not verified. |
-| `ltx_2.5` | T2V, I2V | LTX native prose | I2V requires a first frame; a supplied last frame may accompany it. |
+| `ltx_2.3` | T2V, I2V, ref2v (R2V) | LTX native prose; Ingredients | Native I2V requires a first frame; optional last frame. Ingredients uses one precomposed sheet; no last-only input. |
+| `ltx_2.5` | T2V, I2V, ref2v (R2V) | LTX native prose; Ingredients | Native I2V requires a first frame; optional last frame. Ingredients uses one precomposed sheet; no last-only input. |
 | `minimax_h3` | T2V, I2V, ref2v (R2V) | Local H3 or MiniMax hosted API | The dialect determines structured local sections versus hosted natural prose. |
 | `minimax_h3_max` | T2V, I2V, ref2v (R2V) | MiniMax hosted API | Hosted H3 Max only; do not infer a local H3-Max checkpoint. |
 | `seedance_2.0` | T2V, I2V, ref2v (R2V) | Seedance API | Version-specific conventions apply; do not copy 2.5 assumptions. |
 | `seedance_2.5` | T2V, I2V, ref2v (R2V) | Seedance API | Version-specific timing/reference guidance applies; do not copy 2.0 assumptions. |
 | `wan_3.0` | T2V, I2V, ref2v (R2V) | Wan API | Reference labels are caller-confirmed per-kind metadata, not provider IDs. |
 | `kling_3.0` | T2V, I2V | Kling API | I2V requires a confirmed first frame; a last-frame-only input is rejected. |
-| `kling_3.0_omni` | T2V, I2V, ref2v (R2V) | Kling API | Named references use `@name` only when the caller confirmed that exact name. |
+| `kling_3.0_omni` | T2V, I2V, ref2v (R2V) | Kling API | Omni native references use the current `@image_N` token; legacy `<<<image_N>>>` is not the same token. Named references require the caller-confirmed exact name. |
 
 Existing image and legacy target IDs remain available through the canonical target catalog. Legacy aliases are compatibility values for persisted workflows; use the canonical ID shown by the current target dropdown for new work.
+
+## Attachment marker conventions
+
+Choose documented variants explicitly where offered, including Qwen versions and local/hosted H3. Reference markers differ: Kling current `@image_N` (legacy `<<<image_N>>>`), Seedance `@ImageN`, Wan `Image N`, and local H3 `<Picture N>`. LTX 2.3/2.5 Ingredients requires one already-composed reference sheet and a two-part `Reference sheet:` / `Generated video:` prompt. The composer does not auto-compose, register, upload to the generator, or generate these assets.
 
 ## MiniMax H3 dialect rules
 
@@ -106,7 +118,7 @@ The model-specific image guide files used by the system prompt registry are:
 - [Nano Banana](../CinemaPromptEngineering/api/providers/system_prompts/model_prompts/nano_banana.md) and [Nano Banana 2 Lite](../CinemaPromptEngineering/api/providers/system_prompts/model_prompts/nano_banana_2_lite.md)
 - [Seedream 5.0](../CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedream_5.0.md)
 
-Image guides use the caller's wording for new-generation versus editing intent. They do not inspect media, create a separate image task/mode, bind references, or set provider/API parameters. The official links in the image target matrix are provenance for the guide text and are not emitted in enhanced prompts.
+Image guides preserve the caller's new-generation or editing intent. CPE's attached pixels and selected image use provide additional context; metadata-only media must not be claimed inspected. Target-specific reference markers guide prompt writing, not generator uploads or provider/API settings. The official links in the image target matrix are provenance for the guide text and are not emitted in enhanced prompts.
 
 The model-specific video guide files used by the system prompt registry are:
 
@@ -125,3 +137,7 @@ Official sources recorded by the profile registry:
 - **Kling:** [Kling 3.0 model guide](https://kling.ai/quickstart/klingai-video-3-model-user-guide), [image-to-video API](https://kling.ai/document-api/api/video/3-0-omni/image-to-video.md), and [Omni API](https://kling.ai/document-api/api/video/3-0-omni/video-omni.md).
 
 The profiles endpoint remains authoritative for clients: `GET /prompt-enhancement/profiles`. It returns the target ID, supported profile tasks, default dialect, dialect metadata, reference style, order-confirmation requirement, and source URLs. Context validation rejects unsupported task/dialect combinations, invalid kind/role pairs, duplicate binding IDs or per-kind ordinals, unconfirmed mappings, and target-specific keyframe violations before enhancement is sent.
+
+## Verification
+
+Offline lint, TypeScript/build checks, Python compilation, and allowed-path diff checks pass. Rendered UI, live provider/account, paid generation behavior, visual quality, and a complete security audit were not verified; automated tests were not run under the user constraints.

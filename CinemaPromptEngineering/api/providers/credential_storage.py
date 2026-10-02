@@ -33,6 +33,7 @@ class CredentialStorageError(RuntimeError):
 
 class ProviderCredentials(BaseModel):
     """Credentials for a single provider."""
+    name: Optional[str] = None
     api_key: Optional[str] = None
     endpoint: Optional[str] = None
     oauth_token: Optional[str] = None
@@ -457,6 +458,7 @@ class CredentialStorage:
                 raise ValueError(f"Credentials for '{provider_id}' must be an object")
             try:
                 creds = ProviderCredentials(
+                    name=creds_data.get('name'),
                     api_key=creds_data.get('apiKey'),
                     endpoint=creds_data.get('endpoint'),
                     oauth_token=creds_data.get('oauthToken'),
