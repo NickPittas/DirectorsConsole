@@ -1,1078 +1,162 @@
-<p align="center">
-  <h1 align="center">🎬 Director's Console</h1>
-  <p align="center">
-    <strong>A unified AI VFX production pipeline for cinematographically accurate image and video generation</strong>
-  </p>
-  <p align="center">
-    <em>Project Eliot</em>
-  </p>
-</p>
+# Director's Console
 
----
+**Design the shot. Run the workflow. Keep the results together.**
 
-Director's Console combines a **Cinema Prompt Engineering (CPE)** rules engine, a **Storyboard Canvas** for visual production planning, a **Gallery** for browsing, organizing, and managing all project media, and an **Orchestrator** for distributed rendering across multiple ComfyUI nodes. Every prompt it generates is grounded in real-world cinematography — real cameras, real lenses, real film stocks, real lighting equipment — ensuring that only what is **physically and historically possible** can be configured.
+Director's Console brings cinematic prompt design, reference-driven image and video workflows, and project media management into one workspace for filmmakers and AI artists. Author a shot in Cinema Prompt Engineering, render it through ComfyUI in Storyboard, and review the results in Gallery.
+
+*Project Eliot*
+
+![Storyboard Canvas with project](Images/Storyboard%20Canvas%20View%20with%20project%20open.png)
+
+*Existing panel overview: per-shot panels, parameters, reference inputs, and node selection are shown; the latest controls are documented in the [Storyboard guide](docs/storyboard.md).*
 
 ## Table of Contents
 
-- [Key Features](#key-features)
-- [Screenshots](#screenshots)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Security & Deployment](#security--deployment)
-- [Storyboard Canvas](#storyboard-canvas)
-  - [Canvas Overview](#canvas-overview)
-  - [Panels](#panels)
-  - [Storyboard AI Enhance](#storyboard-ai-enhance)
-  - [Image Viewer & Compare](#image-viewer--compare)
-  - [Project Management](#project-management)
-  - [Printing](#printing)
+- [Why Director's Console](#why-directors-console)
+- [Cinema Prompt Engineering](#cinema-prompt-engineering)
+- [Storyboard](#storyboard)
 - [Gallery](#gallery)
-  - [File Browser & Media Viewer](#file-browser--media-viewer)
-  - [Batch Operations](#batch-operations)
-  - [Ratings, Tags & Search](#ratings-tags--search)
-  - [Storyboard Integration](#storyboard-integration)
-- [ComfyUI Integration](#comfyui-integration)
-  - [Node Manager](#node-manager)
-  - [Workflows](#workflows)
-  - [Multi-Node Rendering](#multi-node-rendering)
-- [Cinema Prompt Engineering (CPE)](#cinema-prompt-engineering-cpe)
-  - [How It Works](#how-it-works)
-  - [The Rules Engine](#the-rules-engine)
-  - [Live-Action Film Presets](#live-action-film-presets)
-  - [Animation Presets](#animation-presets)
-  - [AI-Enhanced Prompts](#ai-enhanced-prompts)
+- [Installation and Quick Start](#installation-and-quick-start)
 - [AI LLM Provider Setup](#ai-llm-provider-setup)
-  - [API Key Providers](#api-key-providers)
-    - [Google AI (Gemini) API key setup](#google-ai-gemini-api-key-setup)
-  - [OAuth Providers](#oauth-providers)
-    - [Antigravity OAuth app configuration](#antigravity-oauth-app-configuration)
-  - [Local LLM Providers](#local-llm-providers)
-- [Technical Reference](#technical-reference)
-  - [Cameras](#cameras)
-  - [Lenses](#lenses)
-  - [Film Stocks](#film-stocks)
-  - [Lighting](#lighting)
-  - [Camera Movement](#camera-movement)
-  - [Shot Sizes & Composition](#shot-sizes--composition)
 - [Architecture](#architecture)
-- [Completed Maintenance Notes](#completed-maintenance-notes)
-- [Development](#development)
-- [License](#license)
+- [Documentation](#documentation)
+- [Changelog](#changelog)
+- [Security & Deployment](#security--deployment)
 
----
+## Why Director's Console
 
-## Key Features
+- **Cinematic defaults** — Start from grounded camera, lens, lighting, movement, and style choices.
+- **Image-aware enhancement** — Start from text, an attached image, or both; use a vision-capable LLM when images are attached.
+- **Workflow-based generation** — Use ComfyUI workflows for generation, editing, upscaling, and video.
+- **Per-shot control** — Keep panel-specific parameters, versions, notes, and history together.
+- **Parallel rendering** — Select multiple ComfyUI nodes and follow progress for each job.
+- **Project media organization** — Browse, rate, tag, rename, compare, trash, and hand off project files.
 
-- **Cinematographic Accuracy** — Every configuration is validated against real-world constraints. You cannot pair a Panavision lens with a non-Panavision camera. You cannot use LED lighting in a 1960s film. You cannot handheld an IMAX camera. The rules engine enforces what is physically possible.
+## Cinema Prompt Engineering
 
-- **67 Live-Action Film Presets** — From *Metropolis* (1927) to *Parasite* (2019), each preset loads the actual camera, lens, film stock, lighting, and aspect ratio used in that production.
+CPE is the text and configuration side of the application. Select Live-Action Cinema or Animation, use a preset or configure fields directly, and choose a target prompt profile. The **+** picker, drag-and-drop composer, and image previews support text-only, image-only, or text-plus-image enhancement.
 
-- **43 Animation Presets** — Studio Ghibli, Akira, Spider-Verse, Pixar, Arcane, and more. Each with accurate style domain, rendering pipeline, motion characteristics, and visual grammar.
+**Generate** creates rule-based text from the current configuration. **Enhance with AI** sends the selected LLM the attached pixels when applicable, plus the full current configuration and selected preset/style context; choose **Describe image**, **Use as reference**, or **Use as starting image**, with model-specific variants where supported. CPE does not render.
 
-- **Storyboard Canvas** — Free-floating infinite canvas with draggable, resizable panels. Per-panel workflows, image history with navigation, star ratings, markdown notes, and multi-select alignment tools.
+![CPE film preset browser](Images/CPE%20Movies%20Presets.png)
 
-- **Gallery Tab** — Full-featured media browser for all project files. Folder tree navigation, grid/masonry/list/timeline views, batch rename with regex and templates, drag-and-drop file moves, trash with restore, ratings, color tags, PNG metadata search, duplicate detection, and direct integration with Storyboard (send reference images, restore workflow parameters from metadata).
+*Film preset browser beside the configuration experience: camera, lens, lighting, and preset choices guide the brief. See the [Cinema guide](docs/cinema.md) for current controls and boundaries.*
 
-- **Recent Projects** — Quick access to your last 10 projects from the main menu. Hover to see project path and last-opened time. Individual entries can be removed.
+**Guides:** [Cinema Prompt Engineering](docs/cinema.md) · [Cinema presets](docs/cinema-presets.md) · [Cinematography reference](docs/cinematography-reference.md) · [Enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md)
 
-- **Video Generation Support** — Full pipeline support for AI video workflows (Wan 2.2, CogVideoX, HunyuanVideo, etc.). Videos are detected from ComfyUI outputs (`images`, `gifs`, `videos` keys), saved with correct extensions, displayed inline with `<video>` playback, and persisted across project save/reload.
+## Storyboard
 
-- **Multi-Node ComfyUI Rendering** — Connect multiple ComfyUI backends and render in parallel. Real-time progress via WebSocket with per-node stage tracking. Node metrics, health monitoring, and one-click restart.
+Storyboard is the execution workspace. Import or select a ComfyUI workflow, expose its supported controls, assign per-shot parameters, add image/video inputs where the workflow allows them, and send the workflow directly to one or parallel ComfyUI render nodes.
 
-- **Generation Progress Sidebar** — Dedicated sidebar panel showing detailed progress for all active generations. Per-node workflow stage display (e.g., "Loading Checkpoint", "KSampler", "VAE Decode"), multi-phase progress for multi-KSampler workflows, and step counters. Replaces intrusive panel overlays with a minimal bottom bar indicator.
+Actual image/reference generation, editing, upscaling, and video generation depend on the selected workflow, installed weights, and custom nodes. The frontend uses ComfyUI REST and WebSocket APIs for execution; **Storyboard Enhance** remains metadata-only for workflow media and does not render or send media pixels to an LLM.
 
-- **AI-Enhanced Prompts** — Refine text or attached images with a configured LLM for a separate image/video target. The prompt composer supports a + picker, drag-and-drop, previews, and image-use controls; every enhancement includes the full active configuration and selected preset/style.
-
-- **Model-Specific Output** — Prompts are formatted for the selected target generator; image and video targets use different guides, tasks, and dialects.
-
-- **Print Storyboards** — Export your storyboard to print with configurable layouts (1–4 panels per row), page sizes, orientation, and optional panel notes.
-
----
-
-## Screenshots
-
-### Storyboard Canvas — First Launch
-![Storyboard Canvas First Load](Images/Storyboard%20Canvas%20View%20First%20Load.png)
-
-### Storyboard Canvas — Active Project
-![Storyboard Canvas with Project](Images/Storyboard%20Canvas%20View%20with%20project%20open.png)
-
-### Project Settings
-![Project Settings](Images/Storyboard%20Project%20Settings.png)
-
-### Panel Ratings, Notes & Node Selection
-![Panel Ratings and Notes](Images/Storyboard%20Panel%20Ratings-Notes-Node%20Selection.png)
-
-### Image Viewer
-![Image Viewer](Images/Storyboard%20Image%20Viewer.png)
-
-### Image Compare
-![Image Compare](Images/Storyboard%20Image%20Compare.png)
-
-### Node Manager
-![Node Manager](Images/Storyboard%20Node%20Manager.png)
-
-### Node Metrics & Selection
-![Node Metrics](Images/Storyboard%20Node%20Metrics%20and%20Selection.png)
-
-### Load Project View
-![Load Project](Images/Storyboard%20Load%20Project%20view.png)
-
-### CPE — Live-Action Film Presets
-![CPE Movie Presets](Images/CPE%20Movies%20Presets.png)
-
-### CPE — Film Information & Technical Details
-![CPE Movie Information](Images/CPE%20Movies%20Information.png)
-
-### CPE — Animation Presets
-![CPE Animation Presets](Images/CPE%20Animation%20Presets.png)
-
-### CPE — LLM Provider Configuration
-![CPE LLM Providers](Images/CPE%20LLM%20Providers.png)
-![CPE LLM Providers Detail](Images/CPE%20LLM%20Providers%202.png)
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Python 3.11+** (with `pip` or `uv`)
-- **Node.js 22.13+ or 24+** (with `npm`) — Node 22.13 is the supported floor
-- **ComfyUI** — At least one running instance for image generation
-- **Git** (for cloning)
-
-### Contributor setup
-
-```bash
-# Clone the repository
-git clone https://github.com/NickPittas/DirectorsConsole.git
-cd DirectorsConsole
-
-python -m venv .venv
-# macOS/Linux
-source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -r requirements-dev.txt
-
-cd CinemaPromptEngineering/frontend
-npm ci
-cd ../..
-```
-
-The frontend uses the maintained Vite 7 / ESLint 10 toolchain documented in
-[docs/tooling-upgrade-plan.md](docs/tooling-upgrade-plan.md). After the security
-refresh, both full and production-only `npm audit --json` checks report zero
-findings; use `npm ci` so the checked-in lockfile is honored.
-
-`requirements-dev.txt` installs the complete Python runtime plus test tools. The
-single documented offline check is `python scripts/check.py`; see
-[docs/contributing.md](docs/contributing.md) for the commands and current
-validation status.
-
-For a clean workstation, `python start.py --setup` remains available to create
-the launcher's per-service environments. The primary runtime launcher is:
-
-```bash
-python start.py
-```
-
-### Legacy per-service setup
-
-**CPE Backend:**
-```bash
-cd CinemaPromptEngineering
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-**Frontend:**
-```bash
-cd CinemaPromptEngineering/frontend
-npm ci
-```
-
-**Orchestrator:**
-```bash
-cd Orchestrator
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
----
-
-## Quick Start
-
-```bash
-# Start all services (backend, frontend, orchestrator)
-python start.py
-```
-
-This launches:
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| CPE Backend | `http://localhost:9800` | Cinema Prompt Engineering API |
-| Storyboard Frontend | `http://localhost:5173` | React UI (opens in browser) |
-| Orchestrator | `http://localhost:9820` | Render farm manager |
-
-The launcher checks the configured service ports before startup and safely cleans up stale listeners when possible, including on Linux.
-
-### Optional Flags
-
-```bash
-python start.py --no-orchestrator   # Skip Orchestrator
-python start.py --no-frontend       # Skip Frontend (API only)
-python start.py --no-browser        # Don't auto-open browser
-python start.py --setup             # Verify environment only
-```
-
----
-
-## Security & Deployment
-
-> **Deployment boundary:** Director's Console is not formally security-audited. It is intended for trusted, access-controlled networks, not as a hardened public service.
-
-- There is no application-wide authentication or authorization. Reachable peers can invoke exposed functions and submit malicious input.
-- Do not expose the CPE, Orchestrator, frontend, or ComfyUI endpoints to public or untrusted networks. Host and network security—including access controls, firewalls, VPNs, and segmentation—is the responsibility of the host/network administrator.
-- Network isolation reduces exposure but does not guarantee protection against malicious files, malicious workflows, or other vulnerabilities. Treat project files, workflows, and connected nodes accordingly.
-- Provider credentials are not guaranteed to exist only in encrypted backend storage: browser provider configuration may be cached in the browser profile/local data. Protect that local data as well as the backend credential store.
-- OAuth app configuration is external: set both `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET` before a new Antigravity login or token refresh. Re-login alone will not fix missing app configuration; an administrator must supply the appropriately authorized OAuth client configuration first.
-
-This project is intended for private, access-controlled networks and is not a formally audited or hardened public service. This documentation update makes no network policy change.
-
----
-
-## Storyboard Canvas
-
-### Canvas Overview
-
-The Storyboard Canvas is a free-floating infinite workspace for planning and executing AI-generated visual productions. Panels can be freely positioned, resized, and organized on the canvas with zoom and pan controls.
-
-![Storyboard Canvas](Images/Storyboard%20Canvas%20View%20with%20project%20open.png)
-
-**Canvas Controls:**
-- **Zoom**: Mouse wheel (zooms from pointer position)
-- **Pan**: Click and drag on empty canvas area
-- **Multi-Select**: Ctrl+Click individual panels, or marquee-select by dragging
-- **Alignment**: Snap guides appear when holding Shift; alignment toolbar for selected panels
-- **Keyboard Shortcuts**: Ctrl+P (Print), Ctrl+S (Save), and more
-
-### Panels
-
-Each panel is an independent production unit with its own:
-
-- **Workflow** — Select any imported ComfyUI workflow per panel
-- **Parameters** — Each panel stores its own parameter values (prompt, steps, CFG, sampler, etc.)
-- **Image & Video History** — Navigate through all generated images and videos with forward/back arrows. Videos play inline with native `<video>` controls inside a bounded, aspect-preserving viewport; letterboxing is used instead of cropping.
-- **Storyboard AI Enhance** — Use the gear button beside a prompt's Enhance with AI button to choose the target model, video dialect/task, and confirmed reference mapping before enhancing.
-- **Star Rating** — Rate images 1–5 stars for quick review
-- **Markdown Notes** — Attach production notes with edit/view toggle
-- **Panel Name** — Custom names that map to folder structure (e.g., "Hero_Shot" creates `{project}/Hero_Shot/`)
-- **Node Selection** — Choose which ComfyUI backend renders this panel
-
-![Panel Features](Images/Storyboard%20Panel%20Ratings-Notes-Node%20Selection.png)
-
-### Storyboard AI Enhance
-
-Prompt enhancement is available from each positive prompt field. Select a panel and workflow, then click the **gear** immediately beside **Enhance with AI** to open the styled settings popup; settings are not inserted as a bulk inline parameter panel. Choose:
-
-- **Target** — the canonical image or video generator being prompted. This is separate from the LLM provider/model used to enhance the text. A known catalog image target may explicitly override a video workflow's default classification; unknown targets are blocked rather than guessed.
-- **Dialect** — shown for registered video profiles, such as local MiniMax H3 versus the hosted MiniMax API dialect.
-- **Task** — `T2V`, `I2V`, or `ref2v` (`R2V`) only when the selected profile supports it. Auto chooses from the confirmed media mapping.
-- **Media mapping** — include detected reachable workflow media, assign first/last-frame or reference roles, preserve per-kind ordinals, add optional descriptions, and confirm the mapping. Kling named-reference fields appear only for the applicable Kling target.
-- **Duration** — shown when the selected task/dialect needs the workflow's effective duration, including local H3 last-frame alignment.
-
-Click **Done** or press **Escape**, then click **Enhance with AI** on the prompt. Preferences persist with the panel/project draft. Media values stay local: only caller-confirmed metadata such as kind, role, ordinal, label, and description is sent to the enhancer; it does not perform vision inspection or upload media. If a target catalog/profile is unavailable, the UI blocks enhancement with an actionable retry message. A response is discarded when the prompt, panel, workflow, target, or mapping changed while it was running, while the existing guarded OAuth-token retention remains independent of stale content. Paid requests are not automatically retried.
-
-For the full task matrix, exact local-H3 sections, version caveats, and source links, see [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md).
-
-### Image Viewer & Compare
-
-**Image Viewer** — Full-resolution image viewing with zoom and metadata display.
-
-![Image Viewer](Images/Storyboard%20Image%20Viewer.png)
-
-**Image Compare** — Side-by-side comparison of generated images to evaluate iterations.
-
-![Image Compare](Images/Storyboard%20Image%20Compare.png)
-
-### Project Management
-
-Projects are saved with all panel positions, parameters, workflow assignments, ratings, notes, and image references. All generated images are organized in per-panel folders within your project directory. Persistent session drafts also recover current Cinema/Storyboard work after interruption; this is best-effort draft recovery, not a guarantee of the final keystroke, and interrupted generations are not automatically resubmitted.
-
-![Load Project](Images/Storyboard%20Load%20Project%20view.png)
-
-**Project Settings** let you configure:
-- Project storage path (local or network/NAS)
-- Filename templates with tokens: `{panel}`, `{workflow}`, `{seed}`, `{date}`, etc.
-- ComfyUI node addresses
-- Auto-save preferences
-
-![Project Settings](Images/Storyboard%20Project%20Settings.png)
-
-### Printing
-
-Print your storyboard with fully configurable layouts:
-- **Grid columns**: 1, 2, 3, or 4 panels per row
-- **Page size**: A4 or Letter
-- **Orientation**: Portrait or Landscape
-- **Panel selection**: All panels or only selected
-- **Notes**: Optional panel notes display
-- Live PDF preview before printing
-
----
+**Guide:** [Storyboard](docs/storyboard.md) · [Multi-node generation](docs/MULTI_NODE_GENERATION.md)
 
 ## Gallery
 
-The Gallery is a top-level tab alongside Cinema and Storyboard, providing a full file browser and media management interface for your project's generated images and videos.
+Gallery is the project media tab beside Cinema and Storyboard. Use grid, list, or borderless masonry views, with timeline grouping for chronological browsing. Filter, compare, rename, rate, tag, search metadata, move files, and use trash/restore without leaving the project.
 
-### File Browser & Media Viewer
+Gallery can send a reference to an exposed Storyboard input or restore compatible workflow metadata from a PNG. That handoff prepares a workflow input; the selected workflow still determines what can be submitted.
 
-- **Folder Tree** — Hierarchical tree view of your project directory with expand/collapse, file counts, and drag-drop support
-- **Multiple View Modes** — Grid (virtualized, bounded thumbnails), Masonry (Pinterest-style borderless layout with natural aspect ratios), List (detailed table with metadata columns), and Timeline (chronological grouped by date)
-- **Responsive Grid** — The grid observes available width and measures actual row heights, so an empty-to-loaded refresh or thumbnail-size resize does not crop or misplace rows.
-- **Lightbox** — Full-resolution image/video viewer with keyboard navigation, zoom, and metadata overlay
-- **Compare View** — Side-by-side comparison of selected images
-- **Hover Preview** — Large preview tooltip on thumbnail hover
-- **Video Poster & Hover Scrub** — Video thumbnails show a captured poster first, then scrub inside a bounded `contain` viewport on hover; existing media does not need regeneration or prebuilt thumbnails.
-- **Video Aspect Handling** — Gallery and Storyboard preserve the source aspect ratio and letterbox inside the available viewport. Grid cells remain bounded rather than resizing every container to natural video dimensions.
-- **Breadcrumb Navigation** — Click-through path breadcrumbs for quick folder traversal
-- **Thumbnail Sizes** — Adjustable thumbnail size slider in the toolbar
+**Guide:** [Gallery](docs/gallery.md)
 
-### Batch Operations
+## A typical shot
 
-- **Batch Rename** — Rename multiple files with templates (`{name}`, `{counter}`, `{date}`, `{parent}`) and optional regex find/replace. Live preview before applying.
-- **Auto-Rename** — One-click sequential renaming within a folder (e.g., `Shot_001.png`, `Shot_002.png`, ...)
-- **Drag-and-Drop Move** — Drag files between folders in the tree view, with move confirmation dialog
-- **Move to New Folder** — Create a new folder and move selected files in one step
-- **Trash System** — Soft-delete files to a `.gallery/.trash/` folder with full restore capability. Empty trash permanently deletes.
+1. Open **Cinema Prompt Engineering**, choose a discipline and preset, then tune the brief.
+2. Use **Generate** for deterministic rule-based text, or attach an image and choose **Enhance with AI** when a configured vision-capable LLM is available.
+3. Send the chosen prompt to **Storyboard**, select a workflow, and confirm the panel's exposed parameters and image inputs.
+4. Choose one or more render nodes and generate. Outputs remain in the panel history and can be reviewed or organized in **Gallery**.
 
-### Ratings, Tags & Search
+## Installation and Quick Start
 
-- **Star Ratings** — 1-5 star ratings per file, filterable from the filter bar
-- **Color Tags** — Create custom named tags with colors, assign to files, filter by tag
-- **PNG Metadata Search** — Full-text search across ComfyUI PNG metadata (prompts, models, samplers, seeds, etc.)
-- **Duplicate Detection** — Find visually duplicate files by content hash across the project
-- **Folder Statistics** — View file counts, total size, media type breakdown per folder
-- **Filter Bar** — Filter by rating, tags, file type (image/video), and date range
-- **Saved Views** — Save and restore view configurations (sort, filters, layout, folder state)
+### Requirements
 
-### Gallery Layout and Refresh
+- Python 3.11+
+- Node.js 22.13+ (22.x) or 24+, with npm
+- Git
+- Windows, macOS, or Linux
+- For rendering: a running ComfyUI node with the selected workflow's models and custom nodes. Prompt authoring does not require a render node.
 
-The Gallery uses the full page width: folder tree, main content, and the optional detail panel share one layout. Selection actions appear in a normal footer below all panes, not as a floating or overlay bar. Use the toolbar or folder-tree refresh button to rescan the tree and current folder without leaving the Gallery.
+### Launch
 
-### Storyboard Integration
+```bash
+git clone https://github.com/NickPittas/DirectorsConsole.git
+cd DirectorsConsole
+python start.py --setup
+python start.py
+```
 
-The Gallery and Storyboard tabs communicate via cross-tab events:
+`--setup` provisions the launcher's per-service environments and exits; it does not boot all services. The launcher then provides:
 
-- **Send as Reference Image** — Right-click any gallery image to send it to the currently selected Storyboard panel as a reference image input
-- **Restore Workflow & Parameters** — Right-click an image to extract its ComfyUI generation metadata and restore the workflow, prompt, and all parameters back to the Storyboard
-- **Batch Rename Sync** — When files are renamed in the Gallery, the Storyboard automatically updates any panel image references that point to the renamed files
-- **Shared Project Context** — Both tabs operate on the same project path, so changes in one are immediately visible in the other
+| Service | Address | Role |
+| --- | --- | --- |
+| Frontend | http://localhost:5173 | Director's Console UI |
+| CPE backend | http://localhost:9800 | Rules and prompt API |
+| Orchestrator | http://localhost:9820 | Project, file, Gallery, and job-group operations |
 
-### Storage Architecture
+Optional flags: `python start.py --no-browser`, `python start.py --no-orchestrator`, and `python start.py --no-frontend`.
 
-Gallery metadata (ratings, tags, view states) is stored in a JSON flat-file at `{projectPath}/.gallery/gallery.json`. This design was chosen because projects live on NAS storage (CIFS/SMB mounts) where SQLite's file locking is incompatible. The JSON store uses atomic writes (write-to-temp + rename) and thread-safe locking.
-
----
-
-## ComfyUI Integration
-
-Director's Console communicates **directly** with ComfyUI nodes for image and video generation. The frontend builds workflow JSON and sends it to ComfyUI's REST API, with real-time progress updates via WebSocket. Video outputs are automatically detected from ComfyUI's `images`, `gifs`, and `videos` output keys and saved with the correct file extension.
-
-### Node Manager
-
-Manage your ComfyUI render backends from the Node Manager:
-
-- View node status (online/busy/offline)
-- System metrics (VRAM, RAM, queue depth)
-- One-click restart (interrupt + free memory)
-- Add/remove nodes
-- Checkbox selection for multi-node rendering
-
-![Node Manager](Images/Storyboard%20Node%20Manager.png)
-
-### Node Metrics
-
-![Node Metrics](Images/Storyboard%20Node%20Metrics%20and%20Selection.png)
-
-### Workflows
-
-- **Import** any ComfyUI workflow JSON
-- **Workflow Parser** automatically extracts editable parameters (prompts, dimensions, steps, CFG, samplers, models, etc.)
-- **Per-panel assignment** — each panel can use a different workflow
-- **Parameter isolation** — switching workflows resets technical parameters to defaults while preserving prompts and image inputs
-- **Categorization** — organize workflows into custom categories
-- **Schema-aware controls** — parameter widgets and managed-node choices are derived from the imported workflow schema rather than guessed from arbitrary inputs.
-
-#### Video workflow categories
-
-Use the tags icon in the workflow toolbar to open **Manage Workflow Categories**. Select a workflow, choose **Video Generation**, then choose and save the actual child route: **Text to Video**, **Image to Video**, or **First/Last Frame to Video**. Saving updates the Storyboard tab/subcategory routing and persists the workflow's categories. Existing custom, legacy, and intentional multi-category tags are preserved. An incorrectly imported video workflow is not mass-reclassified automatically; assign the correct child route and save it manually.
-
-### Model & LoRA Dropdowns
-
-Model and LoRA parameters now feature enhanced dropdown selection:
-
-- **Folder Structure** — Models and LoRAs are organized by their folder hierarchy using `<optgroup>` elements, making it easy to navigate large model libraries (e.g., `Flux/Flux 2/Klein/flux-2-klein-base-9b-fp8.safetensors`)
-- **Auto-Selection** — When a workflow is loaded, the dropdown automatically pre-selects the model or LoRA that's currently configured in the workflow
-- **Cross-Platform Path Compatibility** — Path separators are automatically normalized, ensuring workflows created on Windows work correctly when submitted to Linux or macOS ComfyUI nodes, and vice versa
-
-**Supported file types for folder grouping:**
-- Models: `.safetensors`, `.pt`, `.pth`, `.bin`, `.ckpt`, `.gguf`
-- LoRAs: `.safetensors`, `.pt`, `.pth`, `.bin`
-
-### Multi-Node Rendering
-
-When multiple ComfyUI backends are connected:
-- Assign specific nodes to specific panels
-- Queue jobs across multiple backends in parallel
-- Real-time progress sidebar with per-node stage tracking (shows current workflow node: "CheckpointLoaderSimple", "KSampler", "VAEDecode", etc.)
-- Multi-phase progress for video workflows with multiple KSamplers (e.g., "Phase 1/2")
-- Step counters showing workflow execution progress (e.g., "Step 5/14")
-- Global cancel button to interrupt all busy nodes
-- Job groups for coordinated parallel execution
-- Minimal non-intrusive panel indicator (3px bottom bar + percentage badge)
-
----
-
-## Cinema Prompt Engineering (CPE)
-
-### How It Works
-
-CPE transforms structured cinematography configurations into optimized AI prompts. Instead of writing free-text prompts, you select from validated menus of real cameras, lenses, lighting setups, and film styles. The system then:
-
-1. **Validates** your configuration against 56+ rules (34 live-action, 22 animation)
-2. **Generates** a technically accurate prompt with all selected parameters
-3. **Formats** the prompt for your specific target AI model
-4. **Optionally enhances** the prompt using an LLM provider for richer description
-
-### The Rules Engine
-
-The rules engine is the core of CPE. It enforces that **only what is physically and historically possible** can be configured. This is not a suggestion system — it is a hard constraint engine.
-
-#### Rule Severity Levels
-
-| Level | Effect | Example |
-|-------|--------|---------|
-| **HARD** | Blocks the configuration | "Film stock cannot be selected with digital cameras" |
-| **WARNING** | Allows but flags as atypical | "Cheerful mood + low-key lighting is unusual" |
-| **INFO** | Informational note | "Remember to set 2x de-squeeze in post for anamorphic" |
-
-#### What the Rules Enforce
-
-**Camera & Film Stock Compatibility:**
-- Film cameras require a film stock selection; digital cameras cannot have one
-- 65mm/70mm film stocks require large format cameras
-- IMAX film stocks require IMAX cameras
-- Ultra Panavision 70 requires 2.76:1 aspect ratio (and vice versa)
-
-**Lens & Camera Ecosystem:**
-- Panavision cameras only accept Panavision lenses (closed ecosystem)
-- Panavision lenses require Panavision cameras (Alexa 65 exempt for Primo 70)
-- Alexa 65 only accepts 65mm-format lenses (ARRI Prime 65, DNA, Primo 70, Hasselblad V, Vintage Spherical)
-- Large Format cameras (Alexa LF/Mini LF) cannot use S35-only lenses (vignetting)
-
-**Physical Movement Constraints:**
-- Heavy cameras (>4kg) cannot be handheld, mounted on gimbals, or flown on drones
-- Medium cameras cause operator fatigue warnings for handheld
-- Jib cranes only allow Crane Up/Down, Arc, and Static movements
-- Drones are limited to Track In/Out, Crane Up/Down, Arc, and Static
-- Dolly zoom requires dolly or slider equipment
-
-**Era-Appropriate Technology:**
-- HMI lighting not available before 1972
-- Kino Flo not available before 1987
-- LED film lighting not available before 2002
-- Film presets automatically disallow anachronistic light sources
-
-**Natural Light Physics:**
-- Sunlight not available at night
-- Moonlight impossible at midday
-- Direct sunlight not available during blue hour
-- Low-key lighting impossible at midday outdoors
-
-**Composition & Optics:**
-- Wide lenses (<35mm) on close-ups cause facial distortion (warning)
-- Long lenses (>85mm) on wide shots create heavy compression (warning)
-- Vintage lenses may not resolve well on 8K+ sensors (warning)
-- Certain compositions conflict with specific shot sizes (e.g., negative space in ECU)
-
-**Animation-Specific Rules:**
-- Manga must use monochrome/ink color, locked camera, graphic lighting, no motion, and 2D medium
-- Illustration must be static with locked camera
-- 2D animation cannot use Free 3D camera
-- 3D animation requires volumetric lighting (not flat/minimal)
-- Anime cannot use photoreal + naturalistic simulated combo
-
-#### Dynamic Option Filtering
-
-The UI doesn't just validate after the fact — it **proactively disables invalid options** in real-time. When you select a Panavision camera, only Panavision lenses are selectable. When you choose night time, the sun is greyed out. The `get_available_options()` endpoint tests every possible option against your current configuration and returns which ones would cause violations.
-
----
-
-### Live-Action Film Presets
-
-67 meticulously researched film presets spanning nearly a century of cinema. Each preset encodes the **actual production equipment** used on that film: camera body, film stock, lenses, focal lengths, aspect ratio, lighting style, color tone, mood, compositions, shot sizes, and movement.
-
-![Film Presets](Images/CPE%20Movies%20Presets.png)
-
-![Film Information](Images/CPE%20Movies%20Information.png)
-
-#### Silent Era (1920s)
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| Metropolis | 1927 | UFA Custom | Eastman Double-X |
-| Un Chien Andalou | 1929 | Pathe Studio | Eastman Plus-X |
-
-#### Classic Hollywood & Film Noir (1940s)
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| The Maltese Falcon | 1941 | Mitchell BNC | Eastman Plus-X |
-| Citizen Kane | 1941 | Mitchell BNC | Eastman Plus-X |
-| Casablanca | 1942 | Mitchell BNC | Eastman Plus-X |
-| Double Indemnity | 1944 | Mitchell BNC | Eastman Plus-X |
-| Bicycle Thieves | 1948 | Arriflex 35 | Eastman Plus-X |
-| Sunset Boulevard | 1950 | Mitchell BNC | Eastman Plus-X |
-
-#### Japanese & European Cinema (1950s)
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| Rashomon | 1950 | Mitchell BNC | Eastman Plus-X |
-| Tokyo Story | 1953 | Mitchell BNC | Eastman Plus-X |
-| Seven Samurai | 1954 | Mitchell BNC | Eastman Plus-X |
-| The Seventh Seal | 1957 | Arriflex 35 | Eastman Plus-X |
-| Vertigo | 1958 | Mitchell BNC | Eastman 5247 |
-
-#### New Wave & 1960s Cinema
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| Breathless | 1960 | Eclair NPR | Eastman Plus-X |
-| La Dolce Vita | 1960 | Arriflex 35 | Eastman 5247 |
-| Lawrence of Arabia | 1962 | Super Panavision 70 | Kodak 65mm 250D |
-| Jules et Jim | 1962 | Eclair NPR | Eastman Plus-X |
-| Harakiri | 1962 | Mitchell BNC | Eastman Plus-X |
-| Persona | 1966 | Arriflex 35BL | Eastman 5254 |
-| The Battle of Algiers | 1966 | Arriflex 35 | Eastman Plus-X |
-| 2001: A Space Odyssey | 1968 | Super Panavision 70 | Kodak 65mm 200T |
-
-#### New Hollywood & 1970s
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| A Clockwork Orange | 1971 | Arricam ST | Eastman 5254 |
-| The French Connection | 1971 | Arriflex 35BL | Eastman 5254 |
-| The Godfather | 1972 | Arriflex 35BL | Eastman 5254 |
-| Solaris | 1972 | Arriflex 35 | Eastman 5250 |
-| Chinatown | 1974 | Panavision Panaflex | Eastman 5247 |
-| Barry Lyndon | 1975 | Arricam ST | Eastman 5247 |
-| One Flew Over the Cuckoo's Nest | 1975 | Arriflex 35BL | Eastman 5247 |
-| The Mirror | 1975 | Arriflex 35 | Eastman 5250 |
-| Taxi Driver | 1976 | Arriflex 35BL | Eastman 5247 |
-| Star Wars | 1977 | Panavision Panaflex | Eastman 5247 |
-| Alien | 1979 | Panavision Panaflex | Eastman 5247 |
-| Apocalypse Now | 1979 | Arriflex 35BL | Eastman 5247 |
-| Stalker | 1979 | Arriflex 35 | Eastman 5250 |
-
-#### 1980s
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| Blade Runner | 1982 | Panavision Panaflex | Eastman 5293 |
-| Brazil | 1985 | Arriflex 35BL | Eastman 5293 |
-| Come and See | 1985 | Arriflex 35 | Eastman 5250 |
-| Blue Velvet | 1986 | Arriflex 35BL | Eastman 5293 |
-
-#### 1990s
-| Preset | Year | Camera | Film Stock |
-|--------|------|--------|------------|
-| Schindler's List | 1993 | Arricam ST | Kodak Double-X 5222 |
-| Pulp Fiction | 1994 | Panavision Platinum | Kodak Vision 500T 5279 |
-| The Shawshank Redemption | 1994 | Arricam ST | Kodak Vision 500T 5279 |
-| La Haine | 1995 | Arriflex 35BL | Kodak Double-X 5222 |
-| Heat | 1995 | Panavision Platinum | Kodak Vision 500T 5279 |
-| The Thin Red Line | 1998 | Arricam ST | Kodak Vision 500T 5279 |
-| The Matrix | 1999 | Panavision Millennium | Kodak Vision 500T 5279 |
-| Eyes Wide Shut | 1999 | Arricam ST | Kodak Vision 500T 5279 |
-
-#### 2000s
-| Preset | Year | Camera | Film Stock / Format |
-|--------|------|--------|---------------------|
-| In the Mood for Love | 2000 | Arricam ST | Fuji Eterna 500T |
-| Requiem for a Dream | 2000 | Arriflex 435 | Kodak Vision 500T 5279 |
-| Mulholland Drive | 2001 | Panavision Millennium | Kodak Vision 500T 5279 |
-| Amélie | 2001 | Arricam ST | Fuji Eterna 500T |
-| Oldboy | 2003 | Arricam ST | Kodak Vision2 500T 5218 |
-| Memories of Murder | 2003 | Arricam ST | Kodak Vision2 500T 5218 |
-| Children of Men | 2006 | Arricam ST | Kodak Vision3 500T 5219 |
-| No Country for Old Men | 2007 | Arricam ST | Kodak Vision3 500T 5219 |
-| There Will Be Blood | 2007 | Panavision Millennium XL2 | Kodak Vision3 500T 5219 |
-| The Dark Knight | 2008 | IMAX MSM 9802 / Panavision | IMAX 500T / Kodak Vision3 |
-| Enter the Void | 2009 | Arriflex 435 | Kodak Vision3 500T 5219 |
-
-#### 2010s
-| Preset | Year | Camera | Format |
-|--------|------|--------|--------|
-| The Tree of Life | 2011 | Arricam ST | Kodak Vision3 500T 5219 |
-| Drive | 2011 | Alexa | Digital |
-| Her | 2013 | Alexa XT | Digital |
-| Under the Skin | 2013 | Alexa | Digital |
-| The Grand Budapest Hotel | 2014 | Arricam ST | Kodak Vision3 500T 5219 |
-| Mad Max: Fury Road | 2015 | Alexa XT | Digital |
-| Moonlight | 2016 | Alexa Mini | Digital |
-| Roma | 2018 | Alexa 65 | Digital |
-| The Lighthouse | 2019 | Arricam ST | Kodak Double-X 5222 |
-| Parasite | 2019 | Alexa 65 | Digital |
-
----
-
-### Animation Presets
-
-43 animation presets across four style domains, each with curated rendering pipelines, motion characteristics, and visual grammars.
-
-![Animation Presets](Images/CPE%20Animation%20Presets.png)
-
-#### Anime (22 presets)
-Studio Ghibli, Akira, Ghost in the Shell, Evangelion, Makoto Shinkai, Kyoto Animation, MAPPA, Wit Studio, Ufotable, Studio Trigger, Gainax, Satoshi Kon, Cowboy Bebop, Samurai Champloo, Mob Psycho 100, One Punch Man, Cyberpunk Edgerunners, Violet Evergarden, Attack on Titan, Death Note, Fullmetal Alchemist Brotherhood, Steins;Gate
-
-#### Manga (6 presets)
-Shonen, Dark Seinen, Shojo, Josei, Horror Manga, Slice of Life Manga
-
-#### 3D Animation (8 presets)
-Pixar, DreamWorks, Disney 3D, Arcane, Spider-Verse, Unreal Cinematic, Blender Stylized, Stop Motion
-
-#### Illustration (7 presets)
-Concept Art, Editorial Illustration, Book Illustration, Western Comics, Graphic Novel, Watercolor, Digital Painting
-
-Each preset configures: **medium** (2D / 3D / Hybrid / Stop Motion), **style domain**, **line treatment** (clean / variable / inked / sketchy), **color application** (flat / cel / soft / painterly), **lighting model** (symbolic / graphic / naturalistic), **surface detail**, **motion style** (limited / full / exaggerated / fluid), and **virtual camera** behavior.
-
----
-
-### AI-Enhanced Prompts
-
-CPE uses a chat-style prompt composer. **Enhance with AI** sends the active prompt, full active configuration JSON, full selected official preset/style, and any attached images to the configured enhancing LLM. Attachments require that LLM to support image input; text-only enhancement does not. It does not execute or upload to the selected generator. Current selections override preset defaults, explicit edits override photographed pose, and image text is untrusted input.
-
-#### Cinema Prompt Engineering page
-
-- Click **+** to choose PNG, JPEG, or WebP files. Drop file-manager images anywhere on the composer. Previews use stable aliases (`@img1`, `@img2`, …); removing one does not renumber the others.
-- Enhance with optional text, or images only. **Image use** choices: **Describe image** (one image, standalone text, default), **Use as reference** (supported variants/workflows and native markers), or **Use as starting image** (one image; video start-frame or still-image edit/init semantics).
-- The existing toolbar has one target selector and, only when multiple choices exist, a contextual variant selector. There is no second selector below the prompt. Settings provider/model is distinct from the generator target.
-- Enhance sends every active config field, including motion and future/null/array fields, plus the full selected official preset/style. Images go only to the chosen LLM when Enhance is clicked; no generator execution or upload is implied.
-
-#### Storyboard
-
-Storyboard remains metadata-only and adds no image uploader. It forwards the active configuration and selected preset/style, preserving confirmed ordinals and mapping for workflow media. Its video/audio metadata path is distinct from CPE attached image pixels.
-
-See [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) for target modes, aliases, limits, and confirmed video conventions.
-
-### Image target guide families
-
-The canonical image catalog preserves all older targets and adds these 14 prompt-guide targets:
-
-| Family | Canonical targets | Prompt distinction |
-|---|---|---|
-| Krea 2 | `krea_2_large`, `krea_2_turbo` | Large supports richer supplied detail; Turbo stays concise for iteration. Vague ideas remain exploratory rather than acquiring invented props or camera specs. |
-| FLUX.2 | `flux_2_max`, `flux_2_pro`, `flux_2_flex`, `flux_2_klein`, `flux_2_dev` | Natural subject/action/style/context prose; no SD-style weighting or negative block. Klein gets a separate rich-narrative guide because it does not upsample prompts. |
-| GPT Image 2.5 | `gpt_image_2.5_sunburst`, `gpt_image_2.5_flare` | Sunburst prioritizes precise composition and editing constraints; Flare favors direct, efficient iteration. |
-| Nano Banana | `nano_banana_2`, `nano_banana_pro`, `nano_banana_2_lite` | Nano Banana 2 and Pro use complete scene/edit instructions; Lite is not optimized for multiple references or multi-turn sequential editing. |
-| Seedream 5.0 | `seedream_5.0_pro`, `seedream_5.0_lite` | Pro can express supplied layouts, typography, and spatial edits; Lite remains a focused natural-language task guide without assumed Pro controls. |
-
-These are prompt-text guides, not image-generation integrations. Hosted/API model pages, open-weight releases, local checkpoints, and ComfyUI nodes are separate availability questions: Krea 2 includes open-weight releases, but that does not make every Krea service or feature local; likewise, a catalog target never promises local weights, a hosted endpoint, credentials, account/region access, or a ComfyUI workflow. FLUX 3 Image is intentionally excluded pending verified API/prompt availability.
-
-Both CPE and Storyboard AI Enhance use the same target catalog and guides. CPE can send attached image pixels through its image-use controls; Storyboard still sends only caller-confirmed workflow-media metadata, not image/video/audio bytes. For edits, state what changes and what identity, composition, lighting, or text must remain. The enhancer must not invent contents of metadata-only references. The Storyboard gear remains the place for video dialect/task and confirmed media mapping controls.
-
-Official image sources: [Krea 2](https://www.krea.ai/blog/explorative-prompting-krea-2), [FLUX.2 prompting](https://docs.bfl.ai/guides/prompting_guide_flux2), [GPT Image prompting](https://developers.openai.com/api/docs/guides/image-prompting), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation), and [Seedream 5.0 Pro/Lite](https://seed.bytedance.com/en/blog/beyond-generation-it-understands-design-introducing-seedream-5-0-pro).
-
-The current registered video profiles remain **LTX 2.3**, **LTX 2.5**, **MiniMax H3**, **MiniMax H3 Max**, **Seedance 2.0**, **Seedance 2.5**, **Wan 3.0**, **Kling 3.0**, and **Kling 3.0 Omni**. The [Prompt enhancement profiles guide](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) links each versioned guide and its official sources.
-
----
+For manual setup, development commands, and regression checks, see [Contributing](docs/contributing.md). After launch, open the frontend and configure a project destination before saving generated media. Add ComfyUI node URLs in Storyboard only when you are ready to render. Provider configuration is similarly optional unless you use Enhance with AI.
 
 ## AI LLM Provider Setup
 
-Director's Console supports 13+ LLM providers for AI-enhanced prompt generation. Credentials saved through the backend use the existing local encrypted credential store (`%APPDATA%/CinemaPromptEngineering/credentials.db`) using Fernet encryption, but browser provider configuration may also be cached in local storage or the browser profile. Protect both the backend data and local browser data; this project does not promise that every key exists only in encrypted backend storage. Antigravity's OAuth app configuration is supplied externally through `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET`; it is not embedded in the current source. This maintenance cleanup does not rewrite stored credentials or claim to purge repository history.
-
-![LLM Providers](Images/CPE%20LLM%20Providers.png)
-![LLM Provider Setup](Images/CPE%20LLM%20Providers%202.png)
-
-### API Key Providers
-
-These providers require an API key, which you enter directly in the Settings panel:
-
-| Provider | How to Get a Key | Models |
-|----------|------------------|--------|
-| **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | GPT-4o, GPT-4 Turbo, DALL-E 3 |
-| **Anthropic** | [console.anthropic.com](https://console.anthropic.com) | Claude 3.5 Sonnet, Claude 3 Opus |
-| **Google AI (Gemini)** | [Google AI Studio API keys](https://aistudio.google.com/apikey) | Models returned by the Google AI API |
-| **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | Multi-model aggregator (100+ models) |
-| **Replicate** | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) | FLUX, SDXL, open-source models |
-| **Stability AI** | [platform.stability.ai](https://platform.stability.ai) | Stable Diffusion, SDXL |
-| **fal.ai** | [fal.ai/dashboard](https://fal.ai/dashboard) | Fast FLUX/SDXL/video inference |
-| **Together AI** | [api.together.xyz](https://api.together.xyz) | Open-source fast inference |
-| **GitHub Models** | GitHub Personal Access Token (PAT) | GPT-4o, Claude, Llama via GitHub |
-
-**To add an API key provider:**
-1. Open **Settings** (gear icon in the menu)
-2. Find the provider in the list
-3. Enter your API key
-4. Click **Test Connection** to verify the connection
-5. Click **Save Changes**
+Provider setup is optional for rule-based Cinema prompts and required only for Enhance with AI. Compatible local servers and existing OpenAI Codex OAuth are supported where configured. A model catalog or connection does not prove account access or vision availability.
 
 ### Google AI (Gemini) API key setup
 
-This is the authoritative Google setup path. No new provider is needed: the provider ID is `google`, the Settings label is **Google AI (Gemini)**, and it uses the native Google AI API endpoint (`generativelanguage.googleapis.com/v1beta`).
-
-1. Open **Settings**.
-2. Select **Google AI (Gemini)**.
-3. Create or copy a key from [Google AI Studio API keys](https://aistudio.google.com/apikey), then paste it into the API key field.
-4. Click **Test Connection**.
-5. Fetch the available models and select one.
-6. Click **Save Changes**.
-
-This Google AI Studio API key is **not** an OAuth client secret and does not log you into **Antigravity**. Available models, quotas, billing, and service eligibility depend on the key/account and Google service; successful connection or model listing does not guarantee access to every Gemini feature. Never put a real key in this README, examples, issues, logs, or source control. The generic `google` OAuth configuration is a separate path and is not the Gemini API-key option.
-
-
-### Named-compatible endpoints
-
-Settings supports named OpenAI-compatible endpoints (including LM Studio/custom) and Anthropic-compatible endpoints. Configure each base URL and model discovery there; blank keys are allowed only for the corresponding local/compatible service, not as a universal provider bypass. The OpenAI Codex catalog source, warning, and fallback behavior are handled by the app, and OAuth refresh uses the existing credential flow. A fallback is not proof that an account is available. API requests default to 30 seconds; Enhance requests use 90 seconds.
-
-### OAuth Providers
-
-These providers use OAuth authentication flows. They are separate from the Google API-key flow above. The current Antigravity client configuration is resolved from request/stored provider settings or external environment variables; missing configuration fails explicitly before an outbound OAuth request.
-
-| Provider | UI label | Provider ID | Flow Type | Requires Client Secret |
-|----------|----------|-------------|-----------|----------------------|
-| **Antigravity** | Antigravity (Gemini/Claude) | `antigravity` | Authorization Code + PKCE | Yes |
-| **OpenAI Codex** | OpenAI Codex (ChatGPT Plus/Pro) | `openai_codex` | Authorization Code + PKCE | No |
+Use the **Google AI (Gemini)** provider with a Google AI Studio API key. This is distinct from Antigravity OAuth; never put a real key in source, logs, or frontend `VITE_*` variables. See the [Google AI setup details](docs/providers.md#google-ai-gemini-api-key).
 
 ### Antigravity OAuth app configuration
 
-Use an appropriately authorized Antigravity application configuration. Do not assume an existing client belongs to you or to Google, and do not use an arbitrary Google Cloud client expecting it to grant Cloud Code/Antigravity access; the account and client must be authorized for that service.
+Antigravity uses authorized OAuth application credentials in the private backend `CinemaPromptEngineering/.env`, not frontend variables. Never commit client secrets or tokens. See the [Antigravity configuration details](docs/providers.md#antigravity-application-configuration).
 
-The CPE backend reads these values from its private environment file:
-
-```text
-CinemaPromptEngineering/.env
-```
-
-`CinemaPromptEngineering/.env` is the private, gitignored backend file (on Unix, keep it mode `0600`); `.env.example` is the tracked placeholder template. Only if `.env` does **not** already exist, copy `CinemaPromptEngineering/.env.example` to it. Do not overwrite an existing configured `.env`. Fill in the placeholders locally:
-
-```text
-ANTIGRAVITY_CLIENT_ID=your-authorized-client-id
-ANTIGRAVITY_CLIENT_SECRET=your-authorized-client-secret
-```
-
-Keep `.env` private, restart the CPE backend after changing it, and never put these values in the frontend `.env`, `VITE_*` variables, Git, logs, or issue reports. A missing `.env` is harmless at startup; an Antigravity request without complete app configuration fails explicitly before outbound HTTP. Existing OAuth tokens are not deleted by this configuration cleanup; re-login alone cannot fix missing app configuration. The loader is implemented and its fresh-process environment/path/missing-file/import-order checks pass; live provider/account verification remains pending.
-
-The app uses `http://localhost:36742/oauth-callback` for Antigravity's local callback. Where the client type requires registered redirect URIs, the registration must match it. Desktop loopback-client rules differ from web-client rules, so do not create a web client merely to force these instructions to fit.
-
-**To set up an OAuth provider:**
-1. Open **Settings** → find the provider.
-2. Click **Connect** — this opens a browser window for OAuth authorization.
-3. After authorization, the access token is handled by the existing local credential workflow.
-4. Tokens may refresh when the provider supports refresh; a live provider/account check is still required.
-
-### Local LLM Providers
-
-No API key needed — these connect to LLMs running on your machine:
-
-| Provider | Default URL | Notes |
-|----------|-------------|-------|
-| **Ollama** | `http://localhost:11434` | Auto-detected when running |
-| **LM Studio** | `http://localhost:1234` | OpenAI-compatible API |
-
-Just start the local LLM server and Director's Console will detect it automatically.
-
-> **Note for Ollama users:** If you encounter issues, ensure you're using the latest Ollama version. Model names with tags (e.g., `llama3:latest`) are supported. Embedding models are automatically filtered from the chat model list.
-
----
-
-## Technical Reference
-
-### Cameras
-
-**49 camera bodies** across 14 manufacturers, classified by weight for movement constraint enforcement:
-
-<details>
-<summary><strong>Digital Cameras</strong></summary>
-
-| Manufacturer | Bodies |
-|-------------|--------|
-| ARRI | Alexa 35, Alexa Mini, Alexa Mini LF, Alexa LF, Alexa 65, Alexa, Alexa XT |
-| RED | V-Raptor, V-Raptor X, V-Raptor XL, Komodo-X, Monstro 8K, RED One |
-| Sony | Venice 2, FX9, FX6 |
-| Canon | C700 FF, C500 Mark II, C300 Mark III |
-| Blackmagic | Ursa Mini Pro 12K, Pocket 6K |
-| Panasonic | VariCam LT, S1H |
-| Nikon | Z9 |
-| DJI | Inspire 3, Mavic 3 Cine |
-
-</details>
-
-<details>
-<summary><strong>Film Cameras</strong></summary>
-
-| Manufacturer | Bodies |
-|-------------|--------|
-| ARRI Film | Arricam ST, Arricam LT, ARRI 535B, ARRI 35BL, ARRI 35 III, Arriflex 35, Arriflex 35BL, Arriflex 435 |
-| Panavision | Millennium XL2, Millennium, Platinum, Gold, Panastar, Panaflex, Super Panavision 70, Ultra Panavision 70, XL |
-| Mitchell | BNC, BNCR, BFC 65 |
-| Eclair | NPR |
-| IMAX | MSM 9802, MKIV, GT |
-| Vintage | UFA Custom, Pathe Studio |
-
-</details>
-
-**Camera types:** Digital, Film  
-**Sensor sizes:** Super 35, Full Frame, Large Format, 65mm, Micro Four Thirds, Film 35mm, Film 65mm, Film 70mm, IMAX 15/70, IMAX GT  
-**Weight classes:** Ultra Light (<2kg), Light (2–3kg), Medium (3–4kg), Heavy (>4kg)
-
-### Lenses
-
-**47 lens families** from 19 manufacturers:
-
-<details>
-<summary><strong>Full Lens List</strong></summary>
-
-| Manufacturer | Families |
-|-------------|----------|
-| ARRI | Signature Prime, Master Prime, Ultra Prime, Prime 65, Prime DNA |
-| Zeiss | Supreme Prime, Master Prime, CP.3, Super Speed, Standard Speed, Ultra Prime, Planar, Planar f/0.7 |
-| Cooke | S7/i, S4/i, Anamorphic/i, Panchro/i Classic, Speed Panchro |
-| Panavision | Primo, Primo 70, Anamorphic, C Series, E Series, Sphero, Ultra Speed |
-| Leica | Summilux-C, Summicron-C, Thalia |
-| Canon | Sumire Prime, CN-E, K35 |
-| Sony | CineAlta |
-| Sigma | Cine, High Speed |
-| Angénieux | Optimo, EZ, HR |
-| Vintage | Bausch & Lomb Super Baltar, Bausch & Lomb Baltar, Todd-AO, Hawk V-Lite, Hawk V-Plus, Vintage Anamorphic, Vintage Spherical |
-| Hasselblad | HC, V |
-| IMAX | IMAX Optics |
-
-</details>
-
-**Mount types:** PL, LPL, XPL, Panavision, Mitchell BNC, IMAX  
-**Focal length range:** 8mm – 1200mm  
-**Aspect ratios:** 1.33:1, 1.37:1, 1.43:1, 1.66:1, 1.78:1, 1.85:1, 1.90:1, 2.20:1, 2.35:1, 2.39:1, 2.76:1
-
-### Film Stocks
-
-**31 film stocks** spanning the entire history of motion picture photography:
-
-<details>
-<summary><strong>Full Film Stock List</strong></summary>
-
-| Category | Stocks |
-|----------|--------|
-| **Kodak Vision3** (current) | 500T 5219, 250D 5207, 200T 5213, 50D 5203 |
-| **Kodak Vision2** | 500T 5218, 200T 5217 |
-| **Kodak Vision** | 500T 5279, 320T 5277 |
-| **Black & White** | Kodak Double-X 5222, Kodak Tri-X, Eastman Double-X, Eastman Plus-X |
-| **Historic Color** | Eastman 5247, 5293, 5294, 5250, 5254, Technicolor, Kodachrome |
-| **Fuji** | Eterna 500T, Eterna 250D, Eterna 250T |
-| **65mm / 70mm** | Kodak 65mm 500T, 65mm 250D, 65mm 200T |
-| **IMAX** | 500T, 250D |
-
-</details>
-
-### Lighting
-
-**24 lighting sources** with era-appropriate constraints:
-
-| Category | Sources | Era Restriction |
-|----------|---------|----------------|
-| **Natural** | Sun, Moon, Overcast, Window, Skylight | — |
-| **Classic** | Tungsten, Carbon Arc, Mercury Vapor, Sodium Vapor | Carbon Arc: 1895–1960s |
-| **Modern** | HMI, Kino Flo, LED, Fluorescent | HMI: 1972+, Kino Flo: 1987+, LED: 2002+ |
-| **Practical** | Practical Lights, Candle, Firelight, Neon, Television, Computer Screen | Neon: 1927+ |
-| **Mixed** | Mixed, Available Light | — |
-
-**20 lighting styles:** High Key, Low Key, Soft, Hard, Naturalistic, Expressionistic, Chiaroscuro, Rembrandt, Split, Rim, Silhouette, Motivated, Practical Motivated, Available Light, High Contrast, Controlled, Flat, Dramatic
-
-### Camera Movement
-
-**16 movement equipment types** with physics-based constraints:
-
-| Equipment | Notes |
-|-----------|-------|
-| Static | Tripod-mounted, no movement |
-| Handheld | Limited to Ultra Light and Light cameras |
-| Shoulder Rig | All weight classes with fatigue warnings |
-| Steadicam | Smooth tracking, most weight classes |
-| Gimbal | Electronic stabilization, light cameras only |
-| Dolly / Dolly Track | Ground-level tracking shots |
-| Slider | Short-range smooth movements |
-| Crane | Full vertical and horizontal range |
-| Jib | Limited to Crane Up/Down, Arc, Static |
-| Technocrane | Precision remote-controlled crane |
-| Motion Control | Repeatable programmed moves |
-| Drone | Aerial, limited movements, light cameras only |
-| Cable Cam | Suspended cable system |
-| Car Mount | Vehicle-mounted for driving shots |
-| SnorriCam | Body-mounted, actor-facing |
-
-**31 movement types:** Static, Pan, Tilt, Pan & Tilt, Track In/Out, Push In, Pull Back, Truck Left/Right, Crab, Arc, Crane Up/Down, Boom Up/Down, Dolly Zoom, Push-Pull, Zoom In/Out, Crash Zoom, Roll, Whip Pan/Tilt, Follow, Lead, Orbit, Reveal, Fly Through
-
-**6 timing options:** Static, Very Slow, Slow, Moderate, Fast, Whip Fast
-
-### Shot Sizes & Composition
-
-**12 shot sizes:** Extreme Wide Shot (EWS), Wide Shot (WS), Medium Wide Shot (MWS), Medium Shot (MS), Medium Close-Up (MCU), Close-Up (CU), Big Close-Up (BCU), Extreme Close-Up (ECU), Over the Shoulder (OTS), POV, American Shot, Italian Shot
-
-**79 composition styles** including: Rule of Thirds, Centered, Symmetrical, Golden Ratio, Golden Spiral, Dynamic Symmetry, Leading Lines, Frame Within Frame, Negative Space, Depth Layering, and many more.
-
-**81 mood options** across positive, neutral, tension, dark, and intense categories.
-
-**13 color tones:** Warm Saturated/Desaturated, Cool Saturated/Desaturated, Neutral Saturated/Desaturated, Monochrome, Sepia, Teal & Orange, Cross Processed, Bleach Bypass, High/Low Contrast B&W
-
----
+See the complete [provider guide](docs/providers.md) for compatible endpoints, local servers, credentials, and verification boundaries.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Director's Console                         │
-├──────────────┬──────────────┬──────────────┬────────────────┤
-│   Storyboard │    Gallery   │  CPE Engine  │  Orchestrator   │
-│    Canvas    │  File Browser │ Python/FastAPI│ Python/FastAPI  │
-│              │              │  Port 9800    │  Port 9820      │
-│   React + TypeScript         │              │                 │
-│   Port 5173                  │              │                 │
-├──────────────┴──────────────┴──────────────┴────────────────┤
-│                                                               │
-│  Frontend ←──REST──→ CPE Backend ←──Manifests──→ Orchestrator │
-│     │                     │                         │         │
-│     │                     │                         │         │
-│     └────WebSocket────────┴────Direct REST──→ ComfyUI Nodes   │
-│                                                               │
-│  Gallery ←──CustomEvents──→ Storyboard (cross-tab comm)       │
-│  Gallery ←──REST──→ Orchestrator /api/gallery/* (23 endpoints)│
-│                                                               │
-├───────────────────────────────────────────────────────────────┤
-│  Storage: Project files on local/NAS filesystem                │
-│  Gallery metadata: {project}/.gallery/gallery.json (JSON)      │
-│  Credentials: backend encrypted store + browser-local config     │
-└───────────────────────────────────────────────────────────────┘
-```
+- **Frontend:** calls selected ComfyUI nodes directly through REST/WebSocket for workflow generation.
+- **CPE API:** provides cinematography rules, configuration, and optional LLM enhancement.
+- **Orchestrator:** handles project/file operations, Gallery services, backend status, and job groups.
 
-**Key Communication Patterns:**
-- **Frontend → ComfyUI**: Direct REST API calls and WebSocket for generation and progress
-- **Frontend → CPE Backend**: REST API for prompt generation, validation, presets, settings, credentials
-- **Frontend → Orchestrator**: REST API for job groups, backend management, project scanning, gallery operations
-- **Gallery ↔ Storyboard**: Cross-tab CustomEvents on `window` for reference images, workflow restore, file rename sync
-- **CPE → Orchestrator → ComfyUI**: JSON manifests for distributed rendering
+See [Multi-node generation](docs/MULTI_NODE_GENERATION.md) and the [architecture details in the guides](docs/storyboard.md).
 
----
+## Documentation
 
-## Completed Maintenance Notes
-
-- [Private workstation refresh plan](docs/private-workstation-refresh-plan.md) records the completed maintenance scope, checks, and remaining live-provider/ComfyUI verification limits.
-- [Prompt enhancement profiles](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) documents the current target/task/dialect catalog, the CPE and Storyboard UI flow, reference-metadata limits, and official sources. The [video capability matrix](CinemaPromptEngineering/Documentation/model_prompting/video_capability_matrix.md) links six versioned guides: [LTX 2.3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.3.md), [LTX 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/ltx_2.5.md), [MiniMax H3](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3.md), [MiniMax H3 Max](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/minimax_h3_max.md), [Seedance 2.0](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.0.md), and [Seedance 2.5](CinemaPromptEngineering/api/providers/system_prompts/model_prompts/seedance_2.5.md). Wan 3.0 and Kling 3.0/Omni profiles are also covered by the registry-backed guide files. These are prompting guidance only, not a rendering backend or guarantee of local/API availability.
-- To refresh the standalone node's generated rules copy, run [`scripts/sync_comfy_node.py`](scripts/sync_comfy_node.py) from the repository root. Edit the canonical `CinemaPromptEngineering/cinema_rules/` package, then run the helper before distributing `ComfyCinemaPrompting/`.
-
----
-
-## Development
-
-### Running in Development Mode
-
-```bash
-# Backend with hot-reload
-cd CinemaPromptEngineering
-python -m uvicorn api.main:app --host 0.0.0.0 --port 9800 --reload
-
-# Frontend with HMR
-cd CinemaPromptEngineering/frontend
-npm run dev
-
-# Orchestrator with hot-reload
-cd Orchestrator
-python -m uvicorn orchestrator.api:app --host 0.0.0.0 --port 9820 --reload
-```
-
-### Contributor setup and checks
-
-See [docs/contributing.md](docs/contributing.md) for the supported Python 3.11+
-and Node.js 22.13+ or 24+ setup. Run the complete offline regression check from the root:
-
-```bash
-python scripts/check.py
-```
-
-### Running Tests
-
-```bash
-# Root and Orchestrator suites in the pinned Python 3.11 environment
-uv run --no-project --python 3.11 --with-requirements requirements-dev.txt python -m pytest -c pytest.ini tests/ Orchestrator/tests/ -v
-
-# Specific test files
-python -m pytest tests/test_cpe_api.py -v
-python -m pytest tests/test_cinema_rules.py -v
-```
-
-### Building for Production
-
-```bash
-# Build frontend
-cd CinemaPromptEngineering/frontend
-npm run build
-
-# Build standalone executable (Windows)
-cd CinemaPromptEngineering
-.\build_installer.ps1
-```
-
-### Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, TypeScript 5.3+, Vite 7, ESLint 10, Zustand, TanStack Query v5 |
-| Backend | Python 3.11+, FastAPI, Pydantic v2, httpx, aiohttp |
-| Rendering | ComfyUI (direct WebSocket) |
-| Storage | Local/NAS filesystem, JSON flat-file (Gallery metadata), SQLite (encrypted credentials) |
-| Logging | Loguru |
-
----
+| Topic | Guide |
+| --- | --- |
+| Cinema | [docs/cinema.md](docs/cinema.md) |
+| Storyboard | [docs/storyboard.md](docs/storyboard.md) |
+| Gallery | [docs/gallery.md](docs/gallery.md) |
+| Providers | [docs/providers.md](docs/providers.md) |
+| Presets | [docs/cinema-presets.md](docs/cinema-presets.md) |
+| Technical reference | [docs/cinematography-reference.md](docs/cinematography-reference.md) |
+| Enhancement profiles | [Documentation/PROMPT_ENHANCEMENT_PROFILES.md](Documentation/PROMPT_ENHANCEMENT_PROFILES.md) |
+| Multi-node rendering | [docs/MULTI_NODE_GENERATION.md](docs/MULTI_NODE_GENERATION.md) |
+| Development | [docs/contributing.md](docs/contributing.md) |
+| Recovery | [docs/session-recovery.md](docs/session-recovery.md) |
 
 ## Changelog
 
-### February 22, 2026
+### 2026-10-02 — Image-aware composer and provider handling
 
-**Features:**
-- **Gallery Tab**: Full-featured media browser added as a top-level tab alongside Cinema and Storyboard. Includes folder tree navigation, grid/masonry/list/timeline views, batch rename with regex and templates, drag-and-drop file moves, trash with restore, star ratings, color tags, PNG metadata search, duplicate detection, and direct Storyboard integration (send reference images, restore workflow parameters). 23 new API endpoints on the Orchestrator (`/api/gallery/*`). Gallery metadata stored as JSON flat-file (`{project}/.gallery/gallery.json`) for NAS/CIFS compatibility.
-- **Recent Projects Menu**: Quick access to last 10 projects from the main menu. Hover to see project path and last-opened time. Individual entries can be removed. Stored in localStorage.
-- **Pinterest-Style Masonry View**: Gallery masonry layout redesigned with borderless thumbnails, 4px gaps, no card chrome. Selection uses outline, hover uses opacity fade.
+- Added image attachments, description/reference/starting-image modes, and model-specific variants for AI prompt enhancement.
+- Preserved complete configuration and preset/style context; improved compatible endpoints, model discovery, OAuth, and provider responses.
+- Reorganized this README around the three tabs, with focused guides for panels, providers, presets, and technical reference.
 
-**Bug Fixes:**
-- **Send to Storyboard Reference Image**: Fixed endpoint URL (was incorrectly targeting Orchestrator port 9820 instead of CPE backend port 9800) and response field (`data.dataUrl` instead of `data.data`).
-- **Batch Rename Storyboard Sync**: Fixed `panel.image` not updating when gallery files are renamed, causing 404 on the canvas.
+Offline implementation checks passed. Live provider, browser, and render verification remains pending; see the [verification details](Documentation/PROMPT_ENHANCEMENT_PROFILES.md#verification).
 
-### February 14, 2026
+### 2026-09-19 — Prompting and UI maintenance
 
-**Features:**
-- **Intelligent Parameter Disable Propagation**: When disabling an image or Lora input, all downstream nodes that depend on it are now automatically disabled. This prevents ComfyUI errors when bypassing inputs that have downstream dependencies (e.g., LoadImage → DWPreprocessor → ControlNetApply → KSampler chain).
+Added workflow categories, expanded image guides, Gallery layout work, and translated-DOM control hardening.
 
-**Bug Fixes:**
-- **Path Normalization**: Fixed Windows backslash handling in model paths. Paths like `Qwen\model.safetensors` are now correctly converted to `Qwen/model.safetensors` for Linux compatibility.
-- **Ollama Integration**: Fixed 405 error by appending `/api/chat` to the endpoint. Model names with `ollama:` prefix are now stripped before sending to the API. Embedding models are filtered from the chat model list.
-- **Settings Persistence**: Fixed model ID parsing to correctly handle colons in model names (e.g., `ollama:llama3:latest`).
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
----
+## Security & Deployment
+
+Director's Console has no application-wide authentication or authorization. Use it only on a trusted, private, access-controlled network; it is not a hardened public service and has not undergone a formal security audit. Protect provider credentials, browser profiles, backend data, workflows, media, and connected ComfyUI nodes. Treat project files and workflows as untrusted input.
+
+See the [provider security details](docs/providers.md) and the [contributing guide](docs/contributing.md) for operational boundaries.
 
 ## License
 
-[MIT License](LICENSE)
-
----
-
-<p align="center">
-  <strong>Director's Console</strong> — Project Eliot<br>
-  <em>Because every frame deserves the precision of real cinematography.</em>
-</p>
+Released under the [MIT License](LICENSE).

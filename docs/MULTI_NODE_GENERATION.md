@@ -26,7 +26,7 @@ Multi-node parallel generation allows you to select multiple render nodes in the
 
 | Benefit | Description |
 |---------|-------------|
-| **Faster Exploration** | Generate 3-5 variations in the time it takes to generate one |
+| **Concurrent Exploration** | Render variations across available nodes; throughput depends on node resources and the workflow |
 | **Visual Diversity** | Each seed produces a unique interpretation of your prompt |
 | **Failure Isolation** | If one node fails, others continue generating |
 | **Efficient Workflow** | Compare results side-by-side without manual repetition |
@@ -53,9 +53,9 @@ Multi-node parallel generation allows you to select multiple render nodes in the
 
 ### Prerequisites
 
-1. **Multiple ComfyUI backends configured** - At least 2 render nodes connected to the Orchestrator
-2. **Orchestrator running** - The API server must be running on port 9820
-3. **CPE frontend connected** - Storyboard UI with multi-node support
+1. **Multiple ComfyUI nodes configured** — Add at least two reachable nodes in Storyboard's Node Manager, each with the workflow's required models and custom nodes.
+2. **Director's Console running** — Use the normal launcher. Orchestrator on port 9820 provides project, gallery, and file operations.
+3. **Direct node access** — The browser sends workflow REST requests and receives WebSocket progress directly from ComfyUI nodes, not through Orchestrator.
 
 ### Quick Start
 
