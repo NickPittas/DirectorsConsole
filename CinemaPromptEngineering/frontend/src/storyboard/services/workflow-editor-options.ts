@@ -76,10 +76,16 @@ export function listWorkflowNodes(
     .map(([nodeId, node]) => [nodeId, node as ComfyUINode]);
 }
 
-/** Read an input from API format, plus the one proven graph widget mapping. */
+/** Read an input from API format, named UI widgets, or the checkpoint widget mapping. */
 export function getWorkflowNodeInput(node: ComfyUINode | null, inputName: string): unknown {
   if (!node) return undefined;
   if (node.inputs && Object.prototype.hasOwnProperty.call(node.inputs, inputName)) return node.inputs[inputName];
+  const namedValues = Reflect.get(node, 'widgets_values_named');
+  if (Object.prototype.hasOwnProperty.call(node, 'widgets_values_named') && namedValues !== null &&
+      typeof namedValues === 'object' && !Array.isArray(namedValues) &&
+      Object.prototype.hasOwnProperty.call(namedValues, inputName)) {
+    return Reflect.get(namedValues, inputName);
+  }
   if (getWorkflowNodeClassType(node) === 'CheckpointLoaderSimple' && inputName === 'ckpt_name') {
     return node.widgets_values?.[0];
   }

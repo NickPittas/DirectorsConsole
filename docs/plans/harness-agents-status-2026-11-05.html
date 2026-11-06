@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Director’s Console implementation status</title>
+<style>
+:root { font-family:var(--font-sans,system-ui,sans-serif); color:var(--foreground,#182230); }
+* { box-sizing:border-box; }
+html,body { margin:0; }
+body { font-size:14px; line-height:1.55; }
+h1 { font-size:25px; letter-spacing:-.6px; line-height:1.2; margin:0 0 8px; }
+h2 { font-size:17px; margin:26px 0 10px; }
+h3 { font-size:14px; margin:0 0 5px; }
+p { margin:5px 0 10px; }
+.meta,.muted { color:var(--muted-foreground,#667085); }
+.meta { font-size:12px; }
+.summary { margin:18px 0; padding:16px; border:1px solid var(--border,#d8dee7); border-radius:var(--radius,10px); background:var(--card,#f7f8fb); }
+.metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:14px 0 20px; }
+.metric { border:1px solid var(--border,#d8dee7); padding:13px 15px; border-radius:var(--radius,10px); }
+.metric strong { display:block; font-size:26px; line-height:1.2; }
+.metric span { font-size:12px; color:var(--muted-foreground,#667085); }
+.badge { display:inline-block; padding:2px 8px; font-size:11px; font-weight:650; border-radius:20px; white-space:nowrap; }
+.done { color:var(--success,#147d4c); background:color-mix(in srgb,var(--success,#147d4c) 12%,transparent); }
+.active { color:var(--info,#285cc4); background:color-mix(in srgb,var(--info,#285cc4) 12%,transparent); }
+.pending { color:var(--muted-foreground,#667085); background:var(--secondary,#eef1f6); }
+.partial { color:var(--warning,#986900); background:color-mix(in srgb,var(--warning,#986900) 12%,transparent); }
+.item { padding:12px 0; border-bottom:1px solid var(--border,#d8dee7); }
+.item:last-child { border-bottom:0; }
+.item-head { display:flex; align-items:baseline; gap:10px; justify-content:space-between; }
+.item p { margin-bottom:0; }
+details { margin-top:7px; font-size:12px; color:var(--muted-foreground,#667085); }
+summary { cursor:pointer; }
+code { font: .88em var(--font-mono,ui-monospace,monospace); overflow-wrap:anywhere; }
+ul,ol { padding-left:20px; margin:8px 0; }
+li { margin-bottom:7px; }
+.table-wrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; font-size:12px; }
+th,td { text-align:left; vertical-align:top; padding:10px 8px; border-bottom:1px solid var(--border,#d8dee7); }
+th { color:var(--muted-foreground,#667085); font-weight:600; }
+th:first-child,td:first-child { padding-left:0; }
+.note { padding:13px 15px; border-left:3px solid var(--warning,#ad7800); background:color-mix(in srgb,var(--warning,#ad7800) 6%,transparent); margin:12px 0; }
+.footer { font-size:11px; color:var(--muted-foreground,#667085); border-top:1px solid var(--border,#d8dee7); padding-top:12px; margin-top:24px; }
+@media(max-width:480px) { h1 { font-size:22px; } .metric { padding:10px; } .metric strong { font-size:23px; } .item-head { flex-wrap:wrap; gap:5px; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Director’s Console implementation status</h1>
+<p class="meta">Snapshot · 5 November 2026, 16:14 EET / 14:14 UTC · Pi first</p>
+<div class="summary">
+<strong>The foundations are implemented; the full agent production loop is still under construction.</strong>
+<p>Pi selection, local gateway infrastructure and workflow revision storage have source changes in place. Prompt execution through Pi is the current implementation task. Agent-created workflows, automatic dependency installation and generation through Console chat are still ahead.</p>
+</div>
+<div class="metrics" aria-label="Implementation snapshot">
+<div class="metric"><strong>4</strong><span>implemented task units<br>T1a · T1b · T2 · T6</span></div>
+<div class="metric"><strong>1</strong><span>active implementation task<br>T3 prompt routing</span></div>
+<div class="metric"><strong>0</strong><span>end-to-end acceptance<br>scenarios completed</span></div>
+</div>
+
+<h2>Implemented and source reviewed</h2>
+<div class="item">
+<div class="item-head"><h3>T1a · Pi SDK foundation</h3><span class="badge done">Implemented</span></div>
+<p>Pi 1.5.0 is pinned. Exact model selection, authenticated model discovery, separate scoped sessions, reviewed guidance injection, image-capability checks, streamed output, abort and disposal are implemented. Product sessions have no shell, filesystem or generation tools.</p>
+<details><summary>Source and review corrections</summary><p><code>agent_gateway/src/pi-adapter.ts</code> and <code>contracts.ts</code>. Parent corrected duplicate guidance normalization. Node requirement: 22.19+ on the 22.x line, or 24+.</p></details>
+</div>
+<div class="item">
+<div class="item-head"><h3>T1b · Local gateway and launcher</h3><span class="badge done">Implemented</span></div>
+<p>Loopback HTTP transport, one-use pairing, in-memory bearer credentials, scoped session ownership and SSE are implemented. The launcher handles optional startup and shutdown. A tab can use both conversation surfaces and explicitly change its bound project.</p>
+<details><summary>Source and remaining boundary</summary><p><code>agent_gateway/src/server.ts</code> and <code>start.py</code>. Parent corrected surface restrictions, persisted-session resume and project-switch races. The live application action bridge is still T5 work. Gateway support is limited to a local browser.</p></details>
+</div>
+<div class="item">
+<div class="item-head"><h3>T2 · Shared harness settings</h3><span class="badge done">Implemented</span></div>
+<p>A separate non-secret settings record stores the harness, exact provider/model and thinking level. The Pi selector uses gateway inventory. Existing credentials and generation-target settings remain separate; legacy enhancement requires an explicit choice.</p>
+<details><summary>Source and current behavior</summary><p><code>AgentHarnessSettings.tsx</code>, <code>agent-gateway-client.ts</code>, settings storage and <code>/agent-settings</code>. Pairing fragments are removed before rendering. Harness enhancement remains deliberately blocked until T3 connects it.</p></details>
+</div>
+<div class="item">
+<div class="item-head"><h3>T6 · Workflow revision persistence</h3><span class="badge done">Implemented</span></div>
+<p>Record and collection revision checks, atomic record replacement, retained history and explicit deletion replace unsafe bulk deletion. The client snapshots and serializes writes and reports conflicts. Parent corrected handling of consecutive queued bulk edits.</p>
+<details><summary>Source and remaining boundary</summary><p><code>api/workflow_storage.py</code> and <code>storyboard/services/workflow-storage.ts</code>. T5 must still coordinate pending debounce saves, adopt canonical revisions and await panel attachment. Multiple server processes sharing storage are unsupported; filesystem failure during a bulk commit can leave partial updates requiring reconciliation.</p></details>
+</div>
+
+<h2>Currently being implemented</h2>
+<div class="summary">
+<div class="item-head"><h3>T3 · Existing cinematic prompting through Pi</h3><span class="badge active">Luna xhigh · Running</span></div>
+<p>Connect both current enhancement entry points to the selected Pi harness without requiring old provider credentials.</p>
+<ul>
+<li>Reuse existing style, preset, cinematic configuration and model/task guidance.</li>
+<li>Share credential-free prompt preparation and final output validation with the legacy path.</li>
+<li>Handle separate surface sessions, images, SSE, cancellation and project binding.</li>
+<li>Reject stale results, provider failures and incomplete structured MiniMax output.</li>
+</ul>
+<p class="muted">The task is active. Its changes have not been accepted as complete or runtime verified.</p>
+</div>
+
+<h2>Next implementation sequence</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Task</th><th>Remaining deliverable</th><th>Depends on</th></tr></thead>
+<tbody>
+<tr><td>T4a / T4b</td><td>First exact-model skill path, then the full model/task/adapter matrix using curated existing resources.</td><td>T3; broader coverage can follow first acceptance</td></tr>
+<tr><td>T5</td><td>Live application actions, targeted browser bridge, durable submission tracking, widget mapping and safe panel attachment.</td><td>T3 + gateway and persistence contracts</td></tr>
+<tr><td>T7</td><td>Prompt Engineer and Console chat panels, separate histories and explicit handoff.</td><td>T5 + T6</td></tr>
+<tr><td>T8</td><td>Selected-backend discovery and installation capabilities; safe local/remote provisioning and manual fallback instructions.</td><td>Backend reconnaissance + T5 action contract</td></tr>
+<tr><td>T9</td><td>Reusable workflow and optimization recipes for installed models, distilled variants and acceleration LoRAs.</td><td>Skills + backend capability contract</td></tr>
+<tr><td>T10</td><td>Complete upload → workflow → prompt → widgets → run → results through Console tools.</td><td>Actions, chat, recipes and backend tools</td></tr>
+<tr><td>T11 / T12</td><td>Codex integration after Pi acceptance; Claude Code application integration later.</td><td>Pi acceptance, then Codex acceptance</td></tr>
+<tr><td>T13</td><td>Antigravity compatibility assessment; implementation support is not yet committed.</td><td>Can proceed independently</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Kamino-3 access and remaining blockers</h2>
+<p><span class="badge partial">T0 · Partially verified</span> SSH over Tailscale authenticated successfully. The machine is KAMINO-3 running Windows 11 Pro.</p>
+<ul>
+<li><strong>Installation located:</strong> <code>C:\Users\Nick\Documents\ComfyUI-Easy-Install\ComfyUI-Easy-Install\ComfyUI</code>, with <code>main.py</code> and sibling embedded Python.</li>
+<li><strong>Configured model base:</strong> <code>R:\Comfyui</code>. The mapped drive is unavailable in the SSH session. Access to its equivalent network location still needs verification.</li>
+<li><strong>Live ComfyUI service:</strong> process/listener inspection found no running ComfyUI instance. Its actual live HTTP/WS address and node/model inventory remain unverified.</li>
+</ul>
+<div class="note">These findings do not establish that models are missing. The agent must inspect the configured shared storage or live backend and must not download replacements into an unrelated local folder.</div>
+
+<h2>Verification and delivery</h2>
+<div class="table-wrap">
+<table>
+<tbody>
+<tr><th>Completed evidence</th><td>Source inspection, parent corrections, SDK declaration inspection and read-only Windows SSH reconnaissance.</td></tr>
+<tr><th>Not yet performed</th><td>Builds, typechecks, app launches, live Pi prompts, UI acceptance, ComfyUI renders, downloads and installation.</td></tr>
+<tr><th>Automated tests</th><td>None created or run. Project policy requires parent live verification before separately approved automated tests.</td></tr>
+<tr><th>Delivery state</th><td>Changes are in the shared checkout, uncommitted and unpushed. Existing unrelated dirty files are retained.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Team routing</h2>
+<p>Kimi K3.1 drafted the plan. Astra reviewed it; parent incorporated the findings. Luna xhigh owns current and harder implementation tasks. GLM5.3 Flash is assigned future bounded work but its exact availability remains unconfirmed. Claude models, including Fable, Opus, Sonnet and Haiku, are excluded from the implementation team for now.</p>
+<p class="footer">Source snapshot: implementation plan, Astra review, completed-task reports, parent source readbacks, active T3 task state and SSH observations. “Implemented” means source changes exist; it does not mean a live acceptance check passed. This is a timestamped report, not an automatically updating dashboard. No credentials are included.</p>
+</main>
+</body>
+</html>

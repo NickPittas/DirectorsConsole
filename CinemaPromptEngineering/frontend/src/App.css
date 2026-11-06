@@ -143,14 +143,70 @@ body {
 /* Main Content
    ============================================================================ */
 
+.directors-console__workspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .directors-console__content {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   position: relative;
+}
+
+.directors-console__content .preset-panel {
+  position: absolute;
+  height: 100%;
+}
+
+.directors-console__content form[aria-label="Open Gallery folder"] input,
+.directors-console__content #gallery-server-url {
+  padding: 8px 10px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font: inherit;
+}
+
+.directors-console__content form[aria-label="Open Gallery folder"] button {
+  padding: 8px 12px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font: inherit;
+  cursor: pointer;
+}
+
+.directors-console__agent {
+  display: flex;
+  flex: 0 0 clamp(320px, 28vw, 440px);
+  width: clamp(320px, 28vw, 440px);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+}
+
+.directors-console__agent-surface {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.directors-console__agent-surface > .agent-chat {
+  width: 100%;
+  flex: 1;
 }
 
 /* Common Button Styles
@@ -352,22 +408,43 @@ body {
 /* Responsive
    ============================================================================ */
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .directors-console__nav {
     flex-wrap: wrap;
     padding: var(--spacing-sm);
   }
-  
+
   .directors-console__tabs {
     width: 100%;
     order: 3;
   }
-  
+
   .tab-button {
     flex: 1;
     justify-content: center;
   }
-  
+
+  .directors-console__workspace {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .directors-console__content {
+    flex: 1 0 50%;
+    min-height: 200px;
+    overflow: auto;
+  }
+
+  .directors-console__agent {
+    flex: 1 0 50%;
+    width: 100%;
+    min-height: 300px;
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+  }
+}
+
+@media (max-width: 768px) {
   .tab-label {
     display: none;
   }

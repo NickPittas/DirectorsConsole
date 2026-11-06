@@ -17,9 +17,16 @@ import { PromptEnhancementSettingsPopup } from './components/PromptEnhancementSe
 import type { TargetModelOption } from './components/PromptEnhancementControls';
 import { WorkflowEditor, ParameterConfig } from './components/WorkflowEditor';
 import { getWorkflowParser, ComfyUIWorkflow, ParsedWorkflow, normalizeWorkflowPaths, detectNodeOS, TargetOS } from './services/workflow-parser';
+import { nodeDefinitions } from './services/node-definitions';
+import { prepareAgentWorkflowProposal } from './actions/agent-workflow-proposal';
+import { collectRecipeNodeClasses } from './actions/recipe-node-classes';
+import { selectCachedWorkflowSchema } from './actions/selected-schema-snapshot';
+import { fingerprintRecipeExport } from './actions/recipe-export-fingerprint';
 import {
   findWorkflowNode,
+  getWorkflowNodeClassType,
   getWorkflowNodeInput,
+  listWorkflowNodes,
   reconcileParameterValues,
 } from './services/workflow-editor-options';
 import { CameraAngle } from './data/cameraAngleData';
@@ -36,7 +43,13 @@ import {
   PanelRightClose, ChevronLeft, Eye, PanelRight, Info, OctagonX, FolderOpen,
   Printer, RefreshCw
 } from 'lucide-react';
-import { orchestratorManager, useRenderNodes } from './services/orchestrator';
+import {
+  inspectManagedBackendCapabilities,
+  orchestratorManager,
+  planManagedBackendDependencies,
+  useRenderNodes,
+  type ManagedDependencyPlanRequest,
+} from './services/orchestrator';
 import { getComfyUIWebSocket, disconnectWebSocket, disconnectAllWebSockets, ComfyUIWebSocket, type WorkflowProgressInfo } from './services/comfyui-websocket';
 import { extractMediaOutputs, isVideoUrl, type ComfyUIProbeResult } from './comfyui-client';
 import {
@@ -47,6 +60,7 @@ import {
 import { getManagedComfyUIProbeUrls, startComfyUIProbeLifecycle } from './services/comfyui-probe-lifecycle';
 import { projectManager, ImageHistoryEntry, ImageMetadata, useProjectSettings, type ProjectSettings, getDefaultOrchestratorUrl } from './services/project-manager';
 import { saveProjectAndRecordRecent, loadProjectAndRecordRecent } from './services/project-actions';
+import { projectStateFingerprint } from './services/project-state-fingerprint';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { FolderBrowserModal } from './components/FolderBrowserModal';
 import { FileBrowserDialog } from './components/FileBrowser';
@@ -58,9 +72,12 @@ import { PrintDialog } from './components/PrintDialog';
 import { PathMappingsModal } from './components/PathMappingsModal';
 import GenerationProgress from './components/GenerationProgress';
 import { workflowStorage } from './services/workflow-storage';
+import { captureRunOutputMedia } from '../services/agent-run-media';
+import { getAgentMediaAsset } from '../services/agent-media-library';
 import {
   filterWorkflowsByRoute,
   getDefaultSubCategory,
+  getWorkflowRoutes,
   isSubTabType,
   isTabType,
   isValidWorkflowRoute,
@@ -76,9 +93,45 @@ import {
   sessionDraftController,
   type StoryboardDraftState,
 } from './services/session-recovery';
-import { useCinemaStore } from '../store';
-import { getSelectedLlmSettings, getConfiguredProviders, loadTargetModel, updateSavedOAuthToken } from '../components/Settings';
-import { api } from '../api/client';
+import {
+  dispatchStoryboardApplicationAction,
+  type ApplicationActionHandlers,
+  type ApplicationCommand,
+  validatePanelParameterValues,
+  validateWorkflowControls,
+} from './actions/application-actions';
+import { isApplicationCommandCurrent } from '../services/application-command-control';
+import {
+  createGenerationRun,
+  failGenerationBeforeSubmission,
+  GenerationSubmissionError,
+  getGenerationRun,
+  getGenerationRunByIdempotencyKey,
+  listGenerationRuns,
+  prepareGenerationJob,
+  submitPromptWithJournal,
+  updateGenerationJob,
+  updateGenerationJobByPrompt,
+} from './actions/generation-journal';
+import {
+  getActiveConsoleUserRequest,
+  notifyAgentSurfaceContextChanged,
+  registerAgentSurfaceContext,
+} from '../services/agent-conversations';
+import { registerWorkspaceConsoleAdapter } from '../services/workspace-agent-actions';
+import { getSelectedLlmSettings, getConfiguredProviders, updateSavedOAuthToken } from '../components/Settings';
+import {
+  getAgentExecutionFingerprint,
+  getAgentSettingsState,
+  loadAgentSettings,
+  subscribeAgentGateway,
+  subscribeAgentSettings,
+} from '../services/agent-gateway-client';
+import { enhanceConsolePromptWithPi } from '../services/prompt-enhancement-agent';
+import {
+  api,
+  type StandalonePromptInput,
+} from '../api/client';
 import {
   buildEnhancementContext,
   discoverEnhancementAssets,
@@ -157,6 +210,20 @@ type GenerationSnapshot = {
   parameters: Record<string, unknown>;
 };
 
+type GenerationRequestOptions = {
+  runId: string;
+  commandId: string;
+  idempotencyKey: string;
+  projectIdentity: string;
+  projectRevision: number;
+  panelInputRevision: number;
+  workflowId: string;
+  backendIds: string[];
+  backendBindings?: Record<string, string>;
+  mode: 'single' | 'parallel';
+  usePanelSnapshot: boolean;
+};
+
 function calculateNewPanelX(panelId: number, _existingCount: number): number {
   const col = (panelId - 1) % PANELS_PER_ROW;
   return col * (PANEL_WIDTH + PANEL_GAP);
@@ -179,14 +246,11 @@ function calculateNewPanelY(panelId: number, _existingCount: number): number {
 const SAMPLER_NODE_TYPES = new Set([
   'KSampler', 'KSamplerAdvanced', 'KSampler (Efficient)',
   'SamplerCustom', 'SamplerCustomAdvanced',
-  'KSamplerSelect', 'SamplerDPMPP_2M_SDE',
   // AnimateDiff / video-specific samplers
   'ADE_AnimateDiffSampler', 'ADE_AnimateDiffSamplerAdvanced',
-  'FreeU_V2', 'SamplerDPMPP_3M_SDE',
   // WanVideo / Hunyuan samplers
   'WanSampler', 'HunyuanSampler',
   // Common custom node samplers
-  'Efficient Loader', // Some efficiency nodes wrap KSampler
   'ImpactKSamplerBasicPipe', 'ImpactKSamplerAdvancedBasicPipe',
 ]);
 
@@ -204,9 +268,10 @@ function buildWorkflowProgressInfo(workflow: Record<string, any>): WorkflowProgr
     nodeTypes[nodeId] = classType;
 
     // Check if this is a sampler/progress-reporting node
-    if (SAMPLER_NODE_TYPES.has(classType) || 
-        classType.toLowerCase().includes('ksampler') ||
-        classType.toLowerCase().includes('sampler')) {
+    if (!['KSamplerSelect', 'LTXVLatentUpsampler', 'SamplerDPMPP_2M_SDE', 'SamplerDPMPP_3M_SDE', 'FreeU_V2', 'Efficient Loader'].includes(classType) &&
+        (SAMPLER_NODE_TYPES.has(classType) ||
+         classType.toLowerCase().includes('ksampler') ||
+         classType.toLowerCase().includes('sampler'))) {
       samplerNodeIds.push(nodeId);
     }
   }
@@ -290,7 +355,59 @@ export interface Workflow {
   parsed: ParsedWorkflow;
   config: ParameterConfig[];
   createdAt?: number;
+  revision?: number;
   categories?: WorkflowCategory[]; // Multiple functional categories
+  recipeId?: string;
+  sourceGraphFingerprint?: string;
+  recipeFingerprint?: string;
+  sourceProvenance?: Array<Record<string, unknown>>;
+}
+
+function workflowParameterDefaults(workflow: Workflow, currentValues: Record<string, unknown>): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  workflow.config.forEach(param => {
+    if (!param.exposed) return;
+    const preserve = param.category === 'image_input' || param.name === 'prompt' || param.input_name === 'prompt';
+    values[param.name] = preserve && currentValues[param.name] !== undefined
+      ? currentValues[param.name]
+      : param.default;
+  });
+  return values;
+}
+
+function workflowContentFingerprint(workflow: Workflow): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(workflow).filter(([key]) =>
+    !['revision', 'parentRevision', 'updatedAt', 'expectedCollectionRevision', 'expectedRevision'].includes(key),
+  )));
+}
+
+const SNAPSHOT_SENSITIVE_TEXT = /(?:bearer\s+[a-z0-9._~+/=-]{8,}|(?:api|access|private)?[_ -]?(?:key|token|secret|password)\s*[:=]\s*\S+|(?:sk-[a-z0-9]{16,}|gh[pousr]_[a-z0-9_]{16,}|github_pat_[a-z0-9_]{16,}))/i;
+
+function redactAgentGraphValue(value: unknown, depth = 0, unavailable: { reason?: string } = {}): unknown {
+  if (typeof value === 'string') {
+    if (/^data:/i.test(value) || value.length > 512 && /^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+      unavailable.reason ||= 'The workflow contains embedded media data.';
+      return '[media data omitted]';
+    }
+    if (SNAPSHOT_SENSITIVE_TEXT.test(value)) {
+      unavailable.reason ||= 'The workflow contains a sensitive value.';
+      return '[sensitive text omitted]';
+    }
+    return value;
+  }
+  if (depth > 32) {
+    unavailable.reason ||= 'The workflow graph nesting is too deep to return safely.';
+    return null;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => redactAgentGraphValue(item, depth + 1, unavailable));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+    if (/(?:api|access|private)[_-]?key|token|secret|password|credential|authorization/i.test(key)) {
+      unavailable.reason ||= 'The workflow contains a credential field.';
+      return [key, '[redacted]'];
+    }
+    return [key, redactAgentGraphValue(item, depth + 1, unavailable)];
+  }));
 }
 
 // SystemStats interface removed - using any for now
@@ -312,12 +429,6 @@ interface StoryboardUIProps {
 }
 
 export function StoryboardUI({ onProjectLoadingChange, initialSession }: StoryboardUIProps = {}) {
-  const projectType = useCinemaStore(state => state.projectType);
-  const liveActionConfig = useCinemaStore(state => state.liveActionConfig);
-  const animationConfig = useCinemaStore(state => state.animationConfig);
-  const selectedLiveActionPreset = useCinemaStore(state => state.selectedLiveActionPreset);
-  const selectedAnimationPreset = useCinemaStore(state => state.selectedAnimationPreset);
-
   // ---------------------------------------------------------------------------
   // Error Notifications
   // ---------------------------------------------------------------------------
@@ -355,7 +466,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   // State - Canvas
   // ---------------------------------------------------------------------------
-  const [panels, setPanels] = useState<Panel[]>(() => initialSession
+  const [panels, setPanelsState] = useState<Panel[]>(() => initialSession
     ? recoverInterruptedPanels(initialSession.panels) as Panel[]
     : [
       { id: 1, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 0, y: 0, width: 300, height: 300 },
@@ -365,6 +476,44 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       { id: 5, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', prompt: '', seed: -1, x: 320, y: 320, width: 300, height: 300 },
       { id: 6, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0, status: 'empty', progress: 0, notes: '', seed: -1, x: 640, y: 320, width: 300, height: 300 },
     ]);
+  const panelsRef = useRef(panels);
+  const panelIdHighWaterRef = useRef(Math.max(0, ...panels.map(panel => panel.id)));
+  const panelRevisionRef = useRef(new Map<number, number>());
+  const panelInputRevisionRef = useRef(new Map<number, number>());
+  panelsRef.current = panels;
+  panels.forEach(panel => {
+    if (!panelRevisionRef.current.has(panel.id)) panelRevisionRef.current.set(panel.id, 1);
+    if (!panelInputRevisionRef.current.has(panel.id)) panelInputRevisionRef.current.set(panel.id, 1);
+  });
+  const setPanels = useCallback((update: React.SetStateAction<Panel[]>) => {
+    const current = panelsRef.current;
+    const next = typeof update === 'function' ? update(current) : update;
+    panelIdHighWaterRef.current = Math.max(panelIdHighWaterRef.current, 0, ...current.map(panel => panel.id), ...next.map(panel => panel.id));
+    const previousById = new Map(current.map(panel => [panel.id, panel]));
+    const nextIds = new Set(next.map(panel => panel.id));
+    for (const panel of next) {
+      const previous = previousById.get(panel.id);
+      if (previousById.get(panel.id) !== panel) {
+        panelRevisionRef.current.set(panel.id, (panelRevisionRef.current.get(panel.id) || 0) + 1);
+      } else if (!panelRevisionRef.current.has(panel.id)) {
+        panelRevisionRef.current.set(panel.id, 1);
+      }
+      if (previous && (previous.workflowId !== panel.workflowId || previous.nodeId !== panel.nodeId
+        || previous.parameterValues !== panel.parameterValues)) {
+        panelInputRevisionRef.current.set(panel.id, (panelInputRevisionRef.current.get(panel.id) || 0) + 1);
+      } else if (!panelInputRevisionRef.current.has(panel.id)) {
+        panelInputRevisionRef.current.set(panel.id, 1);
+      }
+    }
+    for (const panelId of panelRevisionRef.current.keys()) {
+      if (!nextIds.has(panelId)) {
+        panelRevisionRef.current.delete(panelId);
+        panelInputRevisionRef.current.delete(panelId);
+      }
+    }
+    panelsRef.current = next;
+    setPanelsState(next);
+  }, []);
   const [selectedPanelId, setSelectedPanelId] = useState<number | null>(initialSession?.selectedPanelId ?? null);
   const [canvasZoom, setCanvasZoom] = useState<number>(() => {
     if (initialSession?.canvasZoom !== undefined) return initialSession.canvasZoom;
@@ -420,9 +569,31 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   // State - Workflows
   // ---------------------------------------------------------------------------
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflows, setWorkflowsState] = useState<Workflow[]>([]);
   const workflowsRef = useRef(workflows);
   workflowsRef.current = workflows;
+  const setWorkflows = useCallback((update: React.SetStateAction<Workflow[]>) => {
+    const next = typeof update === 'function' ? update(workflowsRef.current) : update;
+    workflowsRef.current = next;
+    setWorkflowsState(next);
+  }, []);
+  const workflowCollectionRevisionRef = useRef<number | null>(null);
+  const workflowStorageReadyRef = useRef(false);
+  const workflowSaveTimerRef = useRef<number | null>(null);
+  const workflowSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const workflowPersistedFingerprintRef = useRef(new Map<string, string>());
+  const workflowConflictIdsRef = useRef(new Set<string>());
+  const workflowDeleteIdsRef = useRef(new Set<string>());
+  const preparedWorkflowRevisionsRef = useRef(new Map<string, {
+    workflow: Workflow;
+    projectIdentity: string;
+    consoleBindingId: string;
+    panelId: number;
+    panelRevision: number;
+    workflowRevision: number | null;
+    backendId: string;
+    backendUrl: string;
+  }>());
   const workflowsLoadedRef = useRef(false); // Tracks whether initial load from localStorage is done
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(initialSession?.selectedWorkflowId ?? null);
   const selectedWorkflowIdRef = useRef(selectedWorkflowId);
@@ -522,13 +693,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const generationRunsRef = useRef(new Map<number, GenerationRun>());
   const generationRunCounterRef = useRef(0);
 
-  const claimGenerationRun = useCallback((panelId: number): GenerationRun | null => {
+  const claimGenerationRun = useCallback((panelId: number, runId = `${panelId}-${Date.now()}-${generationRunCounterRef.current++}`): GenerationRun | null => {
     if (generationRunsRef.current.has(panelId)) {
       showWarning(`Panel ${panelId} is already generating. Wait for it to finish before generating again.`);
       return null;
     }
     const run: GenerationRun = {
-      id: `${panelId}-${Date.now()}-${generationRunCounterRef.current++}`,
+      id: runId,
       panelId,
       submissionFinished: false,
       jobs: new Set(),
@@ -595,26 +766,106 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // Refs to always have access to latest state values in callbacks (avoids stale closures)
   const parameterValuesRef = useRef<Record<string, any>>(parameterValues);
   const selectedPanelIdRef = useRef<number | null>(selectedPanelId);
-  const panelsRef = useRef(panels);
   const enhancementPreferencesRef = useRef<EnhancementPreferences>(enhancementPreferences);
   const enhancementRequestRevisionRef = useRef(0);
-  const enhancementProjectTypeRef = useRef(projectType);
-  const enhancementConfigRef = useRef(projectType === 'live_action' ? liveActionConfig : animationConfig);
-  const enhancementPresetIdRef = useRef<string | undefined>(
-    projectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id,
-  );
+  const enhancementAbortControllerRef = useRef<AbortController | null>(null);
+  const enhancementUsesAgentRef = useRef(false);
+  const [isPromptEnhancementRunning, setIsPromptEnhancementRunning] = useState(false);
   
   // Keep refs in sync with state
   parameterValuesRef.current = parameterValues;
   selectedPanelIdRef.current = selectedPanelId;
-  panelsRef.current = panels;
   enhancementPreferencesRef.current = enhancementPreferences;
-  enhancementProjectTypeRef.current = projectType;
-  enhancementConfigRef.current = projectType === 'live_action' ? liveActionConfig : animationConfig;
-  enhancementPresetIdRef.current = projectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id;
+
+  const hasUnsavedWorkflowChanges = useCallback(() => workflowsRef.current.some(workflow =>
+    !workflowConflictIdsRef.current.has(workflow.id)
+    && !workflowDeleteIdsRef.current.has(workflow.id)
+    && workflowPersistedFingerprintRef.current.get(workflow.id) !== workflowContentFingerprint(workflow),
+  ), []);
+
+  const reconcileWorkflowStorage = useCallback(async () => {
+    const result = await workflowStorage.loadAll();
+    workflowStorageReadyRef.current = true;
+    workflowCollectionRevisionRef.current = result.collectionRevision;
+    const canonical = new Map(result.workflows.map(value => [String((value as Workflow).id), value as Workflow]));
+    const current = workflowsRef.current;
+    let conflicts = 0;
+    const next = current.map(local => {
+      const server = canonical.get(local.id);
+      const localFingerprint = workflowContentFingerprint(local);
+      const baseline = workflowPersistedFingerprintRef.current.get(local.id);
+      if (!server) {
+        if (baseline !== undefined) {
+          workflowConflictIdsRef.current.add(local.id);
+          conflicts += 1;
+        }
+        return local;
+      }
+      const serverFingerprint = workflowContentFingerprint(server);
+      if (localFingerprint === baseline || localFingerprint === serverFingerprint) {
+        workflowConflictIdsRef.current.delete(local.id);
+        workflowPersistedFingerprintRef.current.set(local.id, serverFingerprint);
+        return server;
+      }
+      workflowConflictIdsRef.current.add(local.id);
+      conflicts += 1;
+      return local;
+    });
+    setWorkflows(next);
+    return conflicts;
+  }, [setWorkflows]);
+
+  const persistDirtyWorkflows = useCallback((explicitSnapshot?: Workflow[]): Promise<void> => {
+    const operation = async () => {
+      if (!workflowStorageReadyRef.current) throw new Error('Workflow storage is not ready; local edits were kept in the browser.');
+      const source = explicitSnapshot || workflowsRef.current;
+      const dirty = source.filter(workflow =>
+        !workflowConflictIdsRef.current.has(workflow.id)
+        && workflowPersistedFingerprintRef.current.get(workflow.id) !== workflowContentFingerprint(workflow),
+      );
+      if (dirty.length === 0) return;
+      const result = await workflowStorage.saveAll(dirty as unknown as Record<string, unknown>[]);
+      workflowCollectionRevisionRef.current = result.collectionRevision;
+      const saved = new Map(result.workflows.map(workflow => [workflow.id, workflow]));
+      for (const canonical of result.workflows) {
+        workflowPersistedFingerprintRef.current.set(canonical.id, workflowContentFingerprint(canonical as unknown as Workflow));
+        workflowConflictIdsRef.current.delete(canonical.id);
+      }
+      const latest = workflowsRef.current;
+      setWorkflows(latest.map(workflow => {
+        const record = saved.get(workflow.id);
+        return record ? { ...workflow, revision: record.revision } : workflow;
+      }));
+    };
+    const request = workflowSaveQueueRef.current.catch(() => undefined).then(operation);
+    workflowSaveQueueRef.current = request.then(() => undefined, () => undefined);
+    return request.catch(async error => {
+      let conflicts = 0;
+      try {
+        conflicts = await reconcileWorkflowStorage();
+      } catch {
+        workflowStorageReadyRef.current = false;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      showError(conflicts > 0
+        ? `Workflow save conflict: ${conflicts} local workflow(s) changed elsewhere. Your edits were kept; review the latest snapshot before saving again.`
+        : `Workflow changes were not saved: ${detail}`);
+      throw error;
+    });
+  }, [reconcileWorkflowStorage, setWorkflows, showError]);
+
+  const flushPendingWorkflowSave = useCallback(async () => {
+    if (workflowSaveTimerRef.current !== null) {
+      window.clearTimeout(workflowSaveTimerRef.current);
+      workflowSaveTimerRef.current = null;
+    }
+    await workflowSaveQueueRef.current.catch(() => undefined);
+    if (hasUnsavedWorkflowChanges()) await persistDirtyWorkflows();
+  }, [hasUnsavedWorkflowChanges, persistDirtyWorkflows]);
 
   useEffect(() => () => {
     enhancementRequestRevisionRef.current += 1;
+    enhancementAbortControllerRef.current?.abort();
   }, []);
 
   // Ref for handleParameterChange — allows early effects to call it before it's declared
@@ -969,6 +1220,8 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // State - Multi-Node Parallel Generation
   // ---------------------------------------------------------------------------
   const [selectedBackendIds, setSelectedBackendIds] = useState<string[]>(initialSession?.selectedBackendIds || []);
+  const selectedBackendIdsRef = useRef(selectedBackendIds);
+  selectedBackendIdsRef.current = selectedBackendIds;
   const hasWorkflowForPanel = (panel?: Panel): boolean => Boolean(workflows.find(workflow =>
     workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId
   ));
@@ -991,9 +1244,101 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [showPathMappings, setShowPathMappings] = useState(false);
   const [projectSettings, setProjectSettings] = useProjectSettings();
+  const previousProjectIdentityRef = useRef(projectManager.getSessionIdentity());
+  const projectScopeRef = useRef({ identity: projectManager.getSessionIdentity(), revision: 1, bindingId: crypto.randomUUID() });
+  useEffect(() => () => {
+    projectScopeRef.current.bindingId = crypto.randomUUID();
+  }, []);
+  const projectStateSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [deletedImages, setDeletedImages] = useState<Set<string>>(new Set());
+  const projectComparisonStateRef = useRef({ cameraAngles, renderNodes, comfyUrl, enhancementPreferences, deletedImages, globalPromptOverride, useGlobalPrompt });
+  projectComparisonStateRef.current = { cameraAngles, renderNodes, comfyUrl, enhancementPreferences, deletedImages, globalPromptOverride, useGlobalPrompt };
+  const readCurrentProjectState = useCallback(() => ({
+    ...projectComparisonStateRef.current,
+    panels: panelsRef.current,
+    parameters: parameterValuesRef.current,
+    selectedWorkflowId: selectedWorkflowIdRef.current,
+    settings: projectManager.getProject(),
+    deletedImages: [...projectComparisonStateRef.current.deletedImages].sort(),
+  }), []);
+  const projectSavedFingerprintRef = useRef<string | null | undefined>(undefined);
+  if (projectSavedFingerprintRef.current === undefined) {
+    projectSavedFingerprintRef.current = initialSession ? null : projectStateFingerprint(readCurrentProjectState());
+  }
+  const hasUnsavedProjectWork = (): boolean => projectSavedFingerprintRef.current !== projectStateFingerprint(readCurrentProjectState())
+    || hasUnsavedWorkflowChanges();
+
+  const persistProjectStateSnapshot = useCallback((
+    panelSnapshot: Panel[],
+    parameterSnapshot: Record<string, unknown>,
+    workflowId: string | undefined,
+    settingsOverride: ProjectSettings = projectManager.getProject(),
+    assertCurrent?: () => void,
+  ) => {
+    const sourceIdentity = projectManager.getSessionIdentity();
+    const snapshot = JSON.parse(JSON.stringify({
+      ...readCurrentProjectState(), panels: panelSnapshot, parameters: parameterSnapshot,
+      selectedWorkflowId: workflowId || null, settings: settingsOverride,
+    })) as ReturnType<typeof readCurrentProjectState>;
+    const fingerprint = projectStateFingerprint(snapshot);
+    const request = projectStateSaveQueueRef.current.catch(() => undefined).then(async () => {
+      assertCurrent?.();
+      const result = await projectManager.saveProjectState(snapshot.panels, undefined, snapshot.parameters, {
+        selectedWorkflowId: workflowId,
+        renderNodes: snapshot.renderNodes,
+        comfyUrl: snapshot.comfyUrl,
+        cameraAngles: snapshot.cameraAngles,
+        enhancementPreferences: snapshot.enhancementPreferences,
+        deletedImages: snapshot.deletedImages,
+        globalPromptOverride: snapshot.globalPromptOverride,
+        useGlobalPrompt: snapshot.useGlobalPrompt,
+      }, snapshot.settings);
+      if (result.success && result.savedPath && projectManager.getSessionIdentity() === sourceIdentity) {
+        projectSavedFingerprintRef.current = fingerprint;
+      }
+      return result;
+    });
+    projectStateSaveQueueRef.current = request.then(() => undefined, () => undefined);
+    return request;
+  }, [readCurrentProjectState]);
+
+  useEffect(() => {
+    const syncProjectBinding = (settings: ProjectSettings) => {
+      const identity = projectManager.getSessionIdentity(settings);
+      const identityChanged = previousProjectIdentityRef.current !== identity;
+      previousProjectIdentityRef.current = identity;
+      if (identityChanged) {
+        projectScopeRef.current = { identity, revision: projectScopeRef.current.revision + 1, bindingId: crypto.randomUUID() };
+        notifyAgentSurfaceContextChanged('console');
+        enhancementRequestRevisionRef.current += 1;
+        if (enhancementUsesAgentRef.current) enhancementAbortControllerRef.current?.abort();
+      }
+    };
+    const unsubscribeProject = projectManager.subscribe(syncProjectBinding);
+    syncProjectBinding(projectManager.getProject());
+    return unsubscribeProject;
+  }, []);
+
+  useEffect(() => {
+    let previous = getAgentExecutionFingerprint();
+    const invalidate = () => {
+      const next = getAgentExecutionFingerprint();
+      if (next === previous) return;
+      previous = next;
+      if (enhancementUsesAgentRef.current) {
+        enhancementRequestRevisionRef.current += 1;
+        enhancementAbortControllerRef.current?.abort();
+      }
+    };
+    const unsubscribeSettings = subscribeAgentSettings(invalidate);
+    const unsubscribeGateway = subscribeAgentGateway(invalidate);
+    return () => {
+      unsubscribeSettings();
+      unsubscribeGateway();
+    };
+  }, []);
   
   // Phase 6: Track deleted images to filter on reload
-  const [deletedImages, setDeletedImages] = useState<Set<string>>(new Set());
   
   // Phase 4: Loading progress state for project scanning
   const [isLoadingProject, setIsLoadingProject] = useState(false);
@@ -1430,15 +1775,16 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       try {
         // Load from persistent backend storage
         const result = await workflowStorage.loadAll();
+        workflowStorageReadyRef.current = true;
+        workflowCollectionRevisionRef.current = result.collectionRevision;
+        workflowPersistedFingerprintRef.current = new Map((result.workflows as Workflow[]).map(workflow => [workflow.id, workflowContentFingerprint(workflow)]));
         if (result.workflows && result.workflows.length > 0) {
           const { migrated, changed } = migrateVideoInputTypes(result.workflows as typeof workflows);
           setWorkflows(migrated);
           if (changed) {
             console.log('[Workflows] Migrated video input types from "image" to "video" in stored workflows');
             // Persist the corrected data back to storage
-            await workflowStorage.saveAll(migrated as unknown as Record<string, unknown>[]).catch(e => 
-              console.warn('[Workflows] Failed to persist video type migration:', e)
-            );
+            await persistDirtyWorkflows(migrated).catch(e => console.warn('[Workflows] Failed to persist video type migration:', e));
           }
           if (!selectedWorkflowIdRef.current) {
             setSelectedWorkflowId((result.workflows[0] as { id: string }).id);
@@ -1457,7 +1803,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                   setSelectedWorkflowId(parsed[0].id);
                 }
                 // Migrate to backend
-                await workflowStorage.saveAll(parsed);
+                await persistDirtyWorkflows(parsed);
                 // Clear legacy storage after successful migration
                 localStorage.removeItem('storyboard_workflows');
                 console.log('[Workflows] Migration complete — localStorage cleared');
@@ -1468,6 +1814,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           }
         }
       } catch (error) {
+        if (workflowCollectionRevisionRef.current === null) workflowStorageReadyRef.current = false;
         console.error('[Workflows] Failed to load from backend, falling back to localStorage:', error);
         // Fallback to localStorage if backend is not available
         const savedWorkflows = localStorage.getItem('storyboard_workflows');
@@ -1490,13 +1837,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     
     // Load render nodes
     orchestratorManager.loadFromStorage();
-  }, []);
+  }, [persistDirtyWorkflows, setWorkflows]);
   
   // ---------------------------------------------------------------------------
   // Effects - Save workflows to persistent backend storage
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!workflowsLoadedRef.current) return;
+    if (selectedWorkflowId === null) return;
     const visibleWorkflows = filterWorkflowsByRoute(workflows, activeTab, activeSubTab);
     if (!visibleWorkflows.some(workflow => workflow.id === selectedWorkflowId)) {
       const nextWorkflowId = visibleWorkflows[0]?.id || null;
@@ -1506,17 +1854,20 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
   useEffect(() => {
     // Skip save on initial mount — the load hasn't completed yet
-    if (!workflowsLoadedRef.current) return;
+    if (!workflowsLoadedRef.current || !workflowStorageReadyRef.current || !hasUnsavedWorkflowChanges()) return;
     
     // Debounce save to avoid hammering the backend on rapid changes
-    const timer = setTimeout(() => {
-      workflowStorage.saveAll(workflows as unknown as Record<string, unknown>[]).catch(error => {
-        console.error('[Workflows] Failed to save to backend:', error);
-      });
+    const timer = window.setTimeout(() => {
+      if (workflowSaveTimerRef.current === timer) workflowSaveTimerRef.current = null;
+      void persistDirtyWorkflows().catch(() => undefined);
     }, 500);
+    workflowSaveTimerRef.current = timer;
     
-    return () => clearTimeout(timer);
-  }, [workflows]);
+    return () => {
+      window.clearTimeout(timer);
+      if (workflowSaveTimerRef.current === timer) workflowSaveTimerRef.current = null;
+    };
+  }, [workflows, hasUnsavedWorkflowChanges, persistDirtyWorkflows]);
   
   // ---------------------------------------------------------------------------
   // Effects - Image Viewer Focus Management
@@ -2345,7 +2696,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // ---------------------------------------------------------------------------
   const addPanel = useCallback(() => {
     setPanels(prev => {
-      const newId = Math.max(...prev.map(p => p.id), 0) + 1;
+      const newId = Math.max(panelIdHighWaterRef.current, ...prev.map(p => p.id), 0) + 1;
+      const existingNames = new Set(prev.map(p => p.name));
+      let nameSuffix = newId;
+      let panelName = `Panel_${String(nameSuffix).padStart(2, '0')}`;
+      while (existingNames.has(panelName)) {
+        nameSuffix += 1;
+        panelName = `Panel_${String(nameSuffix).padStart(2, '0')}`;
+      }
       const cols = 3;
       const index = prev.length;
       const row = Math.floor(index / cols);
@@ -2353,7 +2711,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       
       return [...prev, {
         id: newId,
-        name: `Panel_${String(newId).padStart(2, '0')}`,  // CRITICAL: Set explicit panel name
+        name: panelName,  // CRITICAL: Set explicit panel name
         image: null,
         images: [],
         imageHistory: [],
@@ -2535,22 +2893,44 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     clientId?: string,
     workflowInfo?: WorkflowProgressInfo,
   ) => void>(() => {});
+
+  const generationScopeIsCurrent = (options: GenerationRequestOptions, panelId: number, workflow: Workflow): boolean => {
+    const currentWorkflow = workflowsRef.current.find(item => item.id === workflow.id);
+    const panel = panelsRef.current.find(item => item.id === panelId);
+    const activeWorkflowId = !options.usePanelSnapshot && selectedPanelIdRef.current === panelId
+      ? selectedWorkflowIdRef.current || panel?.workflowId
+      : panel?.workflowId;
+    return projectScopeRef.current.identity === options.projectIdentity
+      && projectScopeRef.current.revision === options.projectRevision
+      && panelInputRevisionRef.current.get(panelId) === options.panelInputRevision
+      && activeWorkflowId === options.workflowId
+      && Boolean(currentWorkflow)
+      && currentWorkflow?.revision === workflow.revision
+      && Boolean(currentWorkflow && workflowContentFingerprint(currentWorkflow) === workflowContentFingerprint(workflow))
+      && (!options.backendBindings || options.backendIds.every(id =>
+        orchestratorManager.getNodes().find(node => node.id === id)?.url === options.backendBindings?.[id],
+      ))
+      && (!options.usePanelSnapshot || options.backendIds.every(id => selectedBackendIdsRef.current.includes(id)));
+  };
   
   /**
    * Generate images in parallel across multiple render nodes
    * CRITICAL: Reuse the SAME workflow built from single-node logic, only changing seeds
    */
-  const generateParallel = useCallback(async (panelId: number, backendIds: string[]) => {
-    const panel = panels.find(p => p.id === panelId);
+  const generateParallel = useCallback(async (panelId: number, backendIds: string[], requestOptions: GenerationRequestOptions) => {
+    const requestPanels = requestOptions.usePanelSnapshot ? panelsRef.current : panels;
+    const requestWorkflows = requestOptions.usePanelSnapshot ? workflowsRef.current : workflows;
+    const requestNodes = requestOptions.usePanelSnapshot ? orchestratorManager.getNodes() : renderNodes;
+    const panel = requestPanels.find(p => p.id === panelId);
     const isLivePanel = selectedPanelIdRef.current === panelId;
     // The sidebar is live only for the selected panel. Other panels must use
     // their own stored effective values/workflow, never another panel's ref.
-    const currentParameterValues = isLivePanel
-      ? parameterValuesRef.current
-      : (panel?.parameterValues || {});
+    const currentParameterValues = requestOptions.usePanelSnapshot
+      ? (panel?.parameterValues || {})
+      : isLivePanel ? parameterValuesRef.current : (panel?.parameterValues || {});
     
-    const workflowIdToUse = isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId;
-    const workflow = workflows.find(w => w.id === workflowIdToUse);
+    const workflowIdToUse = requestOptions.workflowId || (isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId);
+    const workflow = requestWorkflows.find(w => w.id === workflowIdToUse);
     
     if (!panel || !workflow) {
       showError('Panel or workflow not found');
@@ -2562,10 +2942,25 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       return;
     }
 
-    const generationRun = claimGenerationRun(panelId);
+    if (!Number.isSafeInteger(workflow.revision) || !workflow.revision) {
+      showError('Save the workflow to canonical storage before generating.');
+      return;
+    }
+
+    const generationRun = claimGenerationRun(panelId, requestOptions.runId);
     if (!generationRun) return;
 
     try {
+      createGenerationRun({
+        runId: requestOptions.runId,
+        commandId: requestOptions.commandId,
+        idempotencyKey: requestOptions.idempotencyKey,
+        projectIdentity: requestOptions.projectIdentity,
+        panelId,
+        workflowId: workflow.id,
+        workflowRevision: workflow.revision,
+        mode: 'parallel',
+      });
       addLog('comfyui', `Starting parallel generation on ${backendIds.length} nodes for panel ${panelId}...`);
       
       // ====================================================================================
@@ -2609,7 +3004,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 addLog('info', `Re-uploading ${filename} from output to input folder on all ${backendIds.length} nodes`);
                 
                 // Get all selected nodes
-                const selectedNodes = renderNodes.filter(n => backendIds.includes(n.id) && n.status === 'online');
+                const selectedNodes = requestNodes.filter(n => backendIds.includes(n.id) && n.status === 'online');
                 if (selectedNodes.length === 0) {
                   const errorMsg = `Cannot re-upload image: no online render nodes`;
                   addLog('error', errorMsg);
@@ -2685,7 +3080,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           addLog('info', `Uploading data URL ${isVideo ? 'video' : 'image'} for ${key} to all ${backendIds.length} nodes`);
           
           // Get all selected nodes
-          const selectedNodes = renderNodes.filter(n => backendIds.includes(n.id) && n.status === 'online');
+          const selectedNodes = requestNodes.filter(n => backendIds.includes(n.id) && n.status === 'online');
           if (selectedNodes.length === 0) {
             const errorMsg = `Cannot upload data URL media: no online render nodes`;
             addLog('error', errorMsg);
@@ -2865,7 +3260,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       
       // Initialize parallel jobs tracking
       const parallelJobs = backendIds.map(backendId => {
-        const node = renderNodes.find(n => n.id === backendId);
+        const node = requestNodes.find(n => n.id === backendId);
         return {
           nodeId: backendId,
           nodeName: node?.name || backendId,
@@ -2882,6 +3277,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       const currentHistory = panel?.imageHistory || [];
       const startVersion = await projectManager.getNextVersion(panelName, currentHistory);
       nextVersionRef.current.set(panelId, startVersion);
+
+      if (!generationScopeIsCurrent(requestOptions, panelId, workflow)) {
+        throw new Error('The panel, project or workflow changed while preparing the parallel prompts. No prompts were submitted.');
+      }
       
       // Update panel to show it's generating with parallel jobs tracking
       setPanels(prev => prev.map(p =>
@@ -2894,6 +3293,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           parallelJobs: parallelJobs,
         } : p
       ));
+      requestOptions.panelInputRevision = panelInputRevisionRef.current.get(panelId) || requestOptions.panelInputRevision;
       
       // Track generation start time and reset batch save trigger
       generationStartTimes.current.set(panelId, Date.now());
@@ -2906,10 +3306,19 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       
       for (let i = 0; i < backendIds.length; i++) {
         const backendId = backendIds[i];
-        const node = renderNodes.find(n => n.id === backendId);
+        const node = requestNodes.find(n => n.id === backendId);
+        const seed = Math.floor(Math.random() * 2147483647);
+        prepareGenerationJob(generationRun.id, backendId, seed);
         
         if (!node || node.status !== 'online') {
           addLog('warning', `Skipping offline node: ${node?.name || backendId}`);
+          updateGenerationJob(generationRun.id, backendId, 'failed_before_submission', { message: 'The selected backend was offline before submission.' });
+          finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
+          continue;
+        }
+
+        if (!generationScopeIsCurrent(requestOptions, panelId, workflow)) {
+          updateGenerationJob(generationRun.id, backendId, 'failed_before_submission', { message: 'Panel, project or workflow inputs changed before submission.' });
           finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
           continue;
         }
@@ -2918,8 +3327,6 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         const workflowCopy = JSON.parse(JSON.stringify(baseWorkflow));
         
         // Generate a random seed for this variation
-        const seed = Math.floor(Math.random() * 2147483647);
-        
         // Apply the seed to the cloned workflow
         applySeedToWorkflow(workflowCopy, seed);
         
@@ -2941,36 +3348,24 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           }
           
           // Submit to this specific node
-          const response = await fetch(`${node.url}/prompt`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          if (!generationScopeIsCurrent(requestOptions, panelId, workflow)) {
+            updateGenerationJob(generationRun.id, backendId, 'failed_before_submission', { message: 'Panel, project or workflow inputs changed before submission.' });
+            finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
+            disconnectWebSocket(node.url, clientId);
+            continue;
+          }
+          const submitted = await submitPromptWithJournal({
+            runId: generationRun.id,
+            backendId,
+            seed,
+            url: `${node.url}/prompt`,
+            body: {
               prompt: workflowCopy,
               client_id: clientId,
-            }),
+            },
           });
-          
-          if (!response.ok) {
-            let errorDetail = `HTTP ${response.status}`;
-            try {
-              const errorData = await response.json();
-              console.error('ComfyUI error response:', errorData);
-              if (errorData.error) {
-                errorDetail = typeof errorData.error === 'string'
-                  ? errorData.error
-                  : JSON.stringify(errorData.error);
-              }
-            } catch (e) {
-              // Response wasn't JSON
-            }
-            throw new Error(errorDetail);
-          }
-          
-          const data = await response.json();
-          if (typeof data.prompt_id !== 'string' || !data.prompt_id) {
-            throw new Error('ComfyUI did not return a prompt ID');
-          }
-          addLog('comfyui', `Queued on ${node.name}: ${data.prompt_id}`);
+          const promptId = submitted.promptId;
+          addLog('comfyui', `Queued on ${node.name}: ${promptId}`);
           
           // Update parallel job with prompt ID and seed
           setPanels(prev => prev.map(p => {
@@ -2978,7 +3373,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
             return {
               ...p,
               parallelJobs: p.parallelJobs.map(j =>
-                j.nodeId === backendId ? { ...j, promptId: data.prompt_id, seed, status: 'running' as const } : j
+                j.nodeId === backendId ? { ...j, promptId, seed, status: 'running' as const } : j
               )
             };
           }));
@@ -2987,33 +3382,60 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           activeJobs.push({
             nodeId: backendId,
             nodeName: node.name,
-            promptId: data.prompt_id,
+            promptId,
             seed: seed
           });
           
           // The connection tracker also reconciles history while WebSocket is unavailable.
-          trackParallelJobWithWebSocketRef.current(data.prompt_id, panelId, backendId, node.url, nodeWs, generationRun.id, node.name, seed, generationSnapshot, clientId, parallelWfProgressInfo);
+          trackParallelJobWithWebSocketRef.current(promptId, panelId, backendId, node.url, nodeWs, generationRun.id, node.name, seed, generationSnapshot, clientId, parallelWfProgressInfo);
           
         } catch (error) {
           disconnectWebSocket(node.url, clientId);
-          const errorMsg = `Failed to submit to ${node.name}: ${error}`;
-          addLog('error', errorMsg);
-          showError(errorMsg);
-          finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
+          const currentRun = getGenerationRun(generationRun.id);
+          const currentJob = currentRun?.jobs.find(job => job.backendId === backendId);
+          if (currentJob?.status === 'prepared') {
+            updateGenerationJob(generationRun.id, backendId, 'failed_before_submission', { message: error instanceof Error ? error.message : String(error) });
+          }
+          if (error instanceof GenerationSubmissionError && error.state === 'submission_unknown' || currentJob?.status === 'submission_unknown') {
+            const message = `Submission outcome is unknown on ${node.name}; inspect the durable run before retrying.`;
+            addLog('warning', message);
+            showWarning(message);
+            setPanels(prev => prev.map(p => p.id !== panelId || !p.parallelJobs ? p : {
+              ...p,
+              parallelJobs: p.parallelJobs.map(job => job.nodeId === backendId
+                ? { ...job, currentNodeName: 'Submission outcome unknown' }
+                : job),
+            }));
+          } else if (currentJob && ['accepted', 'running', 'cancel_requested'].includes(currentJob.status)) {
+            const message = `ComfyUI accepted the prompt on ${node.name}, but live tracking did not attach; inspect the durable run.`;
+            addLog('warning', message);
+            showWarning(message);
+          } else {
+            const errorMsg = `Failed to submit to ${node.name}: ${error}`;
+            addLog('error', errorMsg);
+            showError(errorMsg);
+            finishParallelJobRef.current(generationRun.id, panelId, backendId, 'error');
+          }
         }
       }
       
       if (activeJobs.length === 0) {
-        showError('Failed to submit to any nodes');
-        setPanels(prev => prev.map(p =>
-          p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
-        ));
+        const unresolved = getGenerationRun(generationRun.id)?.jobs.some(job => job.status === 'submission_unknown');
+        if (unresolved) {
+          setPanels(prev => prev.map(p => p.id === panelId ? { ...p, status: 'generating', progress: 0 } : p));
+        } else {
+          showError('Failed to submit to any nodes');
+          setPanels(prev => prev.map(p =>
+            p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
+          ));
+        }
         return;
       }
       
       showInfo(`Started parallel generation on ${activeJobs.length} node(s)`);
       
     } catch (error: any) {
+      try { failGenerationBeforeSubmission(generationRun.id, error instanceof Error ? error.message : String(error)); } catch { /* Preserve the original generation failure. */ }
       const errorMsg = `Parallel generation failed: ${error.message || String(error)}`;
       addLog('error', errorMsg);
       showError(errorMsg);
@@ -3023,16 +3445,70 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     } finally {
       finishGenerationSubmission(generationRun.id);
     }
-  }, [panels, workflows, selectedWorkflowId, useGlobalPrompt, globalPromptOverride, renderNodes, addLog, showError, showInfo, claimGenerationRun, finishGenerationSubmission]);
+  }, [panels, workflows, selectedWorkflowId, useGlobalPrompt, globalPromptOverride, renderNodes, addLog, showError, showInfo, showWarning, claimGenerationRun, finishGenerationSubmission]);
   
-  const generatePanel = useCallback(async (panelId: number) => {
-    const panel = panels.find(p => p.id === panelId);
-    const panelReason = getGenerationDisabledReason(
-      Boolean(workflows.find(workflow => workflow.id === selectedWorkflowId || workflow.id === panel?.workflowId)),
-      {
-        managedNodes: renderNodes,
+  const generatePanel = useCallback(async (panelId: number, suppliedOptions?: GenerationRequestOptions) => {
+    try {
+      await flushPendingWorkflowSave();
+    } catch {
+      return;
+    }
+    const requestPanels = suppliedOptions?.usePanelSnapshot ? panelsRef.current : panels;
+    const requestWorkflows = suppliedOptions?.usePanelSnapshot ? workflowsRef.current : workflows;
+    const requestNodes = suppliedOptions?.usePanelSnapshot ? orchestratorManager.getNodes() : renderNodes;
+    const panel = requestPanels.find(p => p.id === panelId);
+    const isLivePanel = selectedPanelIdRef.current === panelId;
+    const workflowIdToUse = suppliedOptions?.workflowId || (isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId);
+    let backendIdsToUse = suppliedOptions?.backendIds || [...selectedBackendIds];
+    if (!panel || !workflowIdToUse) {
+      showError('Panel or workflow not found');
+      return;
+    }
+    if (!suppliedOptions && backendIdsToUse.length === 0) {
+      const defaultTarget = resolveGenerationTarget({
+        managedNodes: requestNodes,
         browserStatuses: browserNodeStatus,
-        selectedBackendIds,
+        selectedBackendIds: [],
+        panelNodeId: panel.nodeId,
+        connectionStatus,
+      });
+      if (defaultTarget.node) backendIdsToUse = [defaultTarget.node.id];
+    }
+    const requestOptions: GenerationRequestOptions = suppliedOptions || {
+      runId: crypto.randomUUID(),
+      commandId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      projectIdentity: projectScopeRef.current.identity,
+      projectRevision: projectScopeRef.current.revision,
+      panelInputRevision: panelInputRevisionRef.current.get(panelId) || 1,
+      workflowId: workflowIdToUse,
+      backendIds: backendIdsToUse,
+      mode: backendIdsToUse.length > 1 ? 'parallel' : 'single',
+      usePanelSnapshot: false,
+    };
+    if (requestOptions.projectIdentity !== projectScopeRef.current.identity
+      || requestOptions.projectRevision !== projectScopeRef.current.revision
+      || requestOptions.workflowId !== workflowIdToUse
+      || new Set(requestOptions.backendIds).size !== requestOptions.backendIds.length
+      || (!suppliedOptions && requestOptions.backendIds.length === 0)
+      || (requestOptions.mode === 'single' && requestOptions.backendIds.length !== 1)
+      || (requestOptions.mode === 'parallel' && requestOptions.backendIds.length < 2)) {
+      showError('The generation request no longer matches the active project, workflow, panel or backend selection.');
+      return;
+    }
+    const unresolvedRun = listGenerationRuns(requestOptions.projectIdentity).find(run =>
+      run.panelId === panelId && run.jobs.some(job => ['prepared', 'submitting', 'submission_unknown', 'accepted', 'running', 'cancel_requested'].includes(job.status)),
+    );
+    if (unresolvedRun) {
+      showError(`Panel ${panelId} has unresolved run ${unresolvedRun.runId}. Inspect that run before submitting another prompt.`);
+      return;
+    }
+    const panelReason = getGenerationDisabledReason(
+      Boolean(requestWorkflows.find(workflow => workflow.id === requestOptions.workflowId)),
+      {
+        managedNodes: requestNodes,
+        browserStatuses: browserNodeStatus,
+        selectedBackendIds: requestOptions.backendIds,
         panelNodeId: panel?.nodeId,
         connectionStatus,
       },
@@ -3042,20 +3518,20 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       return;
     }
     // Fix #2: Check if user explicitly selected multiple nodes for parallel generation
-    if (selectedBackendIds.length > 1) {
-      await generateParallel(panelId, selectedBackendIds);
+    if (requestOptions.mode === 'parallel') {
+      await generateParallel(panelId, requestOptions.backendIds, requestOptions);
       return;
     }
 
-    const generationRun = claimGenerationRun(panelId);
+    const generationRun = claimGenerationRun(panelId, requestOptions.runId);
     if (!generationRun) return;
 
     try {
       // Single-node generation uses the same target resolution as the gate and editor.
       const target = resolveGenerationTarget({
-        managedNodes: renderNodes,
+        managedNodes: requestNodes,
         browserStatuses: browserNodeStatus,
-        selectedBackendIds,
+      selectedBackendIds: requestOptions.backendIds,
         panelNodeId: panel?.nodeId,
         connectionStatus,
       });
@@ -3063,6 +3539,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         const errorMsg = target.reason || 'No managed render node available. Add one in Manage Nodes.';
         addLog('error', errorMsg);
         showError(errorMsg);
+        finishGenerationSubmission(generationRun.id);
         return;
       }
       const targetUrl = target.url;
@@ -3089,21 +3566,28 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       const errorMsg = `Cannot connect to ${nodeName}: ${error}`;
       addLog('error', errorMsg);
       showError(errorMsg);
+      finishGenerationSubmission(generationRun.id);
       return;
     }
     
     const isLivePanel = selectedPanelIdRef.current === panelId;
     // Only the selected panel owns the live sidebar values. A background panel
     // must generate from its own latest stored effective snapshot.
-    const currentParameterValues = isLivePanel
-      ? parameterValuesRef.current
-      : (panel?.parameterValues || {});
+    const currentParameterValues = requestOptions.usePanelSnapshot
+      ? (panel?.parameterValues || {})
+      : isLivePanel ? parameterValuesRef.current : (panel?.parameterValues || {});
     
-    const workflowIdToUse = isLivePanel ? (selectedWorkflowId || panel?.workflowId) : panel?.workflowId;
-    const workflow = workflows.find(w => w.id === workflowIdToUse);
-    if (!workflow) {
-      addLog('warning', 'No workflow selected');
+    const workflow = requestWorkflows.find(w => w.id === requestOptions.workflowId);
+    if (!workflow || !Number.isSafeInteger(workflow.revision) || !workflow.revision) {
+      const message = workflow ? 'Save the workflow to canonical storage before generating.' : 'No workflow selected';
+      addLog('warning', message);
+      showError(message);
+      finishGenerationSubmission(generationRun.id);
       return;
+    }
+
+    if (!generationScopeIsCurrent(requestOptions, panelId, workflow)) {
+      throw new Error('The panel, project or workflow changed before generation began. No prompt was submitted.');
     }
     
     // ALWAYS use parameters from the UI (ref) - never use stale panel.parameterValues
@@ -3112,6 +3596,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     setPanels(prev => prev.map(p =>
       p.id === panelId ? { ...p, status: 'generating', progress: 0, parameterValues: { ...paramsToUse }, workflowId: workflowIdToUse || undefined, parallelJobs: undefined } : p
     ));
+    requestOptions.panelInputRevision = panelInputRevisionRef.current.get(panelId) || requestOptions.panelInputRevision;
     
     // Track generation start time
     generationStartTimes.current.set(panelId, Date.now());
@@ -3263,6 +3748,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           setPanels(prev => prev.map(p => 
             p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
           ));
+          finishGenerationSubmission(generationRun.id);
           return;
         }
       } else {
@@ -3369,42 +3855,39 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         addLog('warning', `WebSocket to ${targetUrl} failed, will use polling`);
       }
       
-      // Submit to selected ComfyUI node with matching client_id
-      const response = await fetch(`${targetUrl}/prompt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (!generationScopeIsCurrent(requestOptions, panelId, workflow)) {
+        throw new Error('The panel, project or workflow changed while preparing this prompt. No prompt was submitted.');
+      }
+      createGenerationRun({
+        runId: generationRun.id,
+        commandId: requestOptions.commandId,
+        idempotencyKey: requestOptions.idempotencyKey,
+        projectIdentity: requestOptions.projectIdentity,
+        panelId,
+        workflowId: workflow.id,
+        workflowRevision: workflow.revision,
+        mode: 'single',
+      });
+      const seedNode = Object.values(builtWorkflow).find((nodeValue: unknown) => {
+        if (!nodeValue || typeof nodeValue !== 'object') return false;
+        const node = nodeValue as { class_type?: unknown };
+        return typeof node.class_type === 'string' && (node.class_type.includes('Sampler') || node.class_type.includes('KSampler') || node.class_type === 'RandomNoise');
+      }) as { inputs?: Record<string, unknown> } | undefined;
+      const graphSeed = seedNode?.inputs?.seed ?? seedNode?.inputs?.noise_seed;
+      const journalSeed = typeof graphSeed === 'number' && Number.isFinite(graphSeed)
+        ? graphSeed
+        : typeof paramsToUse.seed === 'number' && Number.isFinite(paramsToUse.seed) ? paramsToUse.seed : -1;
+      const submitted = await submitPromptWithJournal({
+        runId: generationRun.id,
+        backendId: target.node.id,
+        seed: journalSeed,
+        url: `${targetUrl}/prompt`,
+        body: {
           prompt: builtWorkflow,
           client_id: clientId, // Must match WebSocket client ID!
-        }),
+        },
       });
-      
-      if (!response.ok) {
-        // Try to get detailed error from ComfyUI
-        let errorDetail = `HTTP ${response.status}`;
-        try {
-          const errorData = await response.json();
-          console.error('ComfyUI error response:', errorData);
-          if (errorData.error) {
-            errorDetail = typeof errorData.error === 'string' 
-              ? errorData.error 
-              : JSON.stringify(errorData.error);
-          }
-          if (errorData.node_errors) {
-            console.error('Node errors:', errorData.node_errors);
-            errorDetail += ` | Node errors: ${JSON.stringify(errorData.node_errors)}`;
-          }
-        } catch (e) {
-          // Response wasn't JSON
-        }
-        throw new Error(errorDetail);
-      }
-      
-      const data = await response.json();
-      if (typeof data.prompt_id !== 'string' || !data.prompt_id) {
-        throw new Error('ComfyUI did not return a prompt ID');
-      }
-      addLog('comfyui', `Queued prompt: ${data.prompt_id} on ${nodeName}`);
+      addLog('comfyui', `Queued prompt: ${submitted.promptId} on ${nodeName}`);
       
       // Build workflow progress info for multi-phase tracking (e.g., 2 KSamplers in video workflows)
       const wfProgressInfo = buildWorkflowProgressInfo(builtWorkflow);
@@ -3413,20 +3896,47 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       }
       
       // Use the same callbacks for live events and history reconciliation.
-      trackWithWebSocketRef.current(data.prompt_id, panelId, targetUrl, nodeWs, generationRun.id, generationSnapshot, clientId, wfProgressInfo);
+      trackWithWebSocketRef.current(submitted.promptId, panelId, targetUrl, nodeWs, generationRun.id, generationSnapshot, clientId, wfProgressInfo);
     } catch (error) {
       disconnectWebSocket(targetUrl, clientId);
-      const errorMsg = `Failed to queue generation: ${error}`;
+      const journalRun = getGenerationRun(generationRun.id);
+      const targetBackendId = target.node?.id;
+      const journalJob = targetBackendId ? journalRun?.jobs.find(job => job.backendId === targetBackendId) : undefined;
+      if (journalRun && journalRun.jobs.length === 0) {
+        try { failGenerationBeforeSubmission(generationRun.id, error instanceof Error ? error.message : String(error)); } catch { /* Preserve the original generation failure. */ }
+      }
+      if (error instanceof GenerationSubmissionError && error.state === 'submission_unknown' || journalJob?.status === 'submission_unknown') {
+        const message = 'ComfyUI submission outcome is unknown; inspect the durable run before retrying.';
+        addLog('warning', message);
+        showWarning(message);
+        setPanels(prev => prev.map(p => p.id === panelId ? { ...p, status: 'generating', progress: 0, progressNodeName: 'Submission outcome unknown' } : p));
+      } else if (journalJob && ['accepted', 'running', 'cancel_requested'].includes(journalJob.status)) {
+        const message = 'ComfyUI accepted the prompt, but live tracking did not attach; inspect the durable run.';
+        addLog('warning', message);
+        showWarning(message);
+        setPanels(prev => prev.map(p => p.id === panelId ? { ...p, status: 'generating', progress: 0, progressNodeName: 'Accepted; tracking unavailable' } : p));
+      } else {
+        const errorMsg = `Failed to queue generation: ${error}`;
+        addLog('error', errorMsg);
+        showError(errorMsg);
+        setPanels(prev => prev.map(p =>
+          p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
+        ));
+      }
+    }
+    } catch (error) {
+      const journalRun = getGenerationRun(generationRun.id);
+      if (journalRun && journalRun.jobs.length === 0) {
+        try { failGenerationBeforeSubmission(generationRun.id, error instanceof Error ? error.message : String(error)); } catch { /* Preserve the original generation failure. */ }
+      }
+      const errorMsg = `Generation preparation failed: ${error instanceof Error ? error.message : String(error)}`;
       addLog('error', errorMsg);
       showError(errorMsg);
-      setPanels(prev => prev.map(p => 
-        p.id === panelId ? { ...p, status: 'error', progress: 0 } : p
-      ));
-    }
+      setPanels(prev => prev.map(p => p.id === panelId ? { ...p, status: 'error', progress: 0 } : p));
     } finally {
       finishGenerationSubmission(generationRun.id);
     }
-  }, [workflows, selectedWorkflowId, browserNodeStatus, connectionStatus, addLog, showError, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission]);
+  }, [workflows, selectedWorkflowId, browserNodeStatus, connectionStatus, addLog, showError, showWarning, panels, renderNodes, selectedBackendIds, globalPromptOverride, useGlobalPrompt, generateParallel, claimGenerationRun, finishGenerationSubmission, flushPendingWorkflowSave]);
   
   // Track generation progress via WebSocket (real-time)
   const trackWithWebSocket = useCallback((
@@ -3466,6 +3976,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         const activeJob = activeGenerationsRef.current.get(jobKey);
         if (!activeJob || activeJob.runId !== runId || activeJob.finishing || !isCurrentGenerationRun(panelId, runId)
           || progress.promptId !== promptId) return;
+        try { updateGenerationJobByPrompt(runId, promptId, 'running'); } catch (error) { console.warn('[GenerationJournal] Could not persist progress:', error); }
         // Use overall percent when available (accounts for multi-sampler workflows)
         const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
         
@@ -3501,6 +4012,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       async (_promptId, _outputs) => {
         const activeJob = activeGenerationsRef.current.get(jobKey);
         if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        try { updateGenerationJobByPrompt(runId, promptId, 'complete'); } catch (error) { console.warn('[GenerationJournal] Could not persist completion:', error); }
         markGenerationJobFinishing(runId, jobKey);
         if (!isCurrentGenerationRun(panelId, runId)) {
           settleGenerationJob(runId, jobKey);
@@ -3717,6 +4229,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           return;
         }
         const cancelled = error === 'Generation cancelled';
+        try { updateGenerationJobByPrompt(runId, promptId, cancelled ? 'cancelled' : 'error', error); } catch (journalError) { console.warn('[GenerationJournal] Could not persist terminal state:', journalError); }
         const errorMsg = cancelled ? error : `Generation failed: ${error}`;
         addLog(cancelled ? 'info' : 'error', errorMsg);
         if (!cancelled) showError(errorMsg);
@@ -3932,6 +4445,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         const activeJob = activeGenerationsRef.current.get(jobKey);
         if (!activeJob || activeJob.runId !== runId || activeJob.finishing || !isCurrentGenerationRun(panelId, runId)
           || progress.promptId !== promptId) return;
+        try { updateGenerationJobByPrompt(runId, promptId, 'running'); } catch (error) { console.warn('[GenerationJournal] Could not persist parallel progress:', error); }
         // Use overall percent when available (accounts for multi-sampler workflows)
         const pct = progress.overallPercent ?? Math.round((progress.value / progress.max) * 100);
         
@@ -3963,6 +4477,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       async (_promptId, _outputs) => {
         const activeJob = activeGenerationsRef.current.get(jobKey);
         if (_promptId !== promptId || !activeJob || activeJob.runId !== runId || activeJob.finishing) return;
+        try { updateGenerationJobByPrompt(runId, promptId, 'complete'); } catch (error) { console.warn('[GenerationJournal] Could not persist parallel completion:', error); }
         markGenerationJobFinishing(runId, jobKey);
         if (!isCurrentGenerationRun(panelId, runId)) {
           settleGenerationJob(runId, jobKey);
@@ -4052,6 +4567,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
           return;
         }
         const cancelled = error === 'Generation cancelled';
+        try { updateGenerationJobByPrompt(runId, promptId, cancelled ? 'cancelled' : 'error', error); } catch (journalError) { console.warn('[GenerationJournal] Could not persist parallel terminal state:', journalError); }
         addLog(cancelled ? 'info' : 'error', `Parallel job on node ${nodeId}: ${error}`);
         finishParallelJob(runId, panelId, nodeId, cancelled ? 'cancelled' : 'error', promptId);
         settleGenerationJob(runId, jobKey);
@@ -4163,35 +4679,51 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // Functions - AI Prompt Enhancement
   // ---------------------------------------------------------------------------
   const handleEnhancePrompt = useCallback(async (prompt: string, parameterName?: string): Promise<string | null> => {
+    let agentSettings = getAgentSettingsState();
+    if (agentSettings.loading) {
+      await loadAgentSettings();
+      agentSettings = getAgentSettingsState();
+    }
+    if (agentSettings.loading) throw new Error('Agent settings are still loading. Retry after they finish loading.');
+    if (agentSettings.error || !agentSettings.record) throw new Error(agentSettings.error || 'Agent settings are unavailable. Retry from Settings.');
+    const isLegacy = agentSettings.record.migrationState === 'legacy_explicit';
+    if (!isLegacy && agentSettings.record.migrationState !== 'harness_configured') {
+      throw new Error('Choose an authenticated agent model or explicitly select the legacy direct provider in Agent Settings.');
+    }
+    if (!isLegacy && agentSettings.record.selection?.harnessId !== 'pi' && agentSettings.record.selection?.harnessId !== 'codex') {
+      throw new Error(`The selected ${agentSettings.record.selection?.harnessId ?? 'harness'} is not available for prompt enhancement.`);
+    }
     const panelId = selectedPanelIdRef.current;
     const panel = panelId === null ? undefined : panelsRef.current.find(item => item.id === panelId);
     const workflowId = selectedWorkflowIdRef.current || panel?.workflowId;
     const workflow = workflowsRef.current.find(item => item.id === workflowId);
     const values = parameterValuesRef.current;
+    const valuesAtSubmit = JSON.stringify(values);
     const preferences = panel?.enhancementPreferences || enhancementPreferencesRef.current;
+    const preferencesAtSubmit = JSON.stringify(preferences);
     const resolveTarget = (targetPreferences: EnhancementPreferences, targetWorkflow: typeof workflow) => {
-      const explicitTarget = targetPreferences.targetModel?.trim() || '';
-      const legacyTarget = loadTargetModel()?.trim() || '';
-      const targetModel = explicitTarget || legacyTarget || 'generic';
+      const targetModel = targetPreferences.targetModel?.trim() || '';
       const catalogTarget = enhancementTargetModels.find(item => item.id === targetModel);
       const targetProfile = enhancementProfiles.find(item => item.target_model === targetModel);
       const catalogCategory = catalogTarget?.category?.trim().toLowerCase();
       const workflowIsVideo = isVideoWorkflow(targetWorkflow);
-      const confirmedExplicitImage = Boolean(explicitTarget && catalogCategory === 'image');
+      const confirmedExplicitImage = Boolean(targetModel && catalogCategory === 'image');
       const targetClassificationKnown = Boolean(targetProfile || catalogTarget);
-      const targetClassificationError = explicitTarget && !targetClassificationKnown
-        ? (enhancementTargetModelsLoading || enhancementProfilesLoading
-          ? `Target model "${targetModel}" is still loading. Retry after the target catalog and profiles finish loading.`
-          : `Target model "${targetModel}" is unavailable${enhancementTargetModelsError || enhancementProfilesError
-            ? `: ${enhancementTargetModelsError || enhancementProfilesError}`
-            : '.'} Retry after the target catalog and profiles load.`)
-        : undefined;
+      const targetClassificationError = !targetModel
+        ? 'Select a target model in Storyboard Console preferences before enhancing.'
+        : !targetClassificationKnown
+          ? (enhancementTargetModelsLoading || enhancementProfilesLoading
+            ? `Target model "${targetModel}" is still loading. Retry after the target catalog and profiles finish loading.`
+            : `Target model "${targetModel}" is unavailable${enhancementTargetModelsError || enhancementProfilesError
+              ? `: ${enhancementTargetModelsError || enhancementProfilesError}`
+              : '.'} Retry after the target catalog and profiles load.`)
+          : undefined;
       const isVideoTarget = !confirmedExplicitImage && (
         catalogCategory === 'video'
         || Boolean(targetProfile)
         || workflowIsVideo
       );
-      return { targetModel, targetProfile, isVideoTarget, targetClassificationError };
+      return { targetModel, targetProfile, isVideoTarget, isImageTarget: confirmedExplicitImage, targetClassificationError };
     };
     const effectiveTargetAtSubmit = resolveTarget(preferences, workflow);
     const profile = effectiveTargetAtSubmit.targetProfile;
@@ -4225,59 +4757,87 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const workflowSnapshotAtSubmit = JSON.stringify(workflow);
     const panelAtSubmit = panelId;
     const targetModelAtSubmit = effectiveTargetAtSubmit.targetModel;
-    const projectTypeAtSubmit = enhancementProjectTypeRef.current;
-    const configSnapshotAtSubmit = enhancementConfigRef.current;
-    const configAtSubmit = JSON.stringify(configSnapshotAtSubmit);
-    const presetIdAtSubmit = enhancementPresetIdRef.current;
     const requestRevision = enhancementRequestRevisionRef.current;
-    const submittedOAuthToken = getConfiguredProviders().find(item => item.providerId === getSelectedLlmSettings()?.provider)?.credentials.oauthToken;
-    const llmSettings = getSelectedLlmSettings();
-    if (!llmSettings) throw new Error('No LLM provider configured. Please configure in Settings.');
-    const provider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
-    if (!provider) throw new Error('Selected provider not found. Please configure in Settings.');
+    const projectAtSubmit = projectManager.getSessionIdentity();
+    const agentFingerprint = isLegacy ? null : getAgentExecutionFingerprint('prompt-enhancement');
+    const context = built?.context;
+    const hasFirstFrame = context?.assets.some(asset => asset.role === 'first_frame');
+    const hasLastFrame = context?.assets.some(asset => asset.role === 'last_frame');
+    const imageRouteCategories = [...new Set(getWorkflowRoutes(workflow)
+      .map(route => route.category)
+      .filter(category => category === 'image-editing' || category === 'image-generation'))];
+    const task: StandalonePromptInput['task'] = context
+      ? hasFirstFrame && hasLastFrame
+        ? 'first_last'
+        : context.task === 'ref2v'
+          ? context.assets.length > 1 ? 'multi_reference' : 'reference'
+          : context.task
+      : effectiveTargetAtSubmit.isImageTarget && imageRouteCategories.length === 1
+        ? imageRouteCategories[0] === 'image-editing' ? 'edit' : 't2i'
+        : undefined;
+    const enhancementInput: StandalonePromptInput = {
+      userPrompt: requestedPrompt,
+      targetModel: targetModelAtSubmit,
+      ...(task ? { task } : {}),
+      ...(context ? {
+        enhancementContext: {
+          task: context.task,
+          referenceDialect: context.reference_dialect,
+          durationSeconds: context.duration_seconds,
+          assets: context.assets.map(asset => ({
+            bindingId: asset.binding_id,
+            kind: asset.kind,
+            role: asset.role,
+            ordinal: asset.ordinal,
+            label: asset.label,
+            description: asset.description,
+            referenceName: asset.reference_name,
+          })),
+          referenceOrderConfirmed: context.reference_order_confirmed,
+        },
+      } : {}),
+    };
+    enhancementAbortControllerRef.current?.abort();
+    const requestController = new AbortController();
+    enhancementAbortControllerRef.current = requestController;
+    enhancementUsesAgentRef.current = !isLegacy;
+    setIsPromptEnhancementRunning(true);
 
     try {
-      const result = await api.enhancePrompt({
-        userPrompt: requestedPrompt,
-        llmProvider: llmSettings.provider,
-        llmModel: llmSettings.model,
-        targetModel: targetModelAtSubmit,
-        projectType: projectTypeAtSubmit,
-        config: configSnapshotAtSubmit as any,
-        presetId: presetIdAtSubmit,
-        ...(built?.context ? {
-          enhancementContext: {
-            task: built.context.task,
-            referenceDialect: built.context.reference_dialect,
-            durationSeconds: built.context.duration_seconds,
-            assets: built.context.assets.map(asset => ({
-              bindingId: asset.binding_id,
-              kind: asset.kind,
-              role: asset.role,
-              ordinal: asset.ordinal,
-              label: asset.label,
-              description: asset.description,
-              referenceName: asset.reference_name,
-            })),
-            referenceOrderConfirmed: built.context.reference_order_confirmed,
+      let enhancedPrompt: string;
+      if (isLegacy) {
+        const llmSettings = getSelectedLlmSettings();
+        if (!llmSettings) throw new Error('No legacy provider is selected. Configure it in Settings.');
+        const provider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
+        if (!provider) throw new Error('Selected legacy provider was not found. Configure it in Settings.');
+        const submittedOAuthToken = provider.credentials.oauthToken;
+        const result = await api.enhanceStandalonePrompt({
+          ...enhancementInput,
+          llmProvider: llmSettings.provider,
+          llmModel: llmSettings.model,
+          credentials: {
+            apiKey: provider.credentials.apiKey,
+            endpoint: provider.credentials.endpoint,
+            oauthToken: provider.credentials.oauthToken,
           },
-        } : {}),
-        credentials: {
-          apiKey: provider.credentials.apiKey,
-          endpoint: provider.credentials.endpoint,
-          oauthToken: provider.credentials.oauthToken,
-        },
-      });
-
-      // OAuth refresh is independent of prompt freshness: a valid guarded token
-      // must survive failed or stale content responses, but never cross accounts.
-      const currentProvider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
-      if (
-        result.oauth_token &&
-        submittedOAuthToken &&
-        getSelectedLlmSettings()?.provider === llmSettings.provider &&
-        currentProvider?.credentials.oauthToken === submittedOAuthToken
-      ) updateSavedOAuthToken(llmSettings.provider, result.oauth_token);
+          signal: requestController.signal,
+        });
+        // OAuth refresh is independent of prompt freshness, but never crosses accounts.
+        const currentProvider = getConfiguredProviders().find(item => item.providerId === llmSettings.provider);
+        if (result.oauth_token && submittedOAuthToken
+          && getSelectedLlmSettings()?.provider === llmSettings.provider
+          && currentProvider?.credentials.oauthToken === submittedOAuthToken) {
+          updateSavedOAuthToken(llmSettings.provider, result.oauth_token);
+        }
+        if (!result.success) throw new Error(result.error || 'Enhancement failed.');
+        enhancedPrompt = result.enhanced_prompt;
+      } else {
+        const result = await enhanceConsolePromptWithPi(enhancementInput, {
+          signal: requestController.signal,
+        });
+        result.warnings.forEach(warning => showWarning(warning));
+        enhancedPrompt = result.enhanced_prompt;
+      }
 
       const currentPanel = panelAtSubmit === null ? undefined : panelsRef.current.find(item => item.id === panelAtSubmit);
       const currentWorkflowId = panelAtSubmit === null
@@ -4296,32 +4856,40 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         : undefined;
       const promptStillCurrent = !parameterName || String(currentValues[parameterName] ?? '').trim() === requestedPrompt;
       const contentStillCurrent = requestRevision === enhancementRequestRevisionRef.current
+        && projectManager.getSessionIdentity() === projectAtSubmit
+        && (isLegacy || agentFingerprint === getAgentExecutionFingerprint('prompt-enhancement'))
         && panelAtSubmit === selectedPanelIdRef.current
         && currentWorkflowId === workflowAtSubmit
         && JSON.stringify(currentWorkflow) === workflowSnapshotAtSubmit
+        && JSON.stringify(currentValues) === valuesAtSubmit
+        && JSON.stringify(currentPreferences) === preferencesAtSubmit
         && currentPreferences.targetModel === preferences.targetModel
         && currentPreferences.referenceDialect === preferences.referenceDialect
-        && projectTypeAtSubmit === enhancementProjectTypeRef.current
-        && configAtSubmit === JSON.stringify(enhancementConfigRef.current)
-        && presetIdAtSubmit === enhancementPresetIdRef.current
         && promptStillCurrent
         && currentTarget.targetModel === targetModelAtSubmit
         && (profile
           ? currentTarget.targetProfile?.target_model === profile.target_model
             && currentMapping?.mappingFingerprint === mappingAtSubmit
           : true);
-      if (!result.success || !contentStillCurrent) {
-        if (result.success) showWarning('Enhancement discarded because the prompt, panel, workflow, target, or media mapping changed.');
-        throw new Error(result.success ? 'Enhancement response discarded as stale.' : (result.error || 'Enhancement failed'));
+      if (!contentStillCurrent) {
+        showWarning('Enhancement discarded because the prompt, panel, workflow, target, model, project, or media mapping changed.');
+        return null;
       }
 
       showInfo('Prompt enhanced successfully');
-      return result.enhanced_prompt;
+      return enhancedPrompt;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to enhance prompt';
+      if (requestController.signal.aborted) return null;
       if (!/discarded as stale/i.test(errorMsg)) showError(errorMsg);
       if (/discarded as stale/i.test(errorMsg)) return null;
       throw error;
+    } finally {
+      if (enhancementAbortControllerRef.current === requestController) {
+        enhancementAbortControllerRef.current = null;
+        enhancementUsesAgentRef.current = false;
+        setIsPromptEnhancementRunning(false);
+      }
     }
   }, [enhancementProfiles, enhancementProfilesLoading, enhancementProfilesError, enhancementTargetModels, enhancementTargetModelsLoading, enhancementTargetModelsError, showInfo, showWarning, showError]);
   
@@ -4357,18 +4925,19 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // Save project handler
   const handleSaveProject = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     await sessionDraftController.flush();
+    try {
+      await flushPendingWorkflowSave();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showError(`Project was not saved because workflow changes were not saved: ${message}`);
+      return { success: false, error: message };
+    }
     const result = await saveProjectAndRecordRecent(
       projectSettings.name || 'Untitled',
-      () => projectManager.saveProjectState(
-        panels,
-        undefined, // Workflows are NOT saved in projects — they belong to the application
-        parameterValues,
-        {
-          selectedWorkflowId: selectedWorkflowId || undefined,
-          renderNodes,
-          comfyUrl,
-          cameraAngles,
-        },
+      () => persistProjectStateSnapshot(
+        panelsRef.current,
+        parameterValuesRef.current,
+        selectedWorkflowIdRef.current || undefined,
       ),
     );
     if (!result.success || !result.savedPath) {
@@ -4380,6 +4949,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const targetSettings = { ...projectManager.getProject(), projectFilePath: result.savedPath };
     try {
       await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetSettings));
+      projectScopeRef.current.bindingId = crypto.randomUUID();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showError(`Saved project, but recovery identity did not switch: ${message}`);
@@ -4389,7 +4959,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     sessionDraftController.clearFailure();
     showInfo(`Project saved to ${result.savedPath}`);
     return { success: true };
-  }, [panels, parameterValues, selectedWorkflowId, renderNodes, comfyUrl, cameraAngles, projectSettings.name, showInfo, showError]);
+  }, [flushPendingWorkflowSave, persistProjectStateSnapshot, projectSettings.name, showInfo, showError]);
 
   // Save project as handler - opens file browser dialog for new location/name
   const handleSaveProjectAs = useCallback(() => {
@@ -4409,6 +4979,12 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   // Handle save from file browser dialog
   const handleSaveFromDialog = async (folderPath: string, projectName: string) => {
     await sessionDraftController.flush();
+    try {
+      await flushPendingWorkflowSave();
+    } catch (error) {
+      showError(`Project was not saved because workflow changes were not saved: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     const previousSettings = projectManager.getProject();
     const targetSettings: ProjectSettings = {
       ...previousSettings,
@@ -4421,16 +4997,10 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
     const result = await saveProjectAndRecordRecent(
       projectName,
-      () => projectManager.saveProjectState(
-        panels,
-        undefined,
-        parameterValues,
-        {
-          selectedWorkflowId: selectedWorkflowId || undefined,
-          renderNodes,
-          comfyUrl,
-          cameraAngles,
-        },
+      () => persistProjectStateSnapshot(
+        panelsRef.current,
+        parameterValuesRef.current,
+        selectedWorkflowIdRef.current || undefined,
         targetSettings,
       ),
     );
@@ -4443,6 +5013,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const savedSettings: ProjectSettings = { ...targetSettings, projectFilePath: result.savedPath };
     try {
       await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(savedSettings));
+      projectScopeRef.current.bindingId = crypto.randomUUID();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showError(`Failed to switch recovery identity after Save As: ${message}`);
@@ -4456,12 +5027,20 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   };
 
   // Phase 3: New load handler with folder scanning
-  const handleLoadFromDialog = async (projectPath: string) => {
-    // Flush the old identity before any load can replace it.
-    await sessionDraftController.flush();
+  const handleLoadFromDialog = async (projectPath: string, control?: { assertCurrent: () => void; discard?: boolean }): Promise<boolean> => {
+    try {
+      control?.assertCurrent();
+      // Flush the old identity before any load can replace it.
+      await sessionDraftController.flush();
+      control?.assertCurrent();
+    } catch (error) {
+      console.error('[Load] Failed to load project:', error);
+      showError(`Failed to load project: ${String(error)}`);
+      return false;
+    }
     if (sessionDraftController.getStatus().state === 'failed') {
       showError('Autosave unavailable — save manually before switching projects.');
-      return;
+      return false;
     }
     const previousProjectSettings = projectManager.getProject();
     // Close the file browser dialog immediately so the loading overlay is visible
@@ -4484,11 +5063,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
         projectPath,
         () => projectManager.loadProjectState(projectPath, { commitSettings: false }),
       );
+      control?.assertCurrent();
       
       if (!result.success || !result.state) {
         showError(`Failed to load project: ${result.error}`);
-        return;
+        return false;
       }
+      const loadedState = result.state;
       
       // Keep loaded settings local until both the file read and filesystem scan succeed.
       const loadedSettings = result.state.project_settings || previousProjectSettings;
@@ -4504,18 +5085,18 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
       // Get deleted images from saved state
       const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
-      setDeletedImages(savedDeletedImages);
 
       // NEW APPROACH: Scan project for all panel folders
       setLoadingProgress({ progress: 10, currentFile: 'Scanning project panels...' });
       
       const scanResult = await projectManager.scanProjectPanels(targetProjectSettings);
+      control?.assertCurrent();
       
       if (!scanResult.success) {
         console.error('[Load] Failed to scan project panels:', scanResult.error);
         showError(`Failed to scan project: ${scanResult.error}`);
         // A failed switch must leave the previous project and its in-memory work untouched.
-        return;
+        return false;
       }
 
       setLoadingProgress({ progress: 50, currentFile: 'Building panels...' });
@@ -4536,14 +5117,14 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
       // STEP 1: Match scanned folders to saved panels by name
       const savedPanels = result.state.panels as Panel[];
-      const matchedSavedNames = new Set<string>();
+      const matchedSavedPanels = new Set<Panel>();
       const matchedFolderNames = new Set<string>();
 
       // First pass: exact name matches
       for (const panelFolder of scanResult.panels) {
         const savedPanel = savedPanels.find(p => p.name === panelFolder.panel_name);
         if (savedPanel && savedPanel.name) {
-          matchedSavedNames.add(savedPanel.name);
+          matchedSavedPanels.add(savedPanel);
           matchedFolderNames.add(panelFolder.panel_name);
         }
       }
@@ -4552,11 +5133,11 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       // This handles the rename case: if you renamed "Panel_01" to "Hero_Shot",
       // the unmatched saved "Panel_01" gets paired with unmatched folder "Hero_Shot"
       const unmatchedFolders = scanResult.panels.filter(pf => !matchedFolderNames.has(pf.panel_name));
-      const unmatchedSaved = savedPanels.filter(p => !matchedSavedNames.has(p.name ?? ''));
+      const unmatchedSaved = savedPanels.filter(p => !matchedSavedPanels.has(p));
       const fallbackPairs = new Map<string, Panel>(); // folder name -> saved panel
       for (let i = 0; i < unmatchedFolders.length && i < unmatchedSaved.length; i++) {
         fallbackPairs.set(unmatchedFolders[i].panel_name, unmatchedSaved[i]);
-        matchedSavedNames.add(unmatchedSaved[i].name ?? ''); // Mark as consumed
+        matchedSavedPanels.add(unmatchedSaved[i]);
         console.log(`[Load] Paired renamed folder "${unmatchedFolders[i].panel_name}" with saved panel "${unmatchedSaved[i].name}"`);
       }
 
@@ -4639,8 +5220,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
       // STEP 4: Restore saved panels that have no folder AND weren't paired with renamed folders
       for (const savedPanel of savedPanels) {
-        if (!savedPanel.name) continue;
-        if (matchedSavedNames.has(savedPanel.name)) continue; // Already matched or paired
+        if (matchedSavedPanels.has(savedPanel)) continue;
           // Panel exists in save file but has no folder - restore it empty
           // Use saved ID if not already taken, otherwise assign unique
           let emptyPanelId: number;
@@ -4684,41 +5264,45 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
 
       // The filesystem load is now complete; only now make project B active.
       try {
-        await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetProjectSettings));
+        control?.assertCurrent();
+        await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetProjectSettings), {
+          assertCurrent: control?.assertCurrent,
+          discard: control?.discard,
+          commit: () => {
+            projectScopeRef.current.bindingId = crypto.randomUUID();
+            projectManager.restoreFromSession(targetProjectSettings);
+            setProjectSettings(targetProjectSettings);
+            setPanels(restoredPanels);
+            setDeletedImages(savedDeletedImages);
+            const parameterValues = loadedState.parameter_values || {};
+            setParameterValues(parameterValues);
+            parameterValuesRef.current = parameterValues;
+            setCameraAngles((loadedState.camera_angles || {}) as Record<string, CameraAngle | null>);
+            const enhancementPreferences = loadedState.enhancement_preferences || EMPTY_ENHANCEMENT_PREFERENCES;
+            setEnhancementPreferences(enhancementPreferences);
+            enhancementPreferencesRef.current = enhancementPreferences;
+            setGlobalPromptOverride(loadedState.global_prompt_override || '');
+            setUseGlobalPrompt(loadedState.use_global_prompt ?? false);
+            const selectedWorkflowId = loadedState.selected_workflow_id || null;
+            setSelectedWorkflowId(selectedWorkflowId);
+            selectedWorkflowIdRef.current = selectedWorkflowId;
+            if (loadedState.comfy_url) setComfyUrl(loadedState.comfy_url);
+            projectSavedFingerprintRef.current = projectStateFingerprint({
+              ...readCurrentProjectState(), panels: restoredPanels, parameters: parameterValues,
+              selectedWorkflowId, settings: targetProjectSettings,
+              cameraAngles: (loadedState.camera_angles || {}) as Record<string, CameraAngle | null>,
+              enhancementPreferences, deletedImages: [...savedDeletedImages].sort(),
+              globalPromptOverride: loadedState.global_prompt_override || '', useGlobalPrompt: loadedState.use_global_prompt ?? false,
+              comfyUrl: loadedState.comfy_url || projectComparisonStateRef.current.comfyUrl,
+            });
+          },
+        });
       } catch (error) {
         throw new Error(`Recovery identity could not switch: ${error instanceof Error ? error.message : String(error)}`);
       }
-      projectManager.restoreFromSession(targetProjectSettings);
-      setProjectSettings(targetProjectSettings);
-      setPanels(restoredPanels);
       
       // Workflows are NOT restored from project files — they are managed
       // independently via the persistent workflow storage backend
-      
-      // Restore parameter values if available
-      if (result.state.parameter_values) {
-        setParameterValues(result.state.parameter_values);
-        parameterValuesRef.current = result.state.parameter_values;
-      }
-      
-      // Restore camera angles if available
-      if (result.state.camera_angles) {
-        setCameraAngles(result.state.camera_angles as Record<string, CameraAngle | null>);
-      }
-      if (result.state.enhancement_preferences) {
-        setEnhancementPreferences(result.state.enhancement_preferences);
-        enhancementPreferencesRef.current = result.state.enhancement_preferences;
-      }
-      
-      // Restore selected workflow
-      if (result.state.selected_workflow_id) {
-        setSelectedWorkflowId(result.state.selected_workflow_id);
-      }
-      
-      // Restore ComfyUI URL if available
-      if (result.state.comfy_url) {
-        setComfyUrl(result.state.comfy_url);
-      }
       
       setLoadingProgress({ progress: 100, currentFile: 'Complete!' });
       
@@ -4726,12 +5310,12 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       let totalImages = 0;
       restoredPanels.forEach(p => totalImages += p.imageHistory.length);
       showInfo(`Loaded project with ${restoredPanels.length} panels, ${totalImages} images`);
+      return true;
       
     } catch (error) {
-      projectManager.restoreFromSession(previousProjectSettings);
-      setProjectSettings(previousProjectSettings);
       console.error('[Load] Failed to load project:', error);
       showError(`Failed to load project: ${String(error)}`);
+      return false;
     } finally {
       setIsLoadingProject(false);
     }
@@ -4764,244 +5348,9 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
   
   // Handle loading a specific project file
   const handleLoadSelectedProject = async (projectPath: string) => {
-    await sessionDraftController.flush();
-    if (sessionDraftController.getStatus().state === 'failed') {
-      showError('Autosave unavailable — save manually before switching projects.');
-      return;
-    }
-    const previousProjectSettings = projectManager.getProject();
-    setIsLoadingProject(true);
-    try {
-      // Remember the current orchestrator URL before loading staged settings.
-    const currentOrchestratorUrl = previousProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
-    
-    const result = await loadProjectAndRecordRecent(
-      projectPath,
-      () => projectManager.loadProjectState(projectPath, { commitSettings: false }),
-    );
-    
-    if (result.success && result.state) {
-      // Derive the project directory from the selected file path
-      const lastSlash = Math.max(projectPath.lastIndexOf('/'), projectPath.lastIndexOf('\\'));
-      const projectDir = lastSlash > 0 ? projectPath.substring(0, lastSlash) : projectPath;
-      
-      const loadedSettings = result.state.project_settings || previousProjectSettings;
-      const targetProjectSettings: ProjectSettings = {
-        ...previousProjectSettings,
-        ...loadedSettings,
-        path: projectDir,
-        projectFilePath: projectPath,
-        orchestratorUrl: currentOrchestratorUrl,
-        created: new Date(loadedSettings.created || Date.now()),
-        lastModified: new Date(loadedSettings.lastModified || Date.now()),
-      };
-      
-      // Get deleted images from saved state
-      const savedDeletedImages = new Set<string>(result.state.deleted_images || []);
-      setDeletedImages(savedDeletedImages);
-      
-      // Scan the filesystem for current folder/image state
-      // This handles renamed folders and images since the project was last saved
-      const scanResult = await projectManager.scanProjectPanels(targetProjectSettings);
-      await activateSessionIdentity(sessionDraftController, projectManager.getSessionIdentity(targetProjectSettings));
-      projectManager.restoreFromSession(targetProjectSettings);
-      setProjectSettings(targetProjectSettings);
-      
-      if (scanResult.success && scanResult.panels.length > 0) {
-        // Re-initialize panels from filesystem scan, merging saved metadata
-        const orchestratorUrl = targetProjectSettings.orchestratorUrl || getDefaultOrchestratorUrl();
-        const restoredPanels: Panel[] = [];
-        const usedIds = new Set<number>();
-        
-        const getNextUniqueId = (): number => {
-          let nextId = 1;
-          while (usedIds.has(nextId)) nextId++;
-          usedIds.add(nextId);
-          return nextId;
-        };
-        
-        // Match scanned folders to saved panels by name, then pair unmatched by order
-        const savedPanels2 = result.state.panels as Panel[];
-        const matchedSavedNames2 = new Set<string>();
-        const matchedFolderNames2 = new Set<string>();
-        
-        console.log('[Load-Selected] Saved panel names:', savedPanels2.map(p => p.name));
-        console.log('[Load-Selected] Scanned folder names:', scanResult.panels.map(pf => pf.panel_name));
-        
-        for (const pf of scanResult.panels) {
-          const sp = savedPanels2.find(p => p.name === pf.panel_name);
-          if (sp && sp.name) { matchedSavedNames2.add(sp.name); matchedFolderNames2.add(pf.panel_name); }
-        }
-        
-        console.log('[Load-Selected] Matched names:', [...matchedSavedNames2]);
-        console.log('[Load-Selected] Unmatched folders:', scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name)).map(pf => pf.panel_name));
-        console.log('[Load-Selected] Unmatched saved:', savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? '')).map(p => p.name));
-        
-        const unmatchedFolders2 = scanResult.panels.filter(pf => !matchedFolderNames2.has(pf.panel_name));
-        const unmatchedSaved2 = savedPanels2.filter(p => !matchedSavedNames2.has(p.name ?? ''));
-        const fallbackPairs2 = new Map<string, Panel>();
-        for (let i = 0; i < unmatchedFolders2.length && i < unmatchedSaved2.length; i++) {
-          fallbackPairs2.set(unmatchedFolders2[i].panel_name, unmatchedSaved2[i]);
-          matchedSavedNames2.add(unmatchedSaved2[i].name ?? '');
-        }
-        
-        for (const panelFolder of scanResult.panels) {
-          const validImages = panelFolder.images.filter(
-            img => !savedDeletedImages.has(img.image_path)
-          ).sort((a, b) => a.modified_time - b.modified_time);
-          
-          // Try to match by folder name, then fallback pair
-          const savedPanel = savedPanels2.find(p => p.name === panelFolder.panel_name)
-            || fallbackPairs2.get(panelFolder.panel_name)
-            || undefined;
-          
-          const savedImageRatings = (savedPanel as Panel & { imageRatings?: Record<string, number> })?.imageRatings || {};
-
-          const imageHistory: ImageHistoryEntry[] = validImages.map((img, index) => ({
-            id: `${panelFolder.panel_name}_v${index + 1}`,
-            url: `${orchestratorUrl}/api/serve-image?path=${encodeURIComponent(img.image_path)}`,
-            metadata: {
-              timestamp: new Date(img.modified_time * 1000),
-              workflowId: '',
-              workflowName: 'Loaded',
-              seed: 0,
-              promptSummary: '',
-              parameters: {},
-              workflow: {},
-              sourceUrl: '',
-              savedPath: img.image_path,
-              version: index + 1,
-              rating: savedImageRatings[img.image_path],
-            } as ImageMetadata
-          }));
-          
-          let usePanelId: number;
-          if (savedPanel?.id && !usedIds.has(savedPanel.id)) {
-            usePanelId = savedPanel.id;
-            usedIds.add(usePanelId);
-          } else {
-            usePanelId = getNextUniqueId();
-          }
-          
-          const panelIndex = restoredPanels.length;
-          restoredPanels.push({
-            id: usePanelId,
-            name: panelFolder.panel_name,
-            x: savedPanel?.x ?? calculateNewPanelX(panelIndex + 1, panelIndex + 1),
-            y: savedPanel?.y ?? calculateNewPanelY(panelIndex + 1, panelIndex + 1),
-            width: savedPanel?.width ?? 300,
-            height: savedPanel?.height ?? 300,
-            notes: savedPanel?.notes ?? '',
-            workflowId: savedPanel?.workflowId,
-            parameterValues: savedPanel?.parameterValues,
-            enhancementPreferences: savedPanel?.enhancementPreferences,
-            nodeId: savedPanel?.nodeId,
-            imageHistory,
-            historyIndex: imageHistory.length > 0 ? imageHistory.length - 1 : -1,
-            image: imageHistory.length > 0 ? imageHistory[imageHistory.length - 1]?.url ?? null : null,
-            images: [],
-            currentImageIndex: 0,
-            status: imageHistory.length > 0 ? 'complete' : 'empty',
-            progress: imageHistory.length > 0 ? 100 : 0,
-            locked: savedPanel?.locked ?? false,
-            selected: false,
-          });
-        }
-        
-        // Restore saved panels that have no folder AND weren't paired
-        for (const savedPanel of savedPanels2) {
-          if (!savedPanel.name) continue;
-          if (matchedSavedNames2.has(savedPanel.name)) continue;
-            let emptyPanelId: number;
-            if (savedPanel.id && !usedIds.has(savedPanel.id)) {
-              emptyPanelId = savedPanel.id;
-              usedIds.add(emptyPanelId);
-            } else {
-              emptyPanelId = getNextUniqueId();
-            }
-            restoredPanels.push({
-              id: emptyPanelId,
-              name: savedPanel.name,
-              x: savedPanel.x,
-              y: savedPanel.y,
-              width: savedPanel.width ?? 300,
-              height: savedPanel.height ?? 300,
-              notes: savedPanel.notes ?? '',
-              workflowId: savedPanel.workflowId,
-              parameterValues: savedPanel.parameterValues,
-              enhancementPreferences: savedPanel.enhancementPreferences,
-              nodeId: savedPanel.nodeId,
-              imageHistory: [],
-              historyIndex: -1,
-              image: null,
-              images: [],
-              currentImageIndex: 0,
-              status: 'empty',
-              progress: 0,
-              locked: false,
-              selected: false,
-            });
-        }
-        
-        restoredPanels.sort((a, b) => a.id - b.id);
-        setPanels(restoredPanels);
-      } else {
-        // Fallback: no scan results, restore from save file with deduplicated IDs
-        const usedIds = new Set<number>();
-        const restoredPanels = (result.state.panels as typeof panels).map(panel => {
-          let panelId = panel.id;
-          if (usedIds.has(panelId)) {
-            panelId = 1;
-            while (usedIds.has(panelId)) panelId++;
-          }
-          usedIds.add(panelId);
-          const newStatus = panel.image ? 'complete' : 'empty';
-          return {
-            ...panel,
-            id: panelId,
-            status: newStatus as 'empty' | 'complete',
-            progress: panel.image ? 100 : 0,
-            parallelJobs: undefined,
-          };
-        });
-        setPanels(restoredPanels);
-      }
-      // Workflows are NOT restored from project files — they are managed
-      // independently via the persistent workflow storage backend
-      // Restore parameter values if available
-      if (result.state.parameter_values) {
-        setParameterValues(result.state.parameter_values);
-        parameterValuesRef.current = result.state.parameter_values;
-      }
-      // Restore camera angles if available
-      if (result.state.camera_angles) {
-        setCameraAngles(result.state.camera_angles as Record<string, CameraAngle | null>);
-      }
-      // Restore selected workflow
-      if (result.state.selected_workflow_id) {
-        setSelectedWorkflowId(result.state.selected_workflow_id);
-      }
-      // Note: renderNodes are managed by useRenderNodes hook and restored via localStorage
-      // Restore ComfyUI URL if available
-      if (result.state.comfy_url) {
-        setComfyUrl(result.state.comfy_url);
-      }
-      // Update project settings
-      setProjectSettings(projectManager.getProject());
-      showInfo(`Loaded project with ${result.state.panels.length} panels`);
-      // Close the browser
+    if (await handleLoadFromDialog(projectPath)) {
       setShowLoadProjectBrowser(false);
       setAvailableProjects([]);
-    } else {
-      showError(`Failed to load project: ${result.error}`);
-    }
-    } catch (error) {
-      projectManager.restoreFromSession(previousProjectSettings);
-      setProjectSettings(previousProjectSettings);
-      console.error('[Load-Selected] Failed to load project:', error);
-      showError(`Failed to load project: ${String(error)}`);
-    } finally {
-      setIsLoadingProject(false);
     }
   };
 
@@ -5158,23 +5507,2065 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
       return;
     }
     let cancelled = 0;
+    let blockedByOtherRunning = 0;
+    let nodeWideInterrupts = 0;
     // Sequential requests avoid competing interrupts on a shared render node.
     for (const job of jobs) {
+      const backend = renderNodes.find(node => node.id === job.nodeId);
+      if (!backend) continue;
+      const queueResponse = await fetch(`${backend.url.replace(/\/+$/, '')}/queue`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null);
+      if (!queueResponse?.ok) continue;
+      const queue = await queueResponse.json().catch(() => null) as Record<string, unknown> | null;
+      const running = Array.isArray(queue?.queue_running) ? queue.queue_running : [];
+      const pending = Array.isArray(queue?.queue_pending) ? queue.queue_pending : [];
+      const hasPrompt = (entries: unknown[]) => entries.some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+      if (hasPrompt(running) && running.length > 1) {
+        blockedByOtherRunning++;
+        continue;
+      }
+      if (!hasPrompt(running) && !hasPrompt(pending)) continue;
+      if (hasPrompt(running)) nodeWideInterrupts++;
       if (await job.ws.cancelGeneration(job.promptId)) cancelled++;
     }
     if (cancelled) showWarning(`Cancelled ${cancelled} generation(s)`);
+    if (nodeWideInterrupts) showWarning(`${nodeWideInterrupts} running-prompt cancellation(s) may use ComfyUI's node-wide interrupt; only the targeted prompt was running at the preflight check.`);
+    if (blockedByOtherRunning) showWarning(`${blockedByOtherRunning} prompt(s) were left running because ComfyUI interrupt is node-wide and other prompts were active on the same backend.`);
     if (cancelled < jobs.length) {
       showInfo(`${jobs.length - cancelled} prompt(s) already finished or could not be cancelled; tracking remains active.`);
     }
   };
+
+  const applicationHandlersRef = useRef<ApplicationActionHandlers | null>(null);
+  const preparedConsolePromptsRef = useRef(new Map<string, {
+    projectIdentity: string;
+    projectRevision: number;
+    consoleBindingId: string;
+    turnId: string;
+    userRequest: string;
+  }>());
+  const applicationError = (code: string, message: string): Error & { code: string } => Object.assign(new Error(message), { code });
+  const assertApplicationProject = (command: ApplicationCommand, requireRevision = true) => {
+    if (!isApplicationCommandCurrent(command)) throw applicationError('action_no_longer_current', 'The initiating agent action ended; no further writes were started. Inspect any writes already submitted.');
+    if (command.expectedConsoleBindingId !== undefined && command.expectedConsoleBindingId !== projectScopeRef.current.bindingId) throw applicationError('stale_console_binding', 'The Console project activation changed; this command was not retargeted.');
+    if (command.projectIdentity !== projectScopeRef.current.identity) throw applicationError('project_scope_mismatch', 'The action targets a project other than the currently paired Storyboard project.');
+    if (requireRevision && command.expectedProjectRevision !== projectScopeRef.current.revision) throw applicationError('stale_project', 'The project changed after this action was prepared. Refresh the application snapshot and retry.');
+  };
+  const isApplicationProjectCurrent = (command: ApplicationCommand): boolean =>
+    isApplicationCommandCurrent(command)
+    && (command.expectedConsoleBindingId === undefined || command.expectedConsoleBindingId === projectScopeRef.current.bindingId)
+    && command.projectIdentity === projectScopeRef.current.identity
+    && command.expectedProjectRevision === projectScopeRef.current.revision;
+  const assertApplicationPanel = (command: ApplicationCommand, panelId: number): Panel => {
+    if (!isApplicationCommandCurrent(command)) throw applicationError('action_no_longer_current', 'The initiating agent action ended. Inspect any writes already submitted.');
+    if (command.expectedPanelRevision === undefined || command.expectedPanelRevision !== panelRevisionRef.current.get(panelId)) {
+      throw applicationError('stale_panel', 'The panel changed after this action was prepared. Refresh the application snapshot and retry.');
+    }
+    const panel = panelsRef.current.find(item => item.id === panelId);
+    if (!panel) throw applicationError('panel_not_found', `Panel ${panelId} no longer exists.`);
+    return panel;
+  };
+  const assertApplicationWorkflow = (command: ApplicationCommand, workflowId: string): Workflow => {
+    if (!isApplicationCommandCurrent(command)) throw applicationError('action_no_longer_current', 'The initiating agent action ended. Inspect any writes already submitted.');
+    if (command.expectedWorkflowRevision === undefined) throw applicationError('workflow_revision_required', 'A workflow revision is required for this action.');
+    const workflow = workflowsRef.current.find(item => item.id === workflowId);
+    if (!workflow) throw applicationError('workflow_not_found', `Workflow '${workflowId}' is no longer available.`);
+    if (workflow.revision !== command.expectedWorkflowRevision) throw applicationError('stale_workflow', 'The workflow changed after this action was prepared. Refresh the application snapshot and retry.');
+    return workflow;
+  };
+  const assertPanelWorkflow = (panel: Panel, workflowId: string): void => {
+    if (panel.workflowId !== workflowId) throw applicationError('panel_workflow_mismatch', 'Attach this workflow to the panel before editing its parameters or generating from it.');
+  };
+  const requireApplicationBackend = (backendId: string, requireOnline = true) => {
+    const backend = orchestratorManager.getNodes().find(node => node.id === backendId);
+    if (!backend || requireOnline && backend.status !== 'online') {
+      throw applicationError('backend_unavailable', `Managed backend '${backendId}' is missing or offline.`);
+    }
+    return backend;
+  };
+  const requireSelectedApplicationBackend = (backendId: string, requireOnline = true) => {
+    const backend = requireApplicationBackend(backendId, requireOnline);
+    if (!selectedBackendIdsRef.current.includes(backendId)) throw applicationError('backend_not_selected', `Managed backend '${backendId}' is not selected in Storyboard.`);
+    return backend;
+  };
+  const assertApplicationBackendsSelected = (backends: Array<{ id: string }>) => {
+    if (backends.some(backend => !selectedBackendIdsRef.current.includes(backend.id))) {
+      throw applicationError('backend_selection_changed', 'The selected managed backends changed during this action. Refresh the application snapshot before continuing.');
+    }
+  };
+  const saveProjectSnapshot = async (
+    panelsSnapshot: Panel[],
+    parameters: Record<string, unknown>,
+    workflowId: string | undefined,
+    settings: ProjectSettings,
+  ) => {
+    const result = await persistProjectStateSnapshot(panelsSnapshot, parameters, workflowId, settings);
+    if (!result.success) throw applicationError('project_save_failed', result.error || 'The project panel changes were not saved.');
+    return result;
+  };
+  const repairCurrentProjectSnapshot = async (settings: ProjectSettings) => {
+    const currentPanelId = selectedPanelIdRef.current;
+    const currentPanel = currentPanelId === null ? undefined : panelsRef.current.find(panel => panel.id === currentPanelId);
+    const currentParameters = currentPanel?.parameterValues || parameterValuesRef.current;
+    await saveProjectSnapshot(
+      panelsRef.current,
+      currentParameters,
+      selectedWorkflowIdRef.current || currentPanel?.workflowId,
+      settings,
+    );
+  };
+  const generationApplicationHandlers: ApplicationActionHandlers = {
+    get_backend_node_definitions: async command => {
+      assertApplicationProject(command);
+      const backend = requireSelectedApplicationBackend(command.target.backendId);
+      const definitions = await nodeDefinitions.fetchDefinitions(backend.url);
+      assertApplicationProject(command);
+      if (requireSelectedApplicationBackend(backend.id).url !== backend.url) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during schema validation. Refresh the application snapshot before continuing.');
+      }
+      const missingClasses: string[] = [];
+      const objectInfo = Object.fromEntries([...new Set(command.input.nodeClasses)].flatMap(nodeClass => {
+        if (!Object.prototype.hasOwnProperty.call(definitions, nodeClass)) {
+          missingClasses.push(nodeClass);
+          return [];
+        }
+        return [[nodeClass, definitions[nodeClass]]];
+      }));
+      const privacyReason: { reason?: string } = {};
+      const safeObjectInfo = redactAgentGraphValue(objectInfo, 0, privacyReason);
+      if (privacyReason.reason) throw applicationError('node_definitions_unsafe', privacyReason.reason);
+      const response = { backendId: backend.id, objectInfo: safeObjectInfo, missingClasses };
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(response);
+      } catch {
+        throw applicationError('node_definitions_unavailable', 'The requested node definitions could not be serialized safely.');
+      }
+      if (typeof serialized !== 'string') throw applicationError('node_definitions_unavailable', 'The requested node definitions could not be serialized safely.');
+      if (new TextEncoder().encode(serialized).byteLength > 200 * 1024) {
+        throw applicationError('node_definitions_too_large', 'The requested node definitions exceed 200 KiB. Request fewer node classes and retry.');
+      }
+      return response;
+    },
+    prepare_workflow_proposal: async command => {
+      await flushPendingWorkflowSave();
+      assertApplicationProject(command);
+      assertApplicationPanel(command, command.target.panelId);
+      const existing = command.target.workflowId
+        ? assertApplicationWorkflow(command, command.target.workflowId)
+        : undefined;
+      if (existing && (!Number.isSafeInteger(existing.revision) || (existing.revision ?? 0) < 1)) {
+        throw applicationError('workflow_revision_required', 'Editing a workflow requires its canonical revision.');
+      }
+      const categoryValue = command.input.category ?? existing?.category ?? 'image-generation';
+      if (!isTabType(categoryValue)) throw applicationError('invalid_workflow_category', 'Choose a valid Storyboard workflow category.');
+      const subCategoryValue = command.input.subCategory ?? existing?.subCategory ?? getDefaultSubCategory(categoryValue);
+      if (!isSubTabType(subCategoryValue) || !isValidWorkflowRoute(categoryValue, subCategoryValue)) {
+        throw applicationError('invalid_workflow_subcategory', 'Choose a valid subcategory for the selected Storyboard category.');
+      }
+      const backend = requireSelectedApplicationBackend(command.target.backendId);
+      const objectInfo = await nodeDefinitions.fetchDefinitions(backend.url);
+      assertApplicationProject(command);
+      assertApplicationPanel(command, command.target.panelId);
+      if (existing) assertApplicationWorkflow(command, existing.id);
+      if (requireSelectedApplicationBackend(backend.id).url !== backend.url) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during schema validation. Refresh the application snapshot before continuing.');
+      }
+      const checked = prepareAgentWorkflowProposal({
+        workflow: command.input.workflow,
+        config: command.input.config as unknown as ParameterConfig[],
+        objectInfo,
+        backendUrl: backend.url,
+      });
+      const workflowId = existing?.id ?? crypto.randomUUID();
+      const oldBindings = new Set(existing?.config.filter(control => control.exposed).map(control => `${control.node_id}\0${control.input_name}`) ?? []);
+      const proposedControls = checked.config.filter(control => control.exposed);
+      const newBindings = new Set(proposedControls.map(control => `${control.node_id}\0${control.input_name}`));
+      const workflow: Workflow = {
+        id: workflowId,
+        name: command.input.name,
+        description: command.input.description ?? existing?.description ?? '',
+        category: categoryValue,
+        subCategory: subCategoryValue,
+        workflow: checked.workflow,
+        parsed: checked.parsed,
+        config: checked.config,
+        createdAt: existing?.createdAt ?? Date.now(),
+        revision: existing?.revision,
+        ...(existing?.categories ? { categories: existing.categories } : {}),
+        sourceGraphFingerprint: existing?.sourceGraphFingerprint,
+        sourceProvenance: [
+          ...(existing?.sourceProvenance ?? []),
+          ...(command.input.provenance ?? []),
+          { kind: existing ? 'agent-modified' : 'agent-created', ...(existing ? { basedOnWorkflowId: existing.id, basedOnRevision: existing.revision } : {}) },
+        ],
+      };
+      const preparedRevisionId = checked.errors.length === 0 ? crypto.randomUUID() : undefined;
+      if (preparedRevisionId) {
+        if (preparedWorkflowRevisionsRef.current.size >= 32) {
+          const oldest = preparedWorkflowRevisionsRef.current.keys().next().value;
+          if (oldest) preparedWorkflowRevisionsRef.current.delete(oldest);
+        }
+        preparedWorkflowRevisionsRef.current.set(preparedRevisionId, {
+          workflow,
+          projectIdentity: command.projectIdentity,
+          consoleBindingId: projectScopeRef.current.bindingId,
+          panelId: command.target.panelId,
+          panelRevision: command.expectedPanelRevision!,
+          workflowRevision: existing?.revision ?? null,
+          backendId: backend.id,
+          backendUrl: backend.url,
+        });
+      }
+      return {
+        valid: checked.errors.length === 0,
+        ...(preparedRevisionId ? { preparedRevisionId } : {}),
+        workflowId,
+        baseRevision: existing?.revision ?? null,
+        backendId: backend.id,
+        validationErrors: checked.errors,
+        exposedControls: proposedControls.map(control => ({ name: control.name, nodeId: control.node_id, inputName: control.input_name, type: control.type })),
+        changes: {
+          addedBindings: proposedControls.filter(control => !oldBindings.has(`${control.node_id}\0${control.input_name}`)).map(control => `${control.node_id}.${control.input_name}`),
+          removedBindings: (existing?.config ?? []).filter(control => control.exposed && !newBindings.has(`${control.node_id}\0${control.input_name}`)).map(control => `${control.node_id}.${control.input_name}`),
+        },
+        readiness: 'not_verified',
+      };
+    },
+    open_project: async command => {
+      assertApplicationProject(command);
+      const sourceBindingId = projectScopeRef.current.bindingId;
+      const projectRevision = projectScopeRef.current.revision;
+      const { projectPath, unsavedWorkChoice: choice } = command.input;
+      if (typeof projectPath !== 'string' || !projectPath || projectPath.length > 4096
+        || projectPath !== projectPath.trim() || projectPath.includes('\0')
+        || !/^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))/.test(projectPath)
+        || !/\.json$/i.test(projectPath)) {
+        throw applicationError('invalid_project_path', 'Identify a saved project by its absolute JSON file path.');
+      }
+      if (choice !== undefined && !['save', 'discard', 'cancel'].includes(choice)) {
+        throw applicationError('invalid_unsaved_work_choice', 'Choose save, discard, or cancel for unsaved project work.');
+      }
+      if (choice === 'cancel') return { status: 'cancelled' };
+      if (hasUnsavedProjectWork()) {
+        if (choice === undefined) return { status: 'needs_unsaved_work_choice', projectRevision };
+        if (choice === 'save') return {
+          status: 'save_required', projectRevision,
+          reason: 'Save the current project with save_project, refresh the snapshot, then request Open again.',
+        };
+      }
+      const fingerprint = projectStateFingerprint(readCurrentProjectState());
+      const guard = () => {
+        assertApplicationProject(command);
+        if (projectStateFingerprint(readCurrentProjectState()) !== fingerprint) {
+          throw applicationError('project_changed_during_open', 'The project changed while Open was being prepared; refresh its snapshot.');
+        }
+        const pending = ['preparing', 'prepared', 'submitting', 'submission_unknown', 'accepted', 'running', 'cancel_requested'];
+        if (panelsRef.current.some(panel => panel.status === 'generating')
+          || listGenerationRuns(command.projectIdentity).some(run => run.jobs.some(job => pending.includes(job.status)))) {
+          throw applicationError('project_has_unresolved_generation', 'The project has an unresolved generation run and cannot change identity yet.');
+        }
+      };
+      guard();
+      const loaded = await handleLoadFromDialog(projectPath, { assertCurrent: guard, discard: choice === 'discard' });
+      const destination = projectScopeRef.current;
+      if (!loaded || destination.bindingId === sourceBindingId) {
+        return { status: 'outcome_unknown', reason: 'Project activation was not confirmed. Inspect the current project before continuing.' };
+      }
+      return {
+        status: 'completed', name: projectManager.getProject().name, projectRevision: destination.revision,
+        panelCount: panelsRef.current.length,
+        transition: { fromBindingId: sourceBindingId, toBindingId: destination.bindingId, projectRevision: destination.revision },
+      };
+    },
+    new_project: async command => {
+      assertApplicationProject(command);
+      const sourceBindingId = projectScopeRef.current.bindingId;
+      const projectRevision = projectScopeRef.current.revision;
+      const sourceFingerprint = projectStateFingerprint(readCurrentProjectState());
+      const choice = command.input.unsavedWorkChoice;
+      if (choice !== undefined && choice !== 'save' && choice !== 'discard' && choice !== 'cancel') {
+        throw applicationError('invalid_unsaved_work_choice', 'Choose save, discard, or cancel for unsaved project work.');
+      }
+      if (choice === 'cancel') return { status: 'cancelled' };
+      if (hasUnsavedProjectWork()) {
+        if (choice === undefined) return { status: 'needs_unsaved_work_choice', projectRevision };
+        if (choice === 'save') return {
+          status: 'save_required', projectRevision,
+          reason: 'Save the current project with save_project, refresh the snapshot, then request New again.',
+        };
+      }
+      const unresolvedStatuses = ['preparing', 'prepared', 'submitting', 'submission_unknown', 'accepted', 'running', 'cancel_requested'];
+      const hasUnresolvedGeneration = () => panelsRef.current.some(panel => panel.status === 'generating')
+        || listGenerationRuns(command.projectIdentity).some(run => run.jobs.some(job => unresolvedStatuses.includes(job.status)));
+      const guard = () => {
+        assertApplicationProject(command);
+        if (command.expectedConsoleBindingId !== sourceBindingId || projectScopeRef.current.bindingId !== sourceBindingId) {
+          throw applicationError('stale_console_binding', 'The Console project activation changed; New was not retargeted.');
+        }
+        if (projectStateFingerprint(readCurrentProjectState()) !== sourceFingerprint) {
+          throw applicationError('project_changed_during_new', 'The project changed while New was being prepared; refresh the application snapshot and retry.');
+        }
+        if (hasUnresolvedGeneration()) {
+          throw applicationError('project_has_unresolved_generation', 'The project has an unresolved generation run and cannot change identity yet.');
+        }
+      };
+      guard();
+      const defaultPanels: Panel[] = Array.from({ length: 6 }, (_, i) => ({
+        id: i + 1, image: null, images: [], imageHistory: [], historyIndex: -1, currentImageIndex: 0,
+        x: (i % 3) * 320, y: Math.floor(i / 3) * 320, width: 300, height: 300,
+        status: 'empty' as const, progress: 0, notes: '', nodeId: undefined, workflowId: undefined,
+        parameterValues: undefined, prompt: '', seed: -1,
+      }));
+      const now = new Date();
+      const newSettings: ProjectSettings = {
+        name: 'Untitled Project', path: '', projectFilePath: undefined,
+        namingTemplate: '{project}_Panel{panel}_{version}', autoSave: true,
+        orchestratorUrl: projectManager.getProject().orchestratorUrl, created: now, lastModified: now,
+      };
+      const newIdentity = projectManager.createUnsavedIdentity();
+      try {
+        await activateSessionIdentity(sessionDraftController, newIdentity, {
+          discard: choice === 'discard', assertCurrent: guard,
+          commit: () => {
+            projectManager.rotateUnsavedIdentity(newIdentity);
+            setProjectSettings(newSettings);
+            setPanels(defaultPanels);
+            setParameterValues({});
+            parameterValuesRef.current = {};
+            setSelectedWorkflowId(null);
+            selectedWorkflowIdRef.current = null;
+            setCameraAngles({});
+            setEnhancementPreferences(EMPTY_ENHANCEMENT_PREFERENCES);
+            enhancementPreferencesRef.current = EMPTY_ENHANCEMENT_PREFERENCES;
+            setDeletedImages(new Set());
+            setGlobalPromptOverride('');
+            setUseGlobalPrompt(false);
+            projectSavedFingerprintRef.current = projectStateFingerprint({
+              ...readCurrentProjectState(), panels: defaultPanels, parameters: {}, selectedWorkflowId: null,
+              settings: newSettings, cameraAngles: {}, enhancementPreferences: EMPTY_ENHANCEMENT_PREFERENCES, deletedImages: [],
+              globalPromptOverride: '', useGlobalPrompt: false,
+            });
+          },
+        });
+      } catch (error) {
+        return { status: 'outcome_unknown', reason: error instanceof Error ? error.message : String(error) };
+      }
+      const destination = projectScopeRef.current;
+      if (destination.bindingId === sourceBindingId) {
+        return { status: 'outcome_unknown', reason: 'New activated without a distinct Console project binding.' };
+      }
+      return {
+        status: 'completed', projectRevision: destination.revision, panelCount: 6,
+        transition: { fromBindingId: sourceBindingId, toBindingId: destination.bindingId, projectRevision: destination.revision },
+      };
+    },
+    save_project: async command => {
+      assertApplicationProject(command);
+      const sourceBindingId = projectScopeRef.current.bindingId;
+      await sessionDraftController.flush();
+      await flushPendingWorkflowSave();
+      assertApplicationProject(command);
+      const capturedFingerprint = JSON.stringify({
+        panels: panelsRef.current, parameters: parameterValuesRef.current,
+        selectedWorkflowId: selectedWorkflowIdRef.current, settings: projectManager.getProject(),
+      });
+      if (!capturedFingerprint) throw applicationError('project_snapshot_unavailable', 'The current project state could not be captured for saving.');
+      const captured = JSON.parse(capturedFingerprint) as {
+        panels: Panel[]; parameters: Record<string, unknown>; selectedWorkflowId?: string | null; settings: ProjectSettings;
+      };
+      const sourceSettings = captured.settings;
+      const input = command.input;
+      if ((input.folderPath !== undefined && typeof input.folderPath !== 'string')
+        || (input.name !== undefined && typeof input.name !== 'string')) {
+        throw applicationError('invalid_project_input', 'The project folder and name must be strings.');
+      }
+      const targetPath = input.folderPath ?? sourceSettings.path;
+      if (typeof targetPath !== 'string' || !targetPath || targetPath.length > 4096
+        || targetPath !== targetPath.trim() || targetPath.includes('\0')
+        || !(/^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))/.test(targetPath))) {
+        throw applicationError('invalid_project_path', 'The project folder must be an absolute Unix, Windows drive, or UNC path without surrounding whitespace.');
+      }
+      const targetName = (input.name ?? sourceSettings.name)?.trim();
+      if (typeof targetName !== 'string' || !targetName || targetName.length > 50
+        || /[<>:"/\\|?*\u0000-\u001f\u007f-\u009f]/.test(targetName) || targetName === '.' || targetName === '..') {
+        throw applicationError('invalid_project_name', 'The project name must be 1 to 50 characters and contain no path separators, Windows-invalid characters, or control characters.');
+      }
+      const targetSettings = { ...sourceSettings, path: targetPath, name: targetName };
+      const filename = `${targetName.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').substring(0, 50)}_project.json`;
+      const expectedSavedPath = `${targetPath.replace(/[\\/]+$/, '')}/${filename}`;
+      const normalizeFolder = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '');
+      const currentFilePath = sourceSettings.projectFilePath;
+      const currentFileParts = currentFilePath?.replace(/\\/g, '/').split('/') ?? [];
+      const currentFilename = currentFileParts.pop() || '';
+      const knownSameDestination = Boolean(currentFilePath)
+        && normalizeFolder(sourceSettings.path) === normalizeFolder(targetPath)
+        && sourceSettings.name === targetName
+        && normalizeFolder(currentFileParts.join('/')) === normalizeFolder(targetPath)
+        && currentFilename.toLowerCase() === filename.toLowerCase();
+      const targetIdentitySettings = { ...targetSettings, projectFilePath: knownSameDestination ? currentFilePath : expectedSavedPath };
+      const identityChanging = projectManager.getSessionIdentity(targetIdentitySettings) !== projectManager.getSessionIdentity(sourceSettings);
+      const unresolvedStatuses = ['preparing', 'prepared', 'submitting', 'submission_unknown', 'accepted', 'running', 'cancel_requested'];
+      const hasUnresolvedGeneration = () => panelsRef.current.some(panel => panel.status === 'generating')
+        || listGenerationRuns(command.projectIdentity).some(run => run.jobs.some(job => unresolvedStatuses.includes(job.status)));
+      const assertCapturedSource = () => {
+        if (!isApplicationProjectCurrent(command)) assertApplicationProject(command);
+        if (JSON.stringify({
+          panels: panelsRef.current, parameters: parameterValuesRef.current,
+          selectedWorkflowId: selectedWorkflowIdRef.current, settings: projectManager.getProject(),
+        }) !== capturedFingerprint) {
+          throw applicationError('project_changed_during_save', 'The project changed while it was being saved; refresh the application snapshot and retry.');
+        }
+        if (identityChanging && hasUnresolvedGeneration()) {
+          throw applicationError('project_has_unresolved_generation', 'The project has an unresolved generation run and cannot change identity yet.');
+        }
+      };
+      let listed: Awaited<ReturnType<typeof projectManager.listProjects>>;
+      try {
+        listed = await projectManager.listProjects(targetPath);
+      } catch (error) {
+        throw applicationError('project_list_failed', error instanceof Error ? error.message : String(error));
+      }
+      if (!listed.success || !Array.isArray(listed.projects)) {
+        throw applicationError('project_list_failed', listed.error || 'The target folder could not be checked for existing projects.');
+      }
+      if (listed.projects.some(project => (project.path.split(/[\\/]/).pop() || '').toLowerCase() === filename.toLowerCase())
+        && !knownSameDestination) {
+        throw applicationError('project_already_exists', `A project named '${filename}' already exists in the target folder.`);
+      }
+      assertCapturedSource();
+
+      let savedPath: string;
+      try {
+        const result = await saveProjectAndRecordRecent(targetName, () => persistProjectStateSnapshot(
+          captured.panels, captured.parameters, captured.selectedWorkflowId || undefined, targetSettings,
+          assertCapturedSource,
+        ));
+        if (!result.success || !result.savedPath) throw applicationError('project_save_failed', result.error || 'The project was not saved.');
+        savedPath = result.savedPath;
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error) throw error;
+        throw applicationError('project_save_failed', error instanceof Error ? error.message : String(error));
+      }
+      const targetIdentity = projectManager.getSessionIdentity({ ...targetSettings, projectFilePath: savedPath });
+      try {
+        assertCapturedSource();
+        await activateSessionIdentity(sessionDraftController, targetIdentity, {
+          assertCurrent: assertCapturedSource,
+          commit: () => {
+            setProjectSettings({ ...targetSettings, projectFilePath: savedPath });
+            sessionDraftController.clearFailure();
+          },
+        });
+      } catch (error) {
+        return { status: 'outcome_unknown', reason: error instanceof Error ? error.message : String(error), savedPath };
+      }
+      const finalScope = projectScopeRef.current;
+      return {
+        status: 'completed', savedPath, name: targetSettings.name, projectRevision: finalScope.revision,
+        ...(finalScope.bindingId !== sourceBindingId ? { transition: {
+          fromBindingId: sourceBindingId, toBindingId: finalScope.bindingId, projectRevision: finalScope.revision,
+        } } : {}),
+      };
+    },
+    add_panels: async command => {
+      assertApplicationProject(command);
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) throw applicationError('console_request_required', 'Adding panels must be requested within an active Console user turn.');
+      const count = command.input.count;
+      if (!Number.isInteger(count) || count < 1 || count > 16) {
+        throw applicationError('invalid_panel_count', 'Panel count must be an integer from 1 to 16.');
+      }
+      if (panelsRef.current.length + count > 256) {
+        throw applicationError('panel_limit_exceeded', 'Adding these panels would exceed the 256 panel limit.');
+      }
+      const existingPanelIds = new Set(panelsRef.current.map(panel => panel.id));
+      for (let index = 0; index < count; index += 1) addPanel();
+      const newPanels = panelsRef.current.filter(panel => !existingPanelIds.has(panel.id));
+      return {
+        status: 'added',
+        projectRevision: projectScopeRef.current.revision,
+        panels: newPanels.map(panel => ({
+          id: panel.id,
+          name: panel.name || `Panel_${String(panel.id).padStart(2, '0')}`,
+          panelRevision: panelRevisionRef.current.get(panel.id),
+        })),
+      };
+    },
+    remove_panels: async command => {
+      assertApplicationProject(command);
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) throw applicationError('console_request_required', 'Removing panels must be requested within an active Console user turn.');
+      const panelIds = command.input.panelIds;
+      if (!Array.isArray(panelIds) || panelIds.length < 1 || panelIds.length > 16
+        || Array.from(panelIds).some(id => !Number.isSafeInteger(id) || id <= 0)
+        || new Set(panelIds).size !== panelIds.length) {
+        throw applicationError('invalid_panel_ids', 'Panel IDs must be unique positive safe integers, with 1 to 16 entries.');
+      }
+      const revisions = command.input.expectedPanelRevisions;
+      if (!revisions || typeof revisions !== 'object' || Array.isArray(revisions)
+        || Reflect.ownKeys(revisions).length !== panelIds.length
+        || panelIds.some(id => !Object.prototype.hasOwnProperty.call(revisions, String(id))
+          || !Number.isSafeInteger(revisions[String(id)]) || revisions[String(id)] <= 0)) {
+        throw applicationError('invalid_panel_revisions', 'Expected panel revisions must contain one positive safe integer for each requested panel ID.');
+      }
+      const requested = new Set(panelIds);
+      for (const panelId of panelIds) {
+        if (!panelsRef.current.some(panel => panel.id === panelId)) {
+          throw applicationError('panel_not_found', `Panel ${panelId} no longer exists.`);
+        }
+        if (panelRevisionRef.current.get(panelId) !== revisions[String(panelId)]) {
+          throw applicationError('stale_panel', `Panel ${panelId} changed after this action was prepared. Refresh the application snapshot and retry.`);
+        }
+      }
+      const unresolvedStatuses = ['preparing', 'prepared', 'submitting', 'submission_unknown', 'accepted', 'running', 'cancel_requested'];
+      if (panelsRef.current.some(panel => requested.has(panel.id) && panel.status === 'generating')
+        || listGenerationRuns(command.projectIdentity).some(run => requested.has(run.panelId)
+          && run.jobs.some(job => unresolvedStatuses.includes(job.status)))) {
+        throw applicationError('panel_has_unresolved_run', 'A requested panel has an unresolved generation run. Inspect or cancel it before removing the panel.');
+      }
+      const remaining = panelsRef.current.filter(panel => !requested.has(panel.id));
+      setPanels(remaining);
+      if (selectedPanelIdRef.current !== null && requested.has(selectedPanelIdRef.current)) {
+        const nextSelectedPanelId = remaining[0]?.id ?? null;
+        setSelectedPanelId(nextSelectedPanelId);
+        selectedPanelIdRef.current = nextSelectedPanelId;
+      }
+      return {
+        status: 'removed',
+        projectRevision: projectScopeRef.current.revision,
+        removedPanelIds: [...panelIds],
+        selectedPanelId: selectedPanelIdRef.current,
+        filesDeleted: false,
+      };
+    },
+    show_panel_controls: async command => {
+      assertApplicationProject(command);
+      if (!getActiveConsoleUserRequest(command.projectIdentity)) {
+        throw applicationError('console_request_required', 'Showing panel controls must be requested within an active Console user turn.');
+      }
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      const workflow = assertApplicationWorkflow(command, command.target.workflowId);
+      assertPanelWorkflow(panel, workflow.id);
+      const routes = getWorkflowRoutes(workflow);
+      const route = routes.find(candidate => candidate.category === activeTab && candidate.subCategory === activeSubTab) ?? routes[0];
+      if (!route) throw applicationError('unsupported_workflow_route', 'This workflow has no supported Storyboard controls route.');
+
+      const nextParameters = { ...(panel.parameterValues || {}) };
+      if (selectedWorkflowIdRef.current !== workflow.id) skipParameterReset.current = true;
+      selectedPanelIdRef.current = panel.id;
+      setSelectedPanelId(panel.id);
+      selectedWorkflowIdRef.current = workflow.id;
+      setSelectedWorkflowId(workflow.id);
+      parameterValuesRef.current = nextParameters;
+      setParameterValues(nextParameters);
+      setActiveTab(route.category);
+      setActiveSubTab(route.subCategory);
+
+      return {
+        status: 'shown',
+        panelId: panel.id,
+        panelRevision: panelRevisionRef.current.get(panel.id),
+        workflowId: workflow.id,
+        workflowRevision: workflow.revision,
+        category: route.category,
+        subCategory: route.subCategory,
+        controlCount: workflow.config.filter(control => control.exposed).length,
+      };
+    },
+    select_backends: async command => {
+      assertApplicationProject(command);
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) throw applicationError('generation_not_authorized', 'Backend selection must be requested within an active Console user turn.');
+      const backendIds = command.input.backendIds;
+      if (!Array.isArray(backendIds) || backendIds.length > 32
+        || backendIds.some(id => typeof id !== 'string' || id.length === 0 || id.length > 256)
+        || new Set(backendIds).size !== backendIds.length) {
+        throw applicationError('invalid_backend_selection', 'Backend IDs must be unique, nonempty strings of at most 256 characters, with no more than 32 entries.');
+      }
+      const configuredBackendIds = new Set(orchestratorManager.getNodes().map(backend => backend.id));
+      if (backendIds.some(id => !configuredBackendIds.has(id))) {
+        throw applicationError('invalid_backend_selection', 'Every backend ID must exist in the configured Orchestrator registry.');
+      }
+      const next = [...backendIds];
+      assertApplicationProject(command);
+      if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== userRequest.turnId) {
+        throw applicationError('console_turn_changed', 'The Console user turn changed before backend selection.');
+      }
+      selectedBackendIdsRef.current = next;
+      setSelectedBackendIds(next);
+      return { status: 'selected', backendIds: [...next], projectRevision: projectScopeRef.current.revision };
+    },
+    get_application_snapshot: async command => {
+      assertApplicationProject(command, false);
+      const sensitiveText = SNAPSHOT_SENSITIVE_TEXT;
+      const redactValue = (value: unknown, depth = 0): unknown => {
+        if (typeof value === 'string') {
+          if (/^data:(?:image|video)\//i.test(value) || value.length > 512 && /^[A-Za-z0-9+/]+={0,2}$/.test(value)) return '[media data omitted]';
+          if (sensitiveText.test(value)) return '[sensitive text omitted]';
+          return value.length > 1024 ? `${value.slice(0, 1024)}…` : value;
+        }
+        if (value === null || typeof value !== 'object') return value;
+        if (depth > 3) return '[nested value omitted]';
+        if (Array.isArray(value)) return value.slice(0, 40).map(item => redactValue(item, depth + 1));
+        return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 40).map(([key, item]) => [
+          key,
+          /(?:api|access|private)[_-]?key|token|secret|password|credential|authorization/i.test(key) ? '[redacted]' : redactValue(item, depth + 1),
+        ]));
+      };
+      const snapshotWorkflowId = selectedWorkflowIdRef.current || panelsRef.current.find(panel => panel.workflowId)?.workflowId;
+      const settings = projectManager.getProject();
+      const runs = listGenerationRuns(command.projectIdentity).slice(-50).map(run => ({
+        runId: run.runId,
+        commandId: run.commandId,
+        panelId: run.panelId,
+        workflowId: run.workflowId,
+        workflowRevision: run.workflowRevision,
+        mode: run.mode,
+        status: run.status,
+        createdAt: run.createdAt,
+        jobs: run.jobs.map(job => ({ backendId: job.backendId, promptId: job.promptId, status: job.status, updatedAt: job.updatedAt, message: job.message ? redactValue(job.message) : undefined })),
+      }));
+      const selectedBackendSchema = (() => {
+        const backendIds = [...new Set(selectedBackendIdsRef.current)];
+        if (backendIds.length !== 1) return { ok: false, reason: 'Exactly one managed backend must be selected.' };
+        const backend = orchestratorManager.getNodes().find(node => node.id === backendIds[0]);
+        if (!backend) return { ok: false, reason: 'The selected managed backend is no longer configured.' };
+        const workflowId = selectedWorkflowIdRef.current;
+        if (!workflowId) return { ok: false, reason: 'No workflow is explicitly selected.' };
+        const workflow = workflowsRef.current.find(item => item.id === workflowId);
+        if (!workflow) return { ok: false, reason: 'The explicitly selected workflow is unavailable.' };
+        if (typeof workflow.revision !== 'number' || !Number.isSafeInteger(workflow.revision) || workflow.revision <= 0) return { ok: false, reason: 'The selected workflow has no positive canonical revision.' };
+        if (!workflowStorageReadyRef.current) return { ok: false, reason: 'Workflow storage is not ready.' };
+        if (workflowConflictIdsRef.current.has(workflow.id)) return { ok: false, reason: 'The selected workflow has an unresolved storage conflict.' };
+        if (workflowPersistedFingerprintRef.current.get(workflow.id) !== workflowContentFingerprint(workflow)) return { ok: false, reason: 'The selected workflow has unsaved changes.' };
+        const graph = workflow.workflow as unknown as Record<string, unknown>;
+        const definitions = graph.definitions;
+        const subgraphs = definitions && typeof definitions === 'object' ? (definitions as Record<string, unknown>).subgraphs : undefined;
+        if (subgraphs && (typeof subgraphs !== 'object' || Object.keys(subgraphs).length > 0)) return { ok: false, reason: 'unsupported_subgraph_schema_selection' };
+        const cache = nodeDefinitions.getFreshDefinitionsSnapshot(backend.url);
+        if (!cache) return { ok: false, reason: 'Fresh backend schema is unavailable.' };
+        const uiOnlyNodes = ['Note', 'MarkdownNote', 'PrimitiveNode', 'GetNode', 'SetNode', 'Reroute', 'LoadImageOutput'];
+        const nodeClasses = listWorkflowNodes(workflow.workflow).map(([, node]) => getWorkflowNodeClassType(node)).filter(classType => classType && !uiOnlyNodes.includes(classType));
+        const result = selectCachedWorkflowSchema({ backendId: backend.id, workflowId: workflow.id, nodeClasses, cache });
+        if (!result.ok) return result;
+        const schemaAvailability: { reason?: string } = {};
+        const objectInfo = redactAgentGraphValue(result.schema.objectInfo, 0, schemaAvailability);
+        if (schemaAvailability.reason) return { ok: false, reason: schemaAvailability.reason };
+        return { ...result, schema: { ...result.schema, workflowRevision: workflow.revision, objectInfo: objectInfo as Record<string, unknown> } };
+      })();
+      return {
+        consoleBindingId: projectScopeRef.current.bindingId,
+        project: { revision: projectScopeRef.current.revision, name: settings.name, hasUnsavedWork: hasUnsavedProjectWork() },
+        selectedPanelId: selectedPanelIdRef.current,
+        selectedWorkflowId: selectedWorkflowIdRef.current,
+        selectedBackendSchema,
+        panels: panelsRef.current.map(panel => {
+          const workflow = workflowsRef.current.find(item => item.id === panel.workflowId);
+          const values = panel.parameterValues || {};
+          return {
+            id: panel.id,
+            revision: panelRevisionRef.current.get(panel.id) || 1,
+            inputRevision: panelInputRevisionRef.current.get(panel.id) || 1,
+            status: panel.status,
+            workflowId: panel.workflowId,
+            backendId: panel.nodeId,
+            parameterValues: Object.fromEntries((workflow?.config || []).filter(control => control.exposed).flatMap(control =>
+              Object.prototype.hasOwnProperty.call(values, control.name) ? [[control.name, redactValue(values[control.name])]] : [],
+            )),
+          };
+        }),
+        workflows: workflowsRef.current.map(workflow => {
+          const graph = workflow.workflow as unknown as Record<string, unknown>;
+          const graphCount = Array.isArray(graph.nodes)
+            ? graph.nodes.filter(node => node && typeof node === 'object').length
+            : Object.keys(graph).filter(nodeId => nodeId !== 'meta').length;
+          const includeGraph = workflow.id === snapshotWorkflowId;
+          const graphAvailability: { reason?: string } = {};
+          const safeGraph = includeGraph ? redactAgentGraphValue(workflow.workflow, 0, graphAvailability) : undefined;
+          if (includeGraph && !graphAvailability.reason) {
+            try {
+              if (new TextEncoder().encode(JSON.stringify(safeGraph)).byteLength > 500_000) graphAvailability.reason = 'The selected workflow is too large for a safe application snapshot.';
+            } catch {
+              graphAvailability.reason = 'The selected workflow could not be serialized safely.';
+            }
+          }
+          return {
+            id: workflow.id,
+            name: workflow.name,
+            description: workflow.description,
+            category: workflow.category,
+            subCategory: workflow.subCategory,
+            revision: workflow.revision,
+            saved: workflowStorageReadyRef.current
+              && typeof workflow.revision === 'number'
+              && Number.isSafeInteger(workflow.revision)
+              && workflow.revision > 0
+              && !workflowConflictIdsRef.current.has(workflow.id)
+              && workflowPersistedFingerprintRef.current.get(workflow.id) === workflowContentFingerprint(workflow),
+            recipeId: workflow.recipeId,
+            sourceGraphFingerprint: workflow.sourceGraphFingerprint,
+            recipeFingerprint: workflow.recipeFingerprint,
+            nodeCount: graphCount,
+            graph: includeGraph && !graphAvailability.reason ? safeGraph : undefined,
+            graphAvailable: includeGraph && !graphAvailability.reason,
+            graphOmittedReason: includeGraph ? graphAvailability.reason : 'Only the selected workflow graph is included.',
+            exposedControls: workflow.config.filter(control => control.exposed).map(control => ({
+              name: control.name,
+              nodeId: control.node_id,
+              inputName: control.input_name,
+              type: control.type,
+              category: control.category,
+              default: redactValue(control.default),
+              constraints: control.constraints ? { min: control.constraints.min, max: control.constraints.max, step: control.constraints.step, options: control.constraints.options?.slice(0, 50) } : undefined,
+            })),
+          };
+        }),
+        backends: renderNodes.map(node => ({ id: node.id, name: node.name, status: node.status, os: node.os, selected: selectedBackendIdsRef.current.includes(node.id) })),
+        runs,
+      };
+    },
+    inspect_backend: async command => {
+      assertApplicationProject(command);
+      const backend = requireSelectedApplicationBackend(command.target.backendId, false);
+      const project = projectManager.getProject();
+      if (!project.orchestratorUrl) throw applicationError('orchestrator_unavailable', 'The active project has no configured Orchestrator URL.');
+      assertApplicationProject(command);
+      if (requireSelectedApplicationBackend(backend.id, false).url !== backend.url) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during inspection. Refresh the application snapshot before continuing.');
+      }
+      if (command.input.refresh === true) nodeDefinitions.clearCache(backend.url);
+      let browserSchemaCacheCapturedAt: string | undefined;
+      try {
+        await nodeDefinitions.fetchDefinitions(backend.url);
+        browserSchemaCacheCapturedAt = nodeDefinitions.getFreshDefinitionsSnapshot(backend.url)?.capturedAt;
+      } catch {
+        browserSchemaCacheCapturedAt = undefined;
+      }
+      assertApplicationProject(command);
+      if (projectManager.getProject().orchestratorUrl !== project.orchestratorUrl) throw applicationError('orchestrator_scope_changed', 'The configured Orchestrator URL changed during backend inspection. Refresh the application snapshot before continuing.');
+      const currentBackendAfterSchema = requireSelectedApplicationBackend(backend.id, false);
+      if (currentBackendAfterSchema.id !== backend.id || currentBackendAfterSchema.url !== backend.url) throw applicationError('backend_scope_changed', 'The managed backend changed during inspection. Refresh the application snapshot before continuing.');
+      const capability = await inspectManagedBackendCapabilities(project.orchestratorUrl, backend.id, command.input.refresh === true);
+      assertApplicationProject(command);
+      if (projectManager.getProject().orchestratorUrl !== project.orchestratorUrl) throw applicationError('orchestrator_scope_changed', 'The configured Orchestrator URL changed during backend inspection. Refresh the application snapshot before continuing.');
+      const currentBackend = requireSelectedApplicationBackend(backend.id, false);
+      if (currentBackend.url !== backend.url || capability.backend_id !== backend.id) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during inspection. Refresh the application snapshot before continuing.');
+      }
+      return {
+        backendId: backend.id,
+        name: currentBackend.name,
+        browserStatus: currentBackend.status,
+        browserSchemaCacheStatus: browserSchemaCacheCapturedAt ? 'available' : 'unavailable',
+        ...(browserSchemaCacheCapturedAt ? { browserSchemaCacheCapturedAt } : {}),
+        inspectedAt: capability.inspected_at,
+        httpReachability: capability.http_reachability,
+        websocketReachability: capability.websocket_reachability,
+        objectInfoStatus: capability.object_info_status,
+        objectInfoHash: capability.object_info_hash,
+        nodeClasses: capability.node_classes,
+        loaderEnums: capability.loader_enums,
+        capabilities: capability.capabilities,
+        cached: capability.cached,
+        errors: {
+          systemStats: capability.system_stats_error_code,
+          objectInfo: capability.object_info_error_code,
+        },
+        modelIdentity: 'not_checked',
+        filenameAdvertisementMeaning: 'Advertised loader choices are name matches only; they do not prove the installed file identity.',
+      };
+    },
+    search_workflow_sources: async command => {
+      assertApplicationProject(command);
+      const result = await api.searchWorkflowRecipes({
+        ...(command.input.query ? { query: command.input.query } : {}),
+      });
+      assertApplicationProject(command);
+      return {
+        ...result,
+        selectedTarget: null,
+        readinessMeaning: 'Source and recipe fingerprints do not establish live backend compatibility or execution readiness.',
+      };
+    },
+    get_source_recipe: async command => {
+      assertApplicationProject(command);
+      const result = await api.getWorkflowRecipe(command.input.recipeId);
+      assertApplicationProject(command);
+      const recipeBackendSchema = (() => {
+        const backendIds = [...new Set(selectedBackendIdsRef.current)];
+        if (backendIds.length !== 1) return { ok: false, reason: 'Exactly one managed backend must be selected.' };
+        const backend = orchestratorManager.getNodes().find(node => node.id === backendIds[0]);
+        if (!backend) return { ok: false, reason: 'The selected managed backend is no longer configured.' };
+        const recipeId = result.id;
+        if (typeof recipeId !== 'string' || recipeId !== command.input.recipeId) return { ok: false, reason: 'The resolved recipe ID does not match the requested recipe.' };
+        const workflow = result.workflow;
+        if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) return { ok: false, reason: 'The recipe has no valid source workflow.' };
+        const sourceGraph = result.sourceGraph && typeof result.sourceGraph === 'object' && !Array.isArray(result.sourceGraph)
+          ? result.sourceGraph as Record<string, unknown> : {};
+        const fingerprints = result.fingerprints && typeof result.fingerprints === 'object' && !Array.isArray(result.fingerprints)
+          ? result.fingerprints as Record<string, unknown> : {};
+        const sourceFingerprint = sourceGraph.sha256;
+        const recipeFingerprint = fingerprints.recipe;
+        if (typeof sourceFingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(sourceFingerprint)
+          || fingerprints.sourceGraph !== sourceFingerprint
+          || typeof recipeFingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(recipeFingerprint)) {
+          return { ok: false, reason: 'The recipe source or recipe fingerprint is invalid.' };
+        }
+        const classes = collectRecipeNodeClasses(workflow as Record<string, unknown>);
+        if (!classes.ok) return { ok: false, reason: classes.reason };
+        const cached = selectCachedWorkflowSchema({
+          backendId: backend.id,
+          workflowId: recipeId,
+          nodeClasses: classes.nodeClasses,
+          cache: nodeDefinitions.getFreshDefinitionsSnapshot(backend.url),
+        });
+        if (!cached.ok) return cached;
+        const privacyReason: { reason?: string } = {};
+        const objectInfo = redactAgentGraphValue(cached.schema.objectInfo, 0, privacyReason);
+        if (privacyReason.reason) return { ok: false, reason: privacyReason.reason };
+        const schema = {
+          backendId: backend.id,
+          recipeId,
+          sourceGraphFingerprint: sourceFingerprint,
+          recipeFingerprint,
+          source: 'selected-backend-saved' as const,
+          schemaScope: 'source-recipe' as const,
+          capturedAt: cached.schema.capturedAt,
+          objectInfo: objectInfo as Record<string, unknown>,
+        };
+        try {
+          const serialized = JSON.stringify({ ok: true, schema });
+          if (typeof serialized !== 'string' || new TextEncoder().encode(serialized).byteLength > 200 * 1024) {
+            return { ok: false, reason: 'Selected schema could not be serialized or exceeds 200 KiB.' };
+          }
+        } catch {
+          return { ok: false, reason: 'Selected schema could not be serialized.' };
+        }
+        return { ok: true as const, schema };
+      })();
+      return {
+        ...result,
+        targetMatchesSelectedHandoff: null,
+        selectedHandoffId: null,
+        recipeBackendSchema,
+        executionMeaning: 'Pinned source data is untrusted recipe content; unsupported exports and unverified backend/model identity cannot be executed or called ready.',
+      };
+    },
+    plan_dependencies: async command => {
+      assertApplicationProject(command);
+      const backend = requireSelectedApplicationBackend(command.target.backendId, false);
+      const project = projectManager.getProject();
+      const orchestratorUrl = project.orchestratorUrl;
+      if (!orchestratorUrl) throw applicationError('orchestrator_unavailable', 'The active project has no configured Orchestrator URL.');
+      const recipe = await api.getWorkflowRecipe(command.input.recipeId);
+      assertApplicationProject(command);
+      if (projectManager.getProject().orchestratorUrl !== orchestratorUrl) throw applicationError('orchestrator_scope_changed', 'The configured Orchestrator URL changed during dependency planning. Refresh application state before continuing.');
+      const currentBackendAfterRecipe = requireSelectedApplicationBackend(backend.id, false);
+      if (currentBackendAfterRecipe.url !== backend.url) throw applicationError('backend_scope_changed', 'The selected managed backend changed during recipe resolution.');
+      const sourceGraph = recipe.sourceGraph && typeof recipe.sourceGraph === 'object' ? recipe.sourceGraph as Record<string, unknown> : {};
+      const fingerprints = recipe.fingerprints && typeof recipe.fingerprints === 'object' ? recipe.fingerprints as Record<string, unknown> : {};
+      const dependencyPlanRequest = recipe.dependencyPlanRequest && typeof recipe.dependencyPlanRequest === 'object'
+        ? recipe.dependencyPlanRequest as Record<string, unknown>
+        : {};
+      if (dependencyPlanRequest.graph_fingerprint !== command.input.sourceGraphFingerprint
+        || !Array.isArray(dependencyPlanRequest.required_node_classes)
+        || dependencyPlanRequest.required_node_classes.some(item => typeof item !== 'string')
+        || !Array.isArray(dependencyPlanRequest.dependencies)
+        || dependencyPlanRequest.dependencies.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+        throw applicationError('invalid_dependency_request', 'The pinned recipe does not contain a valid dependency plan for its source fingerprint.');
+      }
+      if (sourceGraph.sha256 !== command.input.sourceGraphFingerprint
+        || fingerprints.sourceGraph !== command.input.sourceGraphFingerprint
+        || dependencyPlanRequest.graph_fingerprint !== command.input.sourceGraphFingerprint) {
+        throw applicationError('recipe_fingerprint_mismatch', 'The dependency request does not match the recipe source graph fingerprint. Read the recipe again before planning.');
+      }
+      const planRequest: ManagedDependencyPlanRequest = {
+        graph_fingerprint: command.input.sourceGraphFingerprint,
+        required_node_classes: dependencyPlanRequest.required_node_classes as string[],
+        dependencies: dependencyPlanRequest.dependencies as Array<Record<string, unknown>>,
+      };
+      if (requireSelectedApplicationBackend(backend.id, false).url !== backend.url) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during dependency planning. Refresh application state before continuing.');
+      }
+      const report = await planManagedBackendDependencies(orchestratorUrl, backend.id, planRequest);
+      assertApplicationProject(command);
+      if (projectManager.getProject().orchestratorUrl !== orchestratorUrl) throw applicationError('orchestrator_scope_changed', 'The configured Orchestrator URL changed during dependency planning. Refresh application state before continuing.');
+      const plannedBackend = requireSelectedApplicationBackend(backend.id, false);
+      if (plannedBackend.url !== backend.url || report.backend_id !== backend.id
+        || report.graph_fingerprint !== command.input.sourceGraphFingerprint) {
+        throw applicationError('dependency_plan_scope_changed', 'The backend or pinned graph changed during dependency planning. Refresh state before continuing.');
+      }
+      return {
+        recipeId: command.input.recipeId,
+        sourceGraphFingerprint: command.input.sourceGraphFingerprint,
+        backendId: backend.id,
+        report,
+        readiness: 'not_verified',
+        identityMeaning: 'Advertised filename matches do not prove installed file identity or task compatibility.',
+      };
+    },
+    prepare_workflow_revision: async command => {
+      await flushPendingWorkflowSave();
+      assertApplicationProject(command);
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      const backend = requireSelectedApplicationBackend(command.target.backendId);
+      const exportedRecipe = command.source.exportedRecipe;
+      if (exportedRecipe !== undefined && (!exportedRecipe || typeof exportedRecipe !== 'object' || Array.isArray(exportedRecipe))) {
+        throw applicationError('recipe_export_invalid', 'The supplied recipe export is invalid.');
+      }
+      const recipe = await api.getWorkflowRecipe(command.source.recipeId);
+      assertApplicationProject(command);
+      assertApplicationPanel(command, panel.id);
+      if (requireSelectedApplicationBackend(backend.id).url !== backend.url) {
+        throw applicationError('recipe_prepare_scope_changed', 'The panel or managed backend changed during recipe resolution. Refresh the application snapshot before continuing.');
+      }
+      const recipeTarget = recipe.target && typeof recipe.target === 'object' ? recipe.target as Record<string, unknown> : {};
+      const sourceGraph = recipe.sourceGraph && typeof recipe.sourceGraph === 'object' ? recipe.sourceGraph as Record<string, unknown> : {};
+      const fingerprints = recipe.fingerprints && typeof recipe.fingerprints === 'object' ? recipe.fingerprints as Record<string, unknown> : {};
+      const recipeFingerprint = fingerprints.recipe;
+      const workflowGraphValue = recipe.workflow;
+      const isKleinExport = recipe.id === 'flux-2-klein-4b-distilled-t2i' && sourceGraph.sha256 === 'cd4a29b0be6f71a7391f2f023e69dfc3b47d7da9f2aa215b4c8b8e17c2eea107';
+      const isLtxI2vExport = recipe.id === 'ltx-2.5-distilled-i2v' && sourceGraph.sha256 === '03b136ba0ad752c1e91e496a23fa4f4826ef881777d591dc9129c459922e7dac';
+      const isLtxExport = (recipe.id === 'ltx-2.5-distilled-t2v' && sourceGraph.sha256 === 'eb1a415a467a2ef1ea63cdb4e79a35315e29c971b1e4f7646ed149a2971fdbd7') || isLtxI2vExport;
+      const isMiniMaxT2vExport = recipe.id === 'minimax-h3-fl2va-t2v' && sourceGraph.sha256 === '8a5eb23b0dd2df9e99b6f7af9684e770f188feca820d241364b729e01dedf3b6';
+      const isMiniMaxI2vExport = recipe.id === 'minimax-h3-fl2va-i2v' && sourceGraph.sha256 === '34ee39544808fd3b0dc8de9df082940d4d41c3771beb80d3988c1ea5531cec0d';
+      const isMiniMaxFastH3Export = recipe.id === 'minimax-fasth3-t2v' && sourceGraph.sha256 === '416fdaf93f35e90c41afc531f05fbfd234ff55c61bd99f643527b2204324da62';
+      if (sourceGraph.sha256 !== command.source.sourceGraphFingerprint
+        || fingerprints.sourceGraph !== command.source.sourceGraphFingerprint
+        || typeof recipeFingerprint !== 'string'
+        || !workflowGraphValue || typeof workflowGraphValue !== 'object' || Array.isArray(workflowGraphValue)) {
+        throw applicationError('recipe_fingerprint_mismatch', 'The resolved recipe does not match its pinned source graph fingerprint. Read the recipe again.');
+      }
+      if (exportedRecipe) {
+        const capturedAt = Date.parse(exportedRecipe.capturedAt);
+        const exportAge = Date.now() - capturedAt;
+        const exportedWorkflow = exportedRecipe.workflow;
+        if ((!isKleinExport && !isLtxExport && !isMiniMaxT2vExport && !isMiniMaxI2vExport && !isMiniMaxFastH3Export)
+          || exportedRecipe.recipeFingerprint !== recipeFingerprint || exportedRecipe.backendId !== backend.id
+          || exportedRecipe.readiness !== 'not_verified'
+          || exportedRecipe.identityVerification !== 'not_verified' || !Number.isFinite(capturedAt) || exportAge < 0 || exportAge >= 5 * 60 * 1000
+          || !/^[0-9a-f]{64}$/.test(exportedRecipe.objectInfoFingerprint) || !/^[0-9a-f]{64}$/.test(exportedRecipe.exportFingerprint)
+          || !exportedWorkflow || typeof exportedWorkflow !== 'object' || Array.isArray(exportedWorkflow)
+          || (Object.getPrototypeOf(exportedWorkflow) !== Object.prototype && Object.getPrototypeOf(exportedWorkflow) !== null)
+          || Object.keys(exportedWorkflow).length === 0) {
+          throw applicationError('recipe_export_invalid', 'The supplied export is stale or does not match a pinned recipe and selected backend.');
+        }
+      }
+      const overlay = recipe.applicationOverlay && typeof recipe.applicationOverlay === 'object' ? recipe.applicationOverlay as Record<string, unknown> : {};
+      const operations = Array.isArray(overlay.operations) ? overlay.operations : [];
+      const unchangedRef2va = recipe.id === 'minimax-h3-ref2va-reference'
+        && recipe.supportStatus === 'source_verified_runtime_unverified'
+        && overlay.status === 'proposed_unverified'
+        && Array.isArray(overlay.operations) && operations.length === 0;
+      if (!exportedRecipe && (recipe.id === 'minimax-fasth3-t2v' || recipe.supportStatus === 'unsupported_requires_supported_export'
+        || (overlay.status !== 'no_graph_change' && !unchangedRef2va) || operations.length !== 0)) {
+        return {
+          valid: false,
+          blocked: true,
+          status: 'unsupported-recipe-overlay',
+          recipeId: command.source.recipeId,
+          reason: typeof recipe.statusReason === 'string' ? recipe.statusReason : 'This recipe requires an unsupported source graph operation or export.',
+          requiredNextStep: 'Provide a verified supported API-format export or conversion contract for this exact pinned source; no workflow was prepared.',
+        };
+      }
+      const workflowGraph = (exportedRecipe ? exportedRecipe.workflow : workflowGraphValue) as ComfyUIWorkflow;
+      const graphRecord = workflowGraph as Record<string, unknown>;
+      const definitions = graphRecord.definitions && typeof graphRecord.definitions === 'object' ? graphRecord.definitions as Record<string, unknown> : {};
+      if (exportedRecipe && (Array.isArray(graphRecord.nodes)
+        || Array.isArray(definitions.subgraphs) && definitions.subgraphs.length > 0
+        || Object.entries(graphRecord).filter(([key]) => !['meta', 'version', 'extra', 'definitions'].includes(key)).length === 0
+        || Object.entries(graphRecord).some(([key, node]) => !['meta', 'version', 'extra', 'definitions'].includes(key)
+          && (!node || typeof node !== 'object' || Array.isArray(node) || typeof (node as Record<string, unknown>).class_type !== 'string'
+            || !(node as Record<string, unknown>).inputs || typeof (node as Record<string, unknown>).inputs !== 'object' || Array.isArray((node as Record<string, unknown>).inputs))))) {
+        throw applicationError('recipe_export_invalid', 'The supplied pinned recipe export must be a flat ComfyUI API mapping with class_type and inputs on every node.');
+      }
+      if (!exportedRecipe && Array.isArray(definitions.subgraphs) && definitions.subgraphs.length > 0) {
+        return {
+          valid: false,
+          blocked: true,
+          status: 'unsupported-source-export',
+          recipeId: command.source.recipeId,
+          sourceGraphFingerprint: command.source.sourceGraphFingerprint,
+          sourceFormat: sourceGraph.format,
+          reason: 'The pinned recipe contains ComfyUI subgraph definitions. The current application parser has no verified upstream API-format export for this graph.',
+          requiredNextStep: 'Use a verified ComfyUI API-format export for this exact source fingerprint (or add a bounded exporter with that fingerprint contract). The application will not flatten this graph by hand.',
+        };
+      }
+      const objectInfo = await nodeDefinitions.fetchDefinitions(backend.url);
+      assertApplicationProject(command);
+      assertApplicationPanel(command, panel.id);
+      if (requireSelectedApplicationBackend(backend.id).url !== backend.url) throw applicationError('backend_scope_changed', 'The managed backend changed during schema validation. Refresh the application snapshot before continuing.');
+      if (exportedRecipe) {
+        const classes = collectRecipeNodeClasses(workflowGraphValue as Record<string, unknown>);
+        if (!classes.ok) throw applicationError('recipe_export_source_invalid', `Pinned source node classes are unavailable: ${classes.reason}`);
+        const cached = selectCachedWorkflowSchema({
+          backendId: backend.id,
+          workflowId: recipe.id as string,
+          nodeClasses: classes.nodeClasses,
+          cache: nodeDefinitions.getFreshDefinitionsSnapshot(backend.url),
+        });
+        if (!cached.ok) throw applicationError('recipe_export_schema_unavailable', cached.reason);
+        const privacyReason: { reason?: string } = {};
+        const safeObjectInfo = redactAgentGraphValue(cached.schema.objectInfo, 0, privacyReason);
+        if (privacyReason.reason) throw applicationError('recipe_export_schema_unsafe', privacyReason.reason);
+        let schemaFingerprint: string;
+        let exportFingerprint: string;
+        try {
+          [schemaFingerprint, exportFingerprint] = await Promise.all([
+            fingerprintRecipeExport(safeObjectInfo),
+            fingerprintRecipeExport(workflowGraph),
+          ]);
+        } catch {
+          throw applicationError('recipe_export_fingerprint_unavailable', 'The selected schema or pinned recipe export could not be fingerprinted safely.');
+        }
+        if (schemaFingerprint !== exportedRecipe.objectInfoFingerprint || exportFingerprint !== exportedRecipe.exportFingerprint) {
+          throw applicationError('recipe_export_fingerprint_mismatch', 'The supplied pinned recipe export or selected backend schema changed after export capture.');
+        }
+        assertApplicationProject(command);
+        assertApplicationPanel(command, panel.id);
+        if (requireSelectedApplicationBackend(backend.id).url !== backend.url) throw applicationError('backend_scope_changed', 'The managed backend changed during export fingerprint verification. Refresh the application snapshot before continuing.');
+        const exportAgeAfterHash = Date.now() - Date.parse(exportedRecipe.capturedAt);
+        if (!Number.isFinite(exportAgeAfterHash) || exportAgeAfterHash < 0 || exportAgeAfterHash >= 5 * 60 * 1000) {
+          throw applicationError('recipe_export_stale', 'The supplied pinned recipe export expired during schema verification. Request a fresh export.');
+        }
+      }
+      const parsed = getWorkflowParser().parseWorkflow(workflowGraph, objectInfo);
+      const inputBindings = Array.isArray(recipe.inputBindings) ? recipe.inputBindings : [];
+      const safeRoles = new Set(['prompt', 'negative_prompt', 'seed', 'width', 'height', 'duration_seconds', 'fps', 'aspect_ratio', 'image', 'reference_image', 'first_frame', 'last_frame']);
+      const usedNames = new Set<string>();
+      const ltxPins: Record<string, { nodeId: string; nodeClass: string; inputName: string }> = {
+        prompt: { nodeId: isLtxI2vExport ? '398:376' : '405:376', nodeClass: 'PrimitiveStringMultiline', inputName: 'value' },
+        duration_seconds: { nodeId: isLtxI2vExport ? '398:362' : '405:362', nodeClass: 'PrimitiveInt', inputName: 'value' },
+        fps: { nodeId: isLtxI2vExport ? '398:361' : '405:361', nodeClass: 'PrimitiveInt', inputName: 'value' },
+        seed: { nodeId: isLtxI2vExport ? '398:339' : '405:339', nodeClass: 'RandomNoise', inputName: 'noise_seed' },
+        aspect_ratio: { nodeId: isLtxI2vExport ? '403' : '409', nodeClass: 'ResolutionSelector', inputName: 'aspect_ratio' },
+        ...(isLtxI2vExport ? { first_frame: { nodeId: '395', nodeClass: 'LoadImage', inputName: 'image' } } : {}),
+      };
+      const miniMaxRoles = isMiniMaxI2vExport
+        ? ['prompt', 'duration_seconds', 'seed', 'aspect_ratio', 'first_frame']
+        : ['prompt', 'duration_seconds', 'seed', 'aspect_ratio'];
+      const miniMaxPins: Record<string, { nodeId: string; nodeClass: string; inputName: string }> = {
+        prompt: { nodeId: isMiniMaxI2vExport || isMiniMaxFastH3Export ? '105:104' : '140:131', nodeClass: 'MiniMaxH3ImageToVideo', inputName: 'prompt' },
+        duration_seconds: { nodeId: isMiniMaxI2vExport || isMiniMaxFastH3Export ? '105:111' : '140:133', nodeClass: 'PrimitiveFloat', inputName: 'value' },
+        seed: { nodeId: isMiniMaxI2vExport || isMiniMaxFastH3Export ? '105:15' : '140:129', nodeClass: 'RandomNoise', inputName: 'noise_seed' },
+        aspect_ratio: { nodeId: isMiniMaxFastH3Export ? '143' : '115', nodeClass: 'ResolutionSelector', inputName: 'aspect_ratio' },
+        first_frame: { nodeId: '105:104', nodeClass: 'MiniMaxH3ImageToVideo', inputName: 'first_frame' },
+      };
+      if (exportedRecipe && (isMiniMaxT2vExport || isMiniMaxI2vExport || isMiniMaxFastH3Export)) {
+        const roles = new Set(inputBindings.map(item => item && typeof item === 'object' && !Array.isArray(item) ? (item as Record<string, unknown>).role : undefined));
+        if (inputBindings.length !== miniMaxRoles.length || roles.size !== miniMaxRoles.length || miniMaxRoles.some(role => !roles.has(role))) {
+          throw applicationError('recipe_export_binding_mismatch', 'The pinned MiniMax H3 export requires exactly one binding for each of its controls.');
+        }
+      }
+      if (exportedRecipe && isLtxExport) {
+        const roles = new Set(inputBindings.map(item => item && typeof item === 'object' && !Array.isArray(item) ? (item as Record<string, unknown>).role : undefined));
+        const roleCount = Object.keys(ltxPins).length;
+        if (inputBindings.length !== roleCount || roles.size !== roleCount || Object.keys(ltxPins).some(role => !roles.has(role))) {
+          throw applicationError('recipe_export_binding_mismatch', 'The pinned LTX export requires exactly one binding for each of its controls.');
+        }
+      }
+      const rawNodes = (workflowGraphValue as Record<string, unknown>).nodes;
+      const rawPromptNode = isKleinExport && Array.isArray(rawNodes) ? rawNodes.find(node => node && typeof node === 'object' && !Array.isArray(node)
+        && String((node as Record<string, unknown>).id) === '76') as Record<string, unknown> | undefined : undefined;
+      const promptWidgets = rawPromptNode?.widgets_values;
+      if (exportedRecipe && isKleinExport && (!Array.isArray(promptWidgets) || typeof promptWidgets[0] !== 'string')) {
+        throw applicationError('recipe_export_source_invalid', 'The pinned Klein prompt default is missing from source node 76.');
+      }
+      const kleinPins: Record<string, { sourceId: string; nodeId: string; nodeClass: string; inputName: string; default: unknown }> = {
+        prompt: { sourceId: '76', nodeId: '76', nodeClass: 'PrimitiveStringMultiline', inputName: 'value', default: Array.isArray(promptWidgets) ? promptWidgets[0] : undefined },
+        width: { sourceId: '68', nodeId: '77:68', nodeClass: 'PrimitiveInt', inputName: 'value', default: 1024 },
+        height: { sourceId: '69', nodeId: '77:69', nodeClass: 'PrimitiveInt', inputName: 'value', default: 1024 },
+        seed: { sourceId: '73', nodeId: '77:73', nodeClass: 'RandomNoise', inputName: 'noise_seed', default: 432262096973490 },
+      };
+      const proposedConfig: ParameterConfig[] = inputBindings.flatMap<ParameterConfig>((item, index) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) throw applicationError('invalid_recipe_binding', `Recipe input binding ${index} is invalid.`);
+        let binding = item as Record<string, unknown>;
+        const role = typeof binding.role === 'string' ? binding.role : '';
+        if (exportedRecipe && isKleinExport) {
+          const pin = kleinPins[role];
+          if (!pin || String(binding.nodeId) !== pin.sourceId || binding.nodeClass !== pin.nodeClass
+            || !Array.isArray(binding.widgetPath) || binding.widgetPath[0] !== 'widgets_values' || binding.widgetPath[1] !== 0) {
+            throw applicationError('recipe_export_binding_mismatch', `Klein source binding '${role || '(missing)'}' does not match its pinned source node and widget.`);
+          }
+          binding = { ...binding, nodeId: pin.nodeId, inputName: pin.inputName, default: pin.default };
+        }
+        if (exportedRecipe && isLtxExport) {
+          const pin = ltxPins[role];
+          if (!pin || String(binding.nodeId) !== pin.nodeId || binding.nodeClass !== pin.nodeClass || binding.inputName !== pin.inputName) {
+            throw applicationError('recipe_export_binding_mismatch', `LTX source binding '${role || '(missing)'}' does not match its pinned API node and input.`);
+          }
+          if (isLtxI2vExport && role === 'first_frame' && (binding.sourceImageNodeId !== 395 || binding.required !== true || binding.ordinal !== 1 || binding.default !== undefined)) {
+            throw applicationError('recipe_export_binding_mismatch', "LTX source binding 'first_frame' does not match its pinned image source and required media contract.");
+          }
+        }
+        if (exportedRecipe && (isMiniMaxT2vExport || isMiniMaxI2vExport || isMiniMaxFastH3Export)) {
+          const pin = miniMaxPins[role];
+          if (!pin || String(binding.nodeId) !== pin.nodeId || binding.nodeClass !== pin.nodeClass || binding.inputName !== pin.inputName
+            || role === 'first_frame' && isMiniMaxI2vExport && (binding.sourceImageNodeId !== 114 || binding.required !== true || binding.ordinal !== 1)) {
+            throw applicationError('recipe_export_binding_mismatch', `MiniMax H3 source binding '${role || '(missing)'}' does not match its pinned API node and input.`);
+          }
+        }
+        if (!safeRoles.has(role)) {
+          if (binding.required === true) throw applicationError('recipe_control_role_unsupported', `Required recipe input role '${role || '(missing)'}' is not supported by the panel controls.`);
+          return [];
+        }
+        const nodeId = String(binding.nodeId ?? '');
+        const node = findWorkflowNode(workflowGraph, nodeId);
+        if (!node || getWorkflowNodeClassType(node) !== binding.nodeClass) {
+          throw applicationError('recipe_control_node_mismatch', `Recipe input '${role}' does not match its pinned node binding.`);
+        }
+        if ((role === 'reference_image' || exportedRecipe && (isMiniMaxI2vExport || isLtxI2vExport) && role === 'first_frame') && binding.sourceImageNodeId !== undefined) {
+          const sourceNodeId = String(binding.sourceImageNodeId ?? '');
+          const sourceNode = findWorkflowNode(workflowGraph, sourceNodeId);
+          const sourceNodeClass = sourceNode ? getWorkflowNodeClassType(sourceNode) : '';
+          if (!sourceNode || (exportedRecipe && role === 'first_frame' && (isMiniMaxI2vExport || isLtxI2vExport) ? sourceNodeClass !== 'LoadImage' : !['LoadImage', 'LoadImageOutput'].includes(sourceNodeClass))) {
+            throw applicationError('recipe_reference_image_source_mismatch', `Recipe input '${role}' does not match its pinned LoadImage source.`);
+          }
+          const imageMatches = parsed.image_inputs.filter(input => input.node_id === sourceNodeId && input.input_name === 'image');
+          if (imageMatches.length !== 1) {
+            throw applicationError('recipe_reference_image_unmapped', `Recipe input '${role}' has no unique parsed image input for its pinned source node.`);
+          }
+          const input = imageMatches[0];
+          const ordinal = Number.isInteger(binding.ordinal) ? String(binding.ordinal) : String(index + 1);
+          const name = `${role}_${ordinal}`;
+          if (usedNames.has(name)) throw applicationError('recipe_reference_image_unmapped', `Recipe input '${role}' duplicates image binding '${name}'.`);
+          usedNames.add(name);
+          return [{
+            name,
+            display_name: `${input.display_name} ${ordinal}`,
+            node_id: input.node_id,
+            input_name: input.input_name,
+            type: 'image' as const,
+            requiredMedia: binding.required === true,
+            default: '',
+            description: input.description,
+            order: index,
+            exposed: true,
+            category: 'image_input' as const,
+            auto_detected: true,
+            user_modified: false,
+          }];
+        }
+        const hasInputName = Object.prototype.hasOwnProperty.call(binding, 'inputName');
+        if (hasInputName && (typeof binding.inputName !== 'string' || !binding.inputName.trim())) {
+          throw applicationError('recipe_control_input_name_invalid', `Recipe input '${role}' has an invalid pinned input name; expected a nonempty string.`);
+        }
+        const matches = parsed.parameters.filter(parameter => parameter.node_id === nodeId && (!hasInputName || parameter.input_name === binding.inputName));
+        if (matches.length !== 1) {
+          throw applicationError('recipe_control_unmapped', `Recipe input '${role}' has no unique API-format widget mapping in the current workflow parser.`);
+        }
+        const parameter = matches[0];
+        if (binding.default !== undefined && JSON.stringify(parameter.default) !== JSON.stringify(binding.default)) {
+          throw applicationError('recipe_control_default_mismatch', `Recipe input '${role}' does not match its pinned source default.`);
+        }
+        const name = usedNames.has(role) ? `${role}_${nodeId}` : role;
+        usedNames.add(name);
+        return [{
+          ...parameter,
+          type: role === 'prompt' ? 'prompt' as const : parameter.type,
+          name,
+          display_name: role.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()),
+          order: index,
+          exposed: true,
+          category: 'parameter' as const,
+          auto_detected: true,
+          user_modified: false,
+        }];
+      });
+      if (proposedConfig.length === 0) throw applicationError('recipe_controls_unavailable', 'No explicitly bound prompt or generation controls can be represented by the current API-format parser.');
+      const checked = validateWorkflowControls(workflowGraph, proposedConfig, objectInfo, backend.url);
+      const taskCategories: Partial<Record<string, TabType>> = {
+        t2i: 'image-generation',
+        t2v: 'video-generation',
+        i2v: 'video-generation',
+        ref2v: 'video-generation',
+        first_last: 'video-generation',
+      };
+      const recipeTask = typeof recipeTarget.task === 'string' ? recipeTarget.task : null;
+      const category = recipeTask === null
+        ? (isTabType(activeTab) ? activeTab : 'image-generation')
+        : taskCategories[recipeTask];
+      if (!category) throw applicationError('unsupported_workflow_task', `The exact recipe task '${recipeTask}' has no Storyboard workflow route.`);
+      const taskSubCategories: Partial<Record<string, SubTabType>> = {
+        t2i: 'text2img',
+        t2v: 'txt2vid',
+        i2v: 'img2vid',
+        ref2v: 'img2vid',
+        first_last: 'fflf',
+      };
+      const subCategory = recipeTask === null
+        ? getDefaultSubCategory(category)
+        : taskSubCategories[recipeTask];
+      if (!subCategory) throw applicationError('unsupported_workflow_task', `The exact recipe task '${recipeTask}' has no Storyboard subcategory.`);
+      const origin = sourceGraph.origin && typeof sourceGraph.origin === 'object' ? sourceGraph.origin as Record<string, unknown> : {};
+      const workflow: Workflow = {
+        id: crypto.randomUUID(),
+        name: typeof recipe.title === 'string' ? recipe.title : command.source.recipeId,
+        description: typeof recipe.summary === 'string' ? recipe.summary : '',
+        category,
+        subCategory,
+        workflow: workflowGraph,
+        parsed: checked.parsed,
+        config: checked.config,
+        createdAt: Date.now(),
+        recipeId: command.source.recipeId,
+        sourceGraphFingerprint: command.source.sourceGraphFingerprint,
+        recipeFingerprint,
+        sourceProvenance: [origin],
+      };
+      const preparedRevisionId = crypto.randomUUID();
+      if (preparedWorkflowRevisionsRef.current.size >= 32) {
+        const oldest = preparedWorkflowRevisionsRef.current.keys().next().value;
+        if (oldest) preparedWorkflowRevisionsRef.current.delete(oldest);
+      }
+      if (checked.errors.length === 0) {
+        preparedWorkflowRevisionsRef.current.set(preparedRevisionId, {
+          workflow,
+          projectIdentity: command.projectIdentity,
+          consoleBindingId: projectScopeRef.current.bindingId,
+          panelId: panel.id,
+          panelRevision: command.expectedPanelRevision!,
+          workflowRevision: null,
+          backendId: backend.id,
+          backendUrl: backend.url,
+        });
+      }
+      const proposedControls = checked.config.filter(control => control.exposed).map(control => `${control.node_id}.${control.input_name}`);
+      return {
+        valid: checked.errors.length === 0,
+        blocked: false,
+        preparedRevisionId: checked.errors.length === 0 ? preparedRevisionId : undefined,
+        workflowId: workflow.id,
+        baseRevision: null,
+        backendId: backend.id,
+        recipeId: command.source.recipeId,
+        sourceGraphFingerprint: command.source.sourceGraphFingerprint,
+        recipeFingerprint,
+        lockedRecipeSettings: (recipe.controlProposal as Record<string, unknown> | undefined)?.lockedRecipeSettings ?? [],
+        recipeSettings: recipe.recipeSettings,
+        exposedControls: checked.config.filter(control => control.exposed).map(control => ({ name: control.name, nodeId: control.node_id, inputName: control.input_name, type: control.type })),
+        hiddenControlCount: checked.config.filter(control => !control.exposed).length,
+        changes: { addedBindings: proposedControls, removedBindings: [] },
+        preservesPinnedGraph: true,
+        preservesRecipeSettings: true,
+        validationErrors: checked.errors,
+      };
+    },
+    save_and_attach_workflow: async command => {
+      await flushPendingWorkflowSave();
+      assertApplicationProject(command);
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      const selected = selectedPanelIdRef.current === panel.id;
+      const selectedWorkflowAtStart = selectedWorkflowIdRef.current;
+      let workflow: Workflow;
+      let preparedId: string | undefined;
+      let preparedBackend: { id: string; url: string } | undefined;
+      if (command.input.preparedRevisionId) {
+        preparedId = command.input.preparedRevisionId;
+        const prepared = preparedWorkflowRevisionsRef.current.get(preparedId);
+        if (!prepared) {
+          throw applicationError('stale_preparation', 'The prepared workflow revision is missing. Prepare it again for the active project.');
+        }
+        if (prepared.consoleBindingId !== projectScopeRef.current.bindingId) {
+          throw applicationError('stale_console_binding', 'The Console project activation changed after this workflow was prepared. Prepare it again for the active activation.');
+        }
+        if (prepared.projectIdentity !== command.projectIdentity || prepared.panelId !== panel.id
+          || prepared.panelRevision !== command.expectedPanelRevision || prepared.workflowRevision !== (command.expectedWorkflowRevision ?? null)) {
+          throw applicationError('stale_preparation', 'The prepared workflow revision no longer matches this project, panel and base revision. Prepare it again.');
+        }
+        if (prepared.workflowRevision !== null) assertApplicationWorkflow(command, prepared.workflow.id);
+        else if (workflowsRef.current.some(item => item.id === prepared.workflow.id)) throw applicationError('workflow_id_conflict', 'The new workflow ID is already in use.');
+        workflow = prepared.workflow;
+        preparedBackend = { id: prepared.backendId, url: prepared.backendUrl };
+      } else {
+        const workflowId = command.input.workflowId || command.target.workflowId;
+        if (!workflowId || command.input.workflowId && command.target.workflowId && command.input.workflowId !== command.target.workflowId) {
+          throw applicationError('workflow_id_required', 'Retrying an attachment requires the exact saved workflow ID.');
+        }
+        if (command.input.workflowRevision === undefined || command.expectedWorkflowRevision !== command.input.workflowRevision) {
+          throw applicationError('workflow_revision_required', 'Retrying an attachment requires the exact saved workflow revision.');
+        }
+        workflow = assertApplicationWorkflow(command, workflowId);
+      }
+      if (command.target.workflowId && command.target.workflowId !== workflow.id) throw applicationError('workflow_id_mismatch', 'The target workflow does not match the prepared revision.');
+      if (preparedBackend && (!selectedBackendIdsRef.current.includes(preparedBackend.id)
+        || !orchestratorManager.getNodes().some(node => node.id === preparedBackend!.id && node.url === preparedBackend!.url))) {
+        throw applicationError('prepared_revision_stale', 'The prepared backend is no longer selected with the same managed endpoint. Prepare the recipe again.');
+      }
+      const currentWorkflows = workflowsRef.current;
+      const alreadyStored = currentWorkflows.some(item => item.id === workflow.id);
+      const requestedFingerprint = workflowContentFingerprint(workflow);
+      setWorkflows(alreadyStored
+        ? currentWorkflows.map(item => item.id === workflow.id ? workflow : item)
+        : [...currentWorkflows, workflow]);
+      await persistDirtyWorkflows();
+      if (preparedBackend && (!selectedBackendIdsRef.current.includes(preparedBackend.id)
+        || !orchestratorManager.getNodes().some(node => node.id === preparedBackend!.id && node.url === preparedBackend!.url))) {
+        return { status: 'saved-unattached', workflowId: workflow.id, reason: 'backend_scope_changed_during_workflow_save' };
+      }
+      const savedWorkflow = workflowsRef.current.find(item => item.id === workflow.id);
+      if (!savedWorkflow?.revision) throw applicationError('workflow_save_incomplete', 'The workflow was not confirmed by canonical storage.');
+      if (preparedId) preparedWorkflowRevisionsRef.current.delete(preparedId);
+      if (workflowContentFingerprint(savedWorkflow) !== requestedFingerprint
+        || workflowPersistedFingerprintRef.current.get(savedWorkflow.id) !== requestedFingerprint) {
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'workflow_changed_during_save' };
+      }
+      if (!isApplicationProjectCurrent(command)) {
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'project_scope_changed' };
+      }
+      const currentPanel = panelsRef.current.find(item => item.id === panel.id);
+      const stillSelected = selectedPanelIdRef.current === panel.id;
+      if (!currentPanel || panelRevisionRef.current.get(panel.id) !== command.expectedPanelRevision
+        || stillSelected !== selected
+        || selected && selectedWorkflowIdRef.current !== selectedWorkflowAtStart) {
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'panel_changed_during_workflow_save' };
+      }
+      const settingsSnapshot = { ...projectManager.getProject() };
+      const sourceValues = currentPanel.parameterValues || {};
+      const nextValues = workflowParameterDefaults(savedWorkflow, sourceValues);
+      const nextPanel = {
+        ...currentPanel,
+        workflowId: savedWorkflow.id,
+        parameterValues: nextValues,
+        enhancementPreferences: currentPanel.enhancementPreferences
+          ? { ...currentPanel.enhancementPreferences, referenceOrderConfirmed: false, mappingFingerprint: undefined }
+          : currentPanel.enhancementPreferences,
+      };
+      const panelRevisionBeforeSave = panelRevisionRef.current.get(panel.id);
+      const inputRevisionBeforeSave = panelInputRevisionRef.current.get(panel.id);
+      const nextPanels = panelsRef.current.map(item => item.id === panel.id ? nextPanel : item);
+      const nextSelectedWorkflowId = selected ? savedWorkflow.id : selectedWorkflowIdRef.current || undefined;
+      let savedProject: { success: boolean; savedPath?: string; error?: string };
+      try {
+        savedProject = await saveProjectSnapshot(
+          nextPanels,
+          selected ? nextValues : parameterValuesRef.current,
+          nextSelectedWorkflowId,
+          settingsSnapshot,
+        );
+      } catch (error) {
+        return {
+          status: 'saved-unattached',
+          workflowId: savedWorkflow.id,
+          workflowRevision: savedWorkflow.revision,
+          reason: 'project_attachment_save_failed',
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (!isApplicationProjectCurrent(command)) {
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'project_scope_changed', savedPath: savedProject.savedPath };
+      }
+      if (preparedBackend && (!selectedBackendIdsRef.current.includes(preparedBackend.id)
+        || !orchestratorManager.getNodes().some(node => node.id === preparedBackend!.id && node.url === preparedBackend!.url))) {
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'backend_scope_changed_during_project_attachment', savedPath: savedProject.savedPath };
+      }
+      if (panelRevisionRef.current.get(panel.id) !== panelRevisionBeforeSave || panelInputRevisionRef.current.get(panel.id) !== inputRevisionBeforeSave) {
+        try { await repairCurrentProjectSnapshot(settingsSnapshot); } catch (error) {
+          return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'panel_changed_and_repair_failed', message: error instanceof Error ? error.message : String(error), savedPath: savedProject.savedPath };
+        }
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'panel_changed_during_attachment', savedPath: savedProject.savedPath };
+      }
+      if (preparedBackend && !orchestratorManager.getNodes().some(node => node.id === preparedBackend!.id && node.url === preparedBackend!.url)) {
+        try { await repairCurrentProjectSnapshot(settingsSnapshot); } catch (error) {
+          return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'backend_changed_and_repair_failed', message: error instanceof Error ? error.message : String(error), savedPath: savedProject.savedPath };
+        }
+        return { status: 'saved-unattached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, reason: 'backend_changed_during_attachment', savedPath: savedProject.savedPath };
+      }
+      if (selected) {
+        skipParameterReset.current = true;
+        parameterValuesRef.current = nextValues;
+        setParameterValues(nextValues);
+        setSelectedWorkflowId(savedWorkflow.id);
+        if (currentPanel.enhancementPreferences) {
+          enhancementPreferencesRef.current = nextPanel.enhancementPreferences!;
+          setEnhancementPreferences(nextPanel.enhancementPreferences!);
+        }
+      }
+      setPanels(nextPanels);
+      return { status: 'saved-and-attached', workflowId: savedWorkflow.id, workflowRevision: savedWorkflow.revision, panelId: panel.id, panelRevision: panelRevisionRef.current.get(panel.id), savedPath: savedProject.savedPath };
+    },
+    bind_media: async command => {
+      await flushPendingWorkflowSave();
+      assertApplicationProject(command);
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      assertPanelWorkflow(panel, command.target.workflowId);
+      const workflow = assertApplicationWorkflow(command, command.target.workflowId);
+      const uniqueBackendIds = [...new Set(command.target.backendIds)];
+      if (uniqueBackendIds.length !== command.target.backendIds.length || uniqueBackendIds.length === 0) throw applicationError('invalid_backend_selection', 'Media binding requires a non-empty unique backend list.');
+      const backends = uniqueBackendIds.map(id => requireSelectedApplicationBackend(id));
+      const inlineMedia = command.input?.media;
+      const assetId = command.input?.assetId;
+      if (!command.input?.bindingId || Boolean(inlineMedia) === Boolean(assetId)) throw applicationError('invalid_media', 'Media binding needs a named input and exactly one inline media item or library asset.');
+      let mediaKind: 'image' | 'video';
+      let mediaMimeType: string;
+      let mediaBlob: Blob | null = null;
+      let assetFile: File | undefined;
+      let mediaMatch: RegExpMatchArray | null = null;
+      if (assetId) {
+        const asset = getAgentMediaAsset(assetId);
+        if (!asset) throw applicationError('media_asset_unavailable', 'The selected media library asset is no longer available.');
+        if (asset.kind === 'audio') throw applicationError('unsupported_media_type', 'Audio assets cannot be bound to this workflow input.');
+        if (asset.file.size === 0) throw applicationError('invalid_media', 'The selected media library asset is empty.');
+        if (asset.file.size > 256 * 1024 * 1024) throw applicationError('media_too_large', 'The selected media library asset exceeds the 256 MiB limit.');
+        const assetMimeType = asset.mimeType.toLowerCase();
+        if (!/^(image|video)\/[a-z0-9.+-]+$/.test(assetMimeType) || assetMimeType.split('/')[0] !== asset.kind) {
+          throw applicationError('media_type_mismatch', 'The media kind does not match its MIME type.');
+        }
+        mediaKind = asset.kind;
+        mediaMimeType = asset.mimeType;
+        mediaBlob = asset.file;
+        assetFile = asset.file;
+      } else {
+        if (!inlineMedia || typeof inlineMedia.dataUrl !== 'string') throw applicationError('invalid_media', 'Media binding needs a data URL or a media library asset.');
+        if (inlineMedia.dataUrl.length > 5_600_000) throw applicationError('media_too_large', 'Media data exceeds the 4 MiB transfer limit for this local bridge.');
+        mediaMatch = inlineMedia.dataUrl.match(/^data:((?:image|video)\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/);
+        if (!mediaMatch || !mediaMatch[2].length) throw applicationError('invalid_media', 'Media must be a base64 image or video data URL.');
+        if (mediaMatch[1].split('/')[0] !== inlineMedia.kind) throw applicationError('media_type_mismatch', 'The media kind does not match its MIME type.');
+        mediaKind = inlineMedia.kind;
+        mediaMimeType = mediaMatch[1];
+      }
+      const assetIsCurrent = () => !assetId || getAgentMediaAsset(assetId)?.file === assetFile;
+      const control = workflow.config.find(item => item.exposed && item.category === 'image_input' && item.name === command.input.bindingId);
+      if (!control) throw applicationError('binding_not_exposed', 'The requested media input is not explicitly exposed by this workflow.');
+      const schemas = await Promise.all(backends.map(async backend => ({ backend, definitions: await nodeDefinitions.fetchDefinitions(backend.url) })));
+      assertApplicationProject(command);
+      assertApplicationBackendsSelected(backends);
+      assertApplicationPanel(command, panel.id);
+      assertApplicationWorkflow(command, workflow.id);
+      if (backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url))) {
+        throw applicationError('backend_scope_changed', 'A managed backend changed during media-input schema validation. Refresh the application snapshot before continuing.');
+      }
+      const validationErrors = schemas.flatMap(({ backend, definitions }) => {
+        const checked = validateWorkflowControls(workflow.workflow, workflow.config, definitions, backend.url);
+        return checked.errors.map(error => `${backend.name}: ${error}`);
+      });
+      if (validationErrors.length) throw applicationError('workflow_schema_invalid', validationErrors.join(' '));
+      assertApplicationProject(command);
+      assertApplicationPanel(command, panel.id);
+      assertApplicationWorkflow(command, workflow.id);
+      if (assetId && !assetIsCurrent()) throw applicationError('media_asset_changed', 'The selected media library asset was removed or changed before upload.');
+      if (inlineMedia && mediaMatch) {
+        const byteLength = Math.floor(mediaMatch[2].length * 3 / 4) - (mediaMatch[2].endsWith('==') ? 2 : mediaMatch[2].endsWith('=') ? 1 : 0);
+        if (byteLength > 4 * 1024 * 1024) throw applicationError('media_too_large', 'Media data exceeds the 4 MiB transfer limit for this local bridge.');
+        const mediaResponse = await fetch(inlineMedia.dataUrl);
+        if (!mediaResponse.ok) throw applicationError('invalid_media', 'The current-turn handoff media could not be decoded.');
+        assertApplicationProject(command);
+        assertApplicationBackendsSelected(backends);
+        if (backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url))) {
+          throw applicationError('backend_scope_changed', 'A managed backend changed before the selected media could be uploaded.');
+        }
+        mediaBlob = await mediaResponse.blob();
+        assertApplicationProject(command);
+        assertApplicationPanel(command, panel.id);
+        assertApplicationWorkflow(command, workflow.id);
+        if (backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url))) {
+          throw applicationError('backend_scope_changed', 'A managed backend changed before the selected media could be uploaded.');
+        }
+      }
+      if (!assetIsCurrent()) throw applicationError('media_asset_changed', 'The selected media library asset was removed or changed before upload.');
+      if (!mediaBlob) throw applicationError('invalid_media', 'The selected media could not be read.');
+      const uploadBlob = mediaBlob;
+      const extension = mediaMimeType.split('/')[1].replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || (mediaKind === 'video' ? 'mp4' : 'png');
+      const fileName = `storyboard_${command.commandId.replace(/[^a-zA-Z0-9_-]/g, '')}_${control.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.${extension}`;
+      const uploadResults = await Promise.allSettled(backends.map(async backend => {
+        const form = new FormData();
+        form.append('image', new File([uploadBlob], fileName, { type: mediaMimeType }));
+        form.append('overwrite', 'true');
+        const response = await fetch(`${backend.url.replace(/\/+$/, '')}/upload/image`, { method: 'POST', body: form, redirect: 'error' });
+        if (!response.ok) throw new Error(`${backend.name} returned HTTP ${response.status}`);
+        const payload = await response.json() as { name?: unknown };
+        if (typeof payload.name !== 'string' || !payload.name) throw new Error(`${backend.name} returned no uploaded filename`);
+        return { backendId: backend.id, name: payload.name };
+      }));
+      const uploaded = uploadResults.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+      const failures = uploadResults.flatMap((result, index) => result.status === 'rejected' ? [`${backends[index].name}: ${String(result.reason)}`] : []);
+      if (!assetIsCurrent()) {
+        return { status: 'uploaded-unbound', bindingId: control.name, uploaded, failures, reason: 'media_asset_changed' };
+      }
+      const backendSelectionChanged = backends.some(backend => !selectedBackendIdsRef.current.includes(backend.id));
+      const projectScopeChanged = !isApplicationProjectCurrent(command);
+      const backendScopeChanged = backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url));
+      if (projectScopeChanged || backendScopeChanged || backendSelectionChanged) {
+        return {
+          status: 'uploaded-unbound',
+          bindingId: control.name,
+          uploaded,
+          failures,
+          reason: projectScopeChanged ? 'project_scope_changed' : backendSelectionChanged ? 'backend_selection_changed' : 'backend_scope_changed',
+        };
+      }
+      if (failures.length || uploaded.length !== backends.length || new Set(uploaded.map(item => item.name)).size !== 1) {
+        throw applicationError('media_upload_partial', `Media was not bound to the panel. Some backends may contain an orphaned upload. ${failures.join('; ')}`);
+      }
+      if (backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url))) {
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'backend_scope_changed' };
+      }
+      if (backends.some(backend => !selectedBackendIdsRef.current.includes(backend.id))) {
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'backend_selection_changed' };
+      }
+      if (!isApplicationProjectCurrent(command)) {
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'project_scope_changed' };
+      }
+      const currentPanel = assertApplicationPanel(command, panel.id);
+      assertPanelWorkflow(currentPanel, workflow.id);
+      const selected = selectedPanelIdRef.current === panel.id;
+      const currentValues = currentPanel.parameterValues || {};
+      const nextValues = { ...currentValues, [control.name]: uploaded[0].name };
+      const invalidatedPreferences = currentPanel.enhancementPreferences
+        ? { ...currentPanel.enhancementPreferences, referenceOrderConfirmed: false, mappingFingerprint: undefined }
+        : undefined;
+      const nextPanel = { ...currentPanel, parameterValues: nextValues, enhancementPreferences: invalidatedPreferences };
+      const settingsSnapshot = { ...projectManager.getProject() };
+      const panelRevisionBeforeSave = panelRevisionRef.current.get(panel.id);
+      const inputRevisionBeforeSave = panelInputRevisionRef.current.get(panel.id);
+      const savedProject = await saveProjectSnapshot(
+        panelsRef.current.map(item => item.id === panel.id ? nextPanel : item),
+        selected ? nextValues : parameterValuesRef.current,
+        selectedWorkflowIdRef.current || currentPanel.workflowId,
+        settingsSnapshot,
+      );
+      if (backends.some(backend => !selectedBackendIdsRef.current.includes(backend.id))) {
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'backend_selection_changed', savedPath: savedProject.savedPath };
+      }
+      if (!isApplicationProjectCurrent(command)) {
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'project_scope_changed', savedPath: savedProject.savedPath };
+      }
+      const currentWorkflow = workflowsRef.current.find(item => item.id === workflow.id);
+      if (!currentWorkflow || currentWorkflow.revision !== workflow.revision
+        || workflowContentFingerprint(currentWorkflow) !== workflowContentFingerprint(workflow)) {
+        try { await repairCurrentProjectSnapshot(settingsSnapshot); } catch (error) {
+          return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'workflow_changed_and_repair_failed', message: error instanceof Error ? error.message : String(error), savedPath: savedProject.savedPath };
+        }
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'workflow_changed_during_binding', savedPath: savedProject.savedPath };
+      }
+      if (backends.some(backend => !orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url))) {
+        try { await repairCurrentProjectSnapshot(settingsSnapshot); } catch (error) {
+          return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'backend_changed_and_repair_failed', message: error instanceof Error ? error.message : String(error), savedPath: savedProject.savedPath };
+        }
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'backend_scope_changed', savedPath: savedProject.savedPath };
+      }
+      if (panelRevisionRef.current.get(panel.id) !== panelRevisionBeforeSave || panelInputRevisionRef.current.get(panel.id) !== inputRevisionBeforeSave) {
+        await repairCurrentProjectSnapshot(settingsSnapshot);
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'panel_changed_during_binding', savedPath: savedProject.savedPath };
+      }
+      if (!assetIsCurrent()) {
+        try { await repairCurrentProjectSnapshot(settingsSnapshot); } catch (error) {
+          return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'media_asset_changed_and_repair_failed', message: error instanceof Error ? error.message : String(error), savedPath: savedProject.savedPath };
+        }
+        return { status: 'uploaded-unbound', bindingId: control.name, backendIds: uploaded.map(item => item.backendId), reason: 'media_asset_changed', savedPath: savedProject.savedPath };
+      }
+      if (selected) {
+        parameterValuesRef.current = nextValues;
+        setParameterValues(nextValues);
+        if (invalidatedPreferences) {
+          enhancementPreferencesRef.current = invalidatedPreferences;
+          setEnhancementPreferences(invalidatedPreferences);
+        }
+      }
+      setPanels(panelsRef.current.map(item => item.id === panel.id ? nextPanel : item));
+      return { status: 'bound', bindingId: control.name, fileName: uploaded[0].name, backendIds: uploaded.map(item => item.backendId), mediaKind, panelId: panel.id, panelRevision: panelRevisionRef.current.get(panel.id), inputRevision: panelInputRevisionRef.current.get(panel.id), projectRevision: projectScopeRef.current.revision, workflowId: workflow.id, workflowRevision: workflow.revision };
+    },
+    set_panel_parameters: async command => {
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) throw applicationError('console_turn_required', 'Parameter changes must run inside the current Console user turn.');
+      await flushPendingWorkflowSave();
+      if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== userRequest.turnId) throw applicationError('console_turn_changed', 'The Console user turn changed before parameter validation.');
+      assertApplicationProject(command);
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      assertPanelWorkflow(panel, command.target.workflowId);
+      const workflow = assertApplicationWorkflow(command, command.target.workflowId);
+      const backend = requireSelectedApplicationBackend(command.target.backendId);
+      const definitions = await nodeDefinitions.fetchDefinitions(backend.url);
+      if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== userRequest.turnId) throw applicationError('console_turn_changed', 'The Console user turn changed during parameter schema validation.');
+      assertApplicationProject(command);
+      assertApplicationPanel(command, panel.id);
+      assertApplicationWorkflow(command, workflow.id);
+      if (!orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url)
+        || !selectedBackendIdsRef.current.includes(backend.id)) {
+        throw applicationError('backend_scope_changed', 'The managed backend changed during parameter schema validation. Refresh the application snapshot before continuing.');
+      }
+      const checked = validateWorkflowControls(workflow.workflow, workflow.config, definitions, backend.url);
+      if (checked.errors.length) throw applicationError('workflow_schema_invalid', checked.errors.join(' '));
+      const errors = validatePanelParameterValues(checked.config, command.input.values);
+      if (errors.length) throw applicationError('invalid_parameters', errors.join(' '));
+      assertApplicationProject(command);
+      const currentPanel = assertApplicationPanel(command, panel.id);
+      assertPanelWorkflow(currentPanel, workflow.id);
+      const selected = selectedPanelIdRef.current === panel.id;
+      const nextValues = { ...(currentPanel.parameterValues || {}), ...command.input.values };
+      const nextPanel = { ...currentPanel, parameterValues: nextValues };
+      const settingsSnapshot = { ...projectManager.getProject() };
+      const panelRevisionBeforeSave = panelRevisionRef.current.get(panel.id);
+      const inputRevisionBeforeSave = panelInputRevisionRef.current.get(panel.id);
+      const savedProject = await saveProjectSnapshot(
+        panelsRef.current.map(item => item.id === panel.id ? nextPanel : item),
+        selected ? nextValues : parameterValuesRef.current,
+        selectedWorkflowIdRef.current || currentPanel.workflowId,
+        settingsSnapshot,
+      );
+      if (!selectedBackendIdsRef.current.includes(backend.id)) {
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'backend_selection_changed', savedPath: savedProject.savedPath };
+      }
+      if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== userRequest.turnId) {
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'console_turn_changed', savedPath: savedProject.savedPath };
+      }
+      if (!isApplicationProjectCurrent(command)) {
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'project_scope_changed', savedPath: savedProject.savedPath };
+      }
+      const currentWorkflow = workflowsRef.current.find(item => item.id === workflow.id);
+      if (!currentWorkflow || currentWorkflow.revision !== workflow.revision
+        || workflowContentFingerprint(currentWorkflow) !== workflowContentFingerprint(workflow)) {
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'workflow_changed_during_update', savedPath: savedProject.savedPath };
+      }
+      if (!orchestratorManager.getNodes().some(node => node.id === backend.id && node.url === backend.url)) {
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'backend_scope_changed', savedPath: savedProject.savedPath };
+      }
+      if (panelRevisionRef.current.get(panel.id) !== panelRevisionBeforeSave || panelInputRevisionRef.current.get(panel.id) !== inputRevisionBeforeSave) {
+        await repairCurrentProjectSnapshot(settingsSnapshot);
+        return { status: 'saved-unapplied', panelId: panel.id, workflowId: workflow.id, reason: 'panel_changed_during_update', savedPath: savedProject.savedPath };
+      }
+      if (selected) {
+        enhancementRequestRevisionRef.current += 1;
+        parameterValuesRef.current = nextValues;
+        setParameterValues(nextValues);
+      }
+      setPanels(panelsRef.current.map(item => item.id === panel.id ? nextPanel : item));
+      return { status: 'updated', panelId: panel.id, panelRevision: panelRevisionRef.current.get(panel.id), inputRevision: panelInputRevisionRef.current.get(panel.id), projectRevision: projectScopeRef.current.revision, workflowId: workflow.id, workflowRevision: workflow.revision, parameterNames: Object.keys(command.input.values) };
+    },
+    enhance_generation_prompt: async command => {
+      assertApplicationProject(command);
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) throw applicationError('console_turn_required', 'Prompt preparation and validation must run inside the current Console user turn.');
+      if (command.input.phase === 'prepare') {
+        const preparationId = crypto.randomUUID();
+        if (preparedConsolePromptsRef.current.size >= 16) {
+          const oldest = preparedConsolePromptsRef.current.keys().next().value;
+          if (oldest) preparedConsolePromptsRef.current.delete(oldest);
+        }
+        preparedConsolePromptsRef.current.set(preparationId, {
+          projectIdentity: command.projectIdentity,
+          projectRevision: command.expectedProjectRevision!,
+          consoleBindingId: projectScopeRef.current.bindingId,
+          turnId: userRequest.turnId,
+          userRequest: userRequest.text,
+        });
+        assertApplicationProject(command);
+        if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== userRequest.turnId) {
+          preparedConsolePromptsRef.current.delete(preparationId);
+          throw applicationError('console_turn_changed', 'The Console user turn changed during prompt preparation. Prepare again in the current turn.');
+        }
+        return {
+          status: 'prepared',
+          preparationId,
+          systemPrompt: 'Draft a generation prompt directly from the current Console user request. Follow the request without injecting Prompt Engineer or CPE constraints, target models, tasks, dialects, presets, or media rules. Return only the prompt text. This standalone Console prompt is not CPE-validated.',
+          userPrompt: userRequest.text,
+          warnings: ['Standalone, unconstrained Console prompt; no Prompt Engineer constraints or CPE validation are applied.'],
+          action: 'Draft the generation prompt from this Console request; it will be treated as Console-authored and not CPE-validated.',
+        };
+      }
+
+      const capture = preparedConsolePromptsRef.current.get(command.input.preparationId);
+      if (!capture) {
+        throw applicationError('stale_preparation', 'The prompt preparation is missing. Prepare it again in the current Console turn.');
+      }
+      if (capture.consoleBindingId !== projectScopeRef.current.bindingId) {
+        throw applicationError('stale_console_binding', 'The Console project activation changed after prompt preparation. Prepare the prompt again in the active activation.');
+      }
+      if (capture.projectIdentity !== command.projectIdentity
+        || capture.projectRevision !== command.expectedProjectRevision
+        || capture.turnId !== userRequest.turnId
+        || capture.userRequest !== userRequest.text) {
+        throw applicationError('stale_preparation', 'The prompt preparation no longer matches the active project and Console turn. Prepare it again.');
+      }
+      const enhancedPrompt = command.input.enhancedPrompt;
+      if (typeof enhancedPrompt !== 'string' || !enhancedPrompt.trim()) {
+        throw applicationError('invalid_generation_prompt', 'The Console-authored generation prompt must be a nonempty string.');
+      }
+      if (enhancedPrompt.length > 20000) {
+        throw applicationError('invalid_generation_prompt', 'The Console-authored generation prompt must be 20,000 characters or fewer.');
+      }
+      assertApplicationProject(command);
+      if (getActiveConsoleUserRequest(command.projectIdentity)?.turnId !== capture.turnId) {
+        throw applicationError('console_turn_changed', 'The Console user turn changed during prompt validation. Validate again in the current turn.');
+      }
+      preparedConsolePromptsRef.current.delete(command.input.preparationId);
+      return {
+        status: 'validated',
+        enhancedPrompt,
+        author: 'console',
+        validation: 'standalone-unconstrained; not CPE-validated',
+        warnings: ['Console-authored standalone prompt; no Prompt Engineer constraints or CPE validation were applied.'],
+        action: 'validated only as nonempty text; no panel parameter, workflow, or Prompt Engineer state was changed',
+      };
+    },
+    start_generation: async command => {
+      const userRequest = getActiveConsoleUserRequest(command.projectIdentity);
+      if (!userRequest) {
+        throw applicationError('generation_not_authorized', 'Generation must be requested within an active user conversation turn.');
+      }
+      const assertGenerationRequest = () => {
+        const current = getActiveConsoleUserRequest(command.projectIdentity);
+        if (!current || current.turnId !== userRequest.turnId || current.text !== userRequest.text) {
+          throw applicationError('generation_request_stale', 'The user generation request is no longer the active Console turn. Refresh the application snapshot before continuing.');
+        }
+      };
+      await flushPendingWorkflowSave();
+      assertGenerationRequest();
+      assertApplicationProject(command);
+      const panel = assertApplicationPanel(command, command.target.panelId);
+      assertPanelWorkflow(panel, command.target.workflowId);
+      const workflow = assertApplicationWorkflow(command, command.target.workflowId);
+      const panelInputRevision = panelInputRevisionRef.current.get(panel.id) || 1;
+      const backendIds = [...new Set(command.target.backendIds)];
+      if (backendIds.length !== command.target.backendIds.length || backendIds.length === 0
+        || command.target.mode === 'single' && backendIds.length !== 1
+        || command.target.mode === 'parallel' && backendIds.length < 2) {
+        throw applicationError('invalid_backend_selection', 'Generation needs unique backend IDs matching its single or parallel mode.');
+      }
+      const backends = backendIds.map(id => requireSelectedApplicationBackend(id));
+      const schemas = await Promise.all(backends.map(async backend => ({
+        backend,
+        objectInfo: await nodeDefinitions.fetchDefinitions(backend.url),
+      })));
+      assertGenerationRequest();
+      assertApplicationProject(command);
+      assertApplicationBackendsSelected(backends);
+      const currentPanel = assertApplicationPanel(command, panel.id);
+      assertPanelWorkflow(currentPanel, workflow.id);
+      assertApplicationWorkflow(command, workflow.id);
+      if ((panelInputRevisionRef.current.get(panel.id) || 1) !== panelInputRevision
+        || schemas.some(({ backend }, index) => requireSelectedApplicationBackend(backendIds[index]).url !== backend.url)) {
+        throw applicationError('generation_preflight_stale', 'Panel inputs or backend configuration changed during schema validation. Refresh the snapshot and retry.');
+      }
+      const validationErrors = schemas.flatMap(({ backend, objectInfo }) =>
+        validateWorkflowControls(workflow.workflow, workflow.config, objectInfo, backend.url).errors.map(error => `${backend.name}: ${error}`),
+      );
+      if (validationErrors.length) throw applicationError('workflow_schema_invalid', validationErrors.join(' '));
+      const previousRun = getGenerationRunByIdempotencyKey(command.idempotencyKey);
+      if (previousRun) {
+        if (previousRun.projectIdentity !== command.projectIdentity || previousRun.panelId !== panel.id
+          || previousRun.workflowId !== workflow.id || previousRun.workflowRevision !== workflow.revision) {
+          throw applicationError('idempotency_conflict', 'This generation key already belongs to a different project, panel or workflow revision.');
+        }
+        return { runId: previousRun.runId, status: previousRun.status, submissions: previousRun.jobs.map(job => ({ backendId: job.backendId, promptId: job.promptId, status: job.status })) };
+      }
+      const missingRequiredMedia = workflow.config.filter(control => {
+        if (control.category !== 'image_input' || control.requiredMedia !== true) return false;
+        const value = currentPanel.parameterValues?.[control.name];
+        return typeof value !== 'string' || !value.trim();
+      });
+      if (missingRequiredMedia.length) {
+        throw applicationError('missing_required_media', `Bind required media for ${missingRequiredMedia.map(control => control.name).join(', ')} with bind_media before generation.`);
+      }
+      const options: GenerationRequestOptions = {
+        runId: crypto.randomUUID(),
+        commandId: command.commandId,
+        idempotencyKey: command.idempotencyKey,
+        projectIdentity: command.projectIdentity,
+        projectRevision: command.expectedProjectRevision!,
+        panelInputRevision: panelInputRevisionRef.current.get(panel.id) || 1,
+        workflowId: workflow.id,
+        backendIds,
+        backendBindings: Object.fromEntries(backends.map(backend => [backend.id, backend.url])),
+        mode: command.target.mode,
+        usePanelSnapshot: true,
+      };
+      assertGenerationRequest();
+      await generatePanel(panel.id, options);
+      const run = getGenerationRunByIdempotencyKey(command.idempotencyKey);
+      const scopeChanged = !isApplicationProjectCurrent(command)
+        || backends.some(backend => orchestratorManager.getNodes().find(node => node.id === backend.id)?.url !== backend.url)
+        || backends.some(backend => !selectedBackendIdsRef.current.includes(backend.id));
+      if (!run) {
+        if (scopeChanged) return {
+          runId: options.runId,
+          idempotencyKey: command.idempotencyKey,
+          status: 'outcome_unknown_after_scope_change',
+          scopeChanged: true,
+          requiresManualResolution: true,
+          recovery: 'Inspect the current application snapshot and action feed. Do not replay this submission.',
+        };
+        throw applicationError('generation_not_started', 'Generation stopped before a durable run or prompt submission was created.');
+      }
+      return {
+        runId: run.runId,
+        status: scopeChanged ? 'scope_changed' : run.status,
+        runStatus: run.status,
+        ...(scopeChanged ? {
+          scopeChanged: true,
+          submissionOutcome: 'Inspect the current application snapshot and action feed; do not replay this submission.',
+        } : {}),
+        mode: run.mode,
+        workflowSchema: 'validated against the selected backend schemas',
+        dependencyIdentity: 'not verified by schema validation; use plan_dependencies and report its identity limits',
+        submissions: run.jobs.map(job => ({ backendId: job.backendId, promptId: job.promptId, status: job.status, message: job.message })),
+      };
+    },
+    get_run: async command => {
+      assertApplicationProject(command);
+      let run = getGenerationRun(command.target.runId);
+      if (!run || run.projectIdentity !== command.projectIdentity) throw applicationError('run_not_found', 'The requested run is not recorded in this project.');
+      const waitMs = Math.max(0, Math.min(60, command.input?.waitSeconds ?? 0)) * 1000;
+      const deadline = Date.now() + waitMs;
+      while (waitMs > 0 && Date.now() < deadline
+        && !['complete', 'error', 'cancelled', 'rejected', 'failed_before_submission', 'partial', 'submission_unknown'].includes(run.status)) {
+        assertApplicationProject(command);
+        await new Promise<void>(resolve => window.setTimeout(resolve, Math.min(500, deadline - Date.now())));
+        assertApplicationProject(command);
+        const refreshedRun = getGenerationRun(command.target.runId);
+        if (!refreshedRun || refreshedRun.projectIdentity !== command.projectIdentity) throw applicationError('run_not_found', 'The requested run is no longer recorded in this project.');
+        run = refreshedRun;
+      }
+      const results = [] as Array<Record<string, unknown>>;
+      for (const job of run.jobs) {
+        assertApplicationProject(command);
+        if (!job.promptId) {
+          results.push({ backendId: job.backendId, status: job.status, message: job.message, requiresManualResolution: job.status === 'submission_unknown' });
+          continue;
+        }
+        const backend = orchestratorManager.getNodes().find(node => node.id === job.backendId);
+        if (!backend) {
+          results.push({ backendId: job.backendId, promptId: job.promptId, status: job.status, message: 'The original managed backend is no longer configured.' });
+          continue;
+        }
+        const baseUrl = backend.url.replace(/\/+$/, '');
+        const [historyResponse, queueResponse] = await Promise.all([
+          fetch(`${baseUrl}/history/${encodeURIComponent(job.promptId)}`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null),
+          fetch(`${baseUrl}/queue`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null),
+        ]);
+        assertApplicationProject(command);
+        const currentBackend = orchestratorManager.getNodes().find(node => node.id === job.backendId);
+        if (!currentBackend || currentBackend.url !== backend.url) throw applicationError('backend_scope_changed', 'The managed backend changed during run inspection. Refresh the application snapshot before continuing.');
+        const [historyBody, queue] = await Promise.all([
+          historyResponse?.ok ? historyResponse.json().catch(() => null) as Promise<Record<string, unknown> | null> : Promise.resolve(null),
+          queueResponse?.ok ? queueResponse.json().catch(() => null) as Promise<Record<string, unknown> | null> : Promise.resolve(null),
+        ]);
+        assertApplicationProject(command);
+        if (orchestratorManager.getNodes().find(node => node.id === job.backendId)?.url !== backend.url) throw applicationError('backend_scope_changed', 'The managed backend changed during run inspection. Refresh the application snapshot before continuing.');
+        const candidate = historyBody?.[job.promptId];
+        const historyEntry = candidate && typeof candidate === 'object' ? candidate as Record<string, any> : undefined;
+        const containsPrompt = (list: unknown): boolean => Array.isArray(list) && list.some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+        const isRunning = containsPrompt(queue?.queue_running);
+        const isPending = containsPrompt(queue?.queue_pending);
+        let status = job.status;
+        const statusRecord = historyEntry?.status && typeof historyEntry.status === 'object' ? historyEntry.status as Record<string, unknown> : {};
+        const statusText = typeof statusRecord.status_str === 'string' ? statusRecord.status_str.toLowerCase() : '';
+        const historyMessages = Array.isArray(statusRecord.messages) ? statusRecord.messages : [];
+        const interrupted = historyMessages.some(message => Array.isArray(message) && message[0] === 'execution_interrupted');
+        if (interrupted) {
+          status = 'cancelled';
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'cancelled'); } catch (error) { console.warn('[GenerationJournal] Could not reconcile cancellation:', error); }
+        } else if (statusText === 'error' || statusText === 'failed' || statusText === 'failure' || statusText === 'exception' || statusText === 'execution_error') {
+          status = 'error';
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'error', 'ComfyUI history recorded an execution error.'); } catch (error) { console.warn('[GenerationJournal] Could not reconcile error:', error); }
+        } else if (statusText === 'success' || statusText === 'completed' || statusRecord.completed === true) {
+          status = 'complete';
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'complete'); } catch (error) { console.warn('[GenerationJournal] Could not reconcile completion:', error); }
+        } else if (isRunning) {
+          status = 'running';
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'running'); } catch (error) { console.warn('[GenerationJournal] Could not reconcile running state:', error); }
+        }
+        const outputs: string[] = [];
+        if (historyEntry?.outputs && typeof historyEntry.outputs === 'object') {
+          for (const output of Object.values(historyEntry.outputs as Record<string, unknown>)) {
+            if (!output || typeof output !== 'object') continue;
+            for (const media of extractMediaOutputs(output as Record<string, unknown>, baseUrl)) outputs.push(media.url);
+          }
+        }
+        const activeJob = [...activeGenerationsRef.current.values()].find(item => item.runId === run.runId && item.promptId === job.promptId);
+        const panelJob = panelsRef.current.find(item => item.id === run.panelId)?.parallelJobs?.find(item => item.promptId === job.promptId);
+        let capturedMedia: Awaited<ReturnType<typeof captureRunOutputMedia>> | undefined;
+        if (status === 'complete') {
+          try {
+            capturedMedia = await captureRunOutputMedia(run.runId, job.backendId, outputs);
+          } catch (error) {
+            capturedMedia = { media: [], warnings: [`Media capture failed: ${error instanceof Error ? error.message : 'unknown capture error'}`] };
+          }
+          assertApplicationProject(command);
+          if (orchestratorManager.getNodes().find(node => node.id === job.backendId)?.url !== backend.url) {
+            throw applicationError('backend_scope_changed', 'The managed backend changed during run inspection. Refresh the application snapshot before continuing.');
+          }
+        }
+        results.push({
+          backendId: job.backendId,
+          promptId: job.promptId,
+          status,
+          queueState: isRunning ? 'running' : isPending ? 'pending' : historyEntry ? 'history' : 'not-found-ambiguous',
+          progress: panelJob?.progress ?? (activeJob ? panelsRef.current.find(item => item.id === run.panelId)?.progress : undefined),
+          currentNodeName: panelJob?.currentNodeName,
+          outputs: [...new Set(outputs)].slice(0, 100),
+          ...(capturedMedia ? { media: capturedMedia.media, mediaWarnings: capturedMedia.warnings } : {}),
+          requiresManualResolution: job.status === 'submission_unknown'
+            || !historyEntry && !isRunning && !isPending && ['accepted', 'running', 'cancel_requested', 'submitting'].includes(status),
+        });
+      }
+      assertApplicationProject(command);
+      return { runId: run.runId, status: getGenerationRun(run.runId)?.status || run.status, jobs: results };
+    },
+    cancel_run: async command => {
+      assertApplicationProject(command);
+      const run = getGenerationRun(command.target.runId);
+      if (!run || run.projectIdentity !== command.projectIdentity) throw applicationError('run_not_found', 'The requested run is not recorded in this project.');
+      const results = [] as Array<Record<string, unknown>>;
+      const scopeIsCurrent = (backendId: string, backendUrl: string): boolean => isApplicationProjectCurrent(command)
+        && orchestratorManager.getNodes().some(node => node.id === backendId && node.url === backendUrl);
+      const scopeChanged = (job: (typeof run.jobs)[number], dispatched: boolean) => {
+        results.push({
+          backendId: job.backendId,
+          ...(job.promptId ? { promptId: job.promptId } : {}),
+          status: 'unknown_after_scope_change',
+          cancelled: false,
+          cancelOutcome: dispatched ? 'unknown_after_dispatch' : 'not_dispatched',
+          reason: dispatched
+            ? 'Scope changed after cancellation dispatch; inspect the current snapshot and action feed, then do not replay.'
+            : 'Project or backend scope changed before cancellation dispatch; refresh the application snapshot.',
+        });
+        return { runId: run.runId, status: 'scope_changed', scopeChanged: true, jobs: results };
+      };
+      for (const job of run.jobs) {
+        assertApplicationProject(command);
+        if (!job.promptId) {
+          results.push({ backendId: job.backendId, status: job.status, cancelled: false, reason: job.status === 'submission_unknown' ? 'submission_unknown_requires_manual_resolution' : 'prompt_id_unavailable' });
+          continue;
+        }
+        const backend = orchestratorManager.getNodes().find(node => node.id === job.backendId);
+        if (!backend) {
+          results.push({ backendId: job.backendId, promptId: job.promptId, cancelled: false, reason: 'original_backend_unavailable' });
+          continue;
+        }
+        if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+        const baseUrl = backend.url.replace(/\/+$/, '');
+        const queueResponse = await fetch(`${baseUrl}/queue`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null);
+        if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+        const queue = queueResponse?.ok ? await queueResponse.json().catch(() => null) as Record<string, unknown> | null : null;
+        if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+        const running = Array.isArray(queue?.queue_running) ? queue!.queue_running as unknown[] : [];
+        const pending = Array.isArray(queue?.queue_pending) ? queue!.queue_pending as unknown[] : [];
+        const isPending = pending.some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+        const runningEntry = running.find(entry => Array.isArray(entry) && entry[1] === job.promptId);
+        const reconcileHistory = async (): Promise<string | 'scope_changed' | null> => {
+          const response = await fetch(`${baseUrl}/history/${encodeURIComponent(job.promptId!)}`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null);
+          if (!scopeIsCurrent(backend.id, backend.url)) return 'scope_changed';
+          if (!response?.ok) return null;
+          const body = await response.json().catch(() => null) as Record<string, any> | null;
+          if (!scopeIsCurrent(backend.id, backend.url)) return 'scope_changed';
+          const entry = body?.[job.promptId!];
+          if (!entry || typeof entry !== 'object') return null;
+          const historyStatus = entry.status && typeof entry.status === 'object' ? entry.status as Record<string, unknown> : {};
+          const messages = Array.isArray(historyStatus.messages) ? historyStatus.messages : [];
+          if (messages.some(message => Array.isArray(message) && message[0] === 'execution_interrupted')) {
+            updateGenerationJobByPrompt(run.runId, job.promptId!, 'cancelled');
+            return 'cancelled';
+          }
+          const statusText = typeof historyStatus.status_str === 'string' ? historyStatus.status_str.toLowerCase() : '';
+          if (statusText === 'error' || statusText === 'failed' || statusText === 'failure' || statusText === 'exception' || statusText === 'execution_error') {
+            updateGenerationJobByPrompt(run.runId, job.promptId!, 'error', 'ComfyUI history recorded an execution error.');
+            return 'error';
+          }
+          if (statusText === 'success' || statusText === 'completed' || historyStatus.completed === true) {
+            updateGenerationJobByPrompt(run.runId, job.promptId!, 'complete');
+            return 'complete';
+          }
+          return null;
+        };
+        if (isPending) {
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'cancel_requested'); } catch (error) { console.warn('[GenerationJournal] Could not persist cancel request:', error); }
+          const response = await fetch(`${baseUrl}/queue`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ delete: [job.promptId] }),
+            signal: AbortSignal.timeout(10000),
+            redirect: 'error',
+          }).catch(() => null);
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          const verifyResponse = await fetch(`${baseUrl}/queue`, { signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null);
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          const verifyQueue = verifyResponse?.ok ? await verifyResponse.json().catch(() => null) as Record<string, unknown> | null : null;
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          const stillPending = Array.isArray(verifyQueue?.queue_pending) && verifyQueue!.queue_pending.some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+          const nowRunning = Array.isArray(verifyQueue?.queue_running) && verifyQueue!.queue_running.some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+          const historyTerminal = await reconcileHistory();
+          if (historyTerminal === 'scope_changed' || !scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          results.push({
+            backendId: job.backendId,
+            promptId: job.promptId,
+            cancelRequested: Boolean(response?.ok),
+            cancelled: historyTerminal === 'cancelled',
+            status: historyTerminal || (nowRunning ? 'running' : stillPending ? 'pending' : response?.ok ? 'cancel_requested' : 'cancel_outcome_unknown'),
+            scope: 'exact-queued-prompt-delete',
+            requiresManualResolution: !response?.ok && historyTerminal !== 'cancelled',
+            reason: historyTerminal ? undefined : nowRunning
+              ? 'prompt_started_during_delete; no node-wide interrupt sent'
+              : !response?.ok ? 'Cancellation request outcome is unknown; inspect the run and do not replay automatically.' : undefined,
+          });
+          continue;
+        }
+        if (runningEntry && running.length === 1) {
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+          try { updateGenerationJobByPrompt(run.runId, job.promptId, 'cancel_requested'); } catch (error) { console.warn('[GenerationJournal] Could not persist cancel request:', error); }
+          const response = await fetch(`${baseUrl}/interrupt`, { method: 'POST', signal: AbortSignal.timeout(10000), redirect: 'error' }).catch(() => null);
+          if (!scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          const historyTerminal = await reconcileHistory();
+          if (historyTerminal === 'scope_changed' || !scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, true);
+          results.push({
+            backendId: job.backendId,
+            promptId: job.promptId,
+            cancelRequested: Boolean(response?.ok),
+            cancelled: historyTerminal === 'cancelled',
+            status: historyTerminal || 'cancel_requested',
+            scope: 'node-wide-interrupt-no-other-running-prompt-at-check',
+            requiresManualResolution: historyTerminal !== 'cancelled',
+            warning: 'ComfyUI /interrupt is node-wide; only this prompt was running when checked, but the queue can change before the request lands.',
+            ...(response?.ok ? {} : { reason: 'Interrupt request outcome is unknown; inspect the run and do not replay automatically.' }),
+          });
+          continue;
+        }
+        const historyTerminal = await reconcileHistory();
+        if (historyTerminal === 'scope_changed' || !scopeIsCurrent(backend.id, backend.url)) return scopeChanged(job, false);
+        if (historyTerminal) {
+          results.push({ backendId: job.backendId, promptId: job.promptId, cancelled: historyTerminal === 'cancelled', status: historyTerminal, reason: 'ComfyUI history already recorded a terminal state.' });
+          continue;
+        }
+        results.push({ backendId: job.backendId, promptId: job.promptId, cancelled: false, reason: runningEntry ? 'node_has_unrelated_running_prompts' : 'prompt_not_found_in_queue_or_history' });
+      }
+      assertApplicationProject(command);
+      return { runId: run.runId, status: getGenerationRun(run.runId)?.status || run.status, jobs: results };
+    },
+  };
+  applicationHandlersRef.current = generationApplicationHandlers;
+  useEffect(() => registerAgentSurfaceContext('console', () => ({
+    statusNote: null,
+    projectIdentity: projectScopeRef.current.identity || null,
+    getRevision: () => JSON.stringify([projectScopeRef.current.identity, projectScopeRef.current.revision]),
+    getWorkspaceContext: () => ({
+      bindingId: projectScopeRef.current.bindingId,
+      projectIdentity: projectScopeRef.current.identity,
+      projectRevision: projectScopeRef.current.revision,
+    }),
+  })), []);
+  useEffect(() => registerWorkspaceConsoleAdapter({
+    getContext: () => ({
+      bindingId: projectScopeRef.current.bindingId,
+      projectIdentity: projectScopeRef.current.identity,
+      projectRevision: projectScopeRef.current.revision,
+    }),
+    dispatch: command => applicationHandlersRef.current
+      ? dispatchStoryboardApplicationAction(applicationHandlersRef.current, command)
+      : Promise.resolve({
+        ok: false,
+        commandId: command.commandId,
+        action: command.action,
+        error: { code: 'console_unavailable', message: 'Console actions are not ready.', retryable: false },
+      }),
+  }), []);
 
   const handleCancelGenerations = () => cancelGenerations();
 
   // New project handler. Save, discard, and cancel are separate outcomes;
   // failed Save must never continue into a destructive reset.
   const handleNewProject = useCallback(async () => {
-    const hasWork = panels.some(p => p.image || p.images.length > 0 || p.notes.trim() !== '')
-      || sessionDraftController.hasPendingChanges();
+    const hasWork = hasUnsavedProjectWork();
     let discard = false;
     if (hasWork) {
       const save = window.confirm(
@@ -5192,6 +7583,7 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     const newIdentity = projectManager.createUnsavedIdentity();
     try {
       await activateSessionIdentity(sessionDraftController, newIdentity, { discard });
+      projectScopeRef.current.bindingId = crypto.randomUUID();
     } catch (error) {
       showError(`New project was cancelled: ${error instanceof Error ? error.message : String(error)}`);
       return;
@@ -5235,9 +7627,21 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
     setParameterValues({});
     parameterValuesRef.current = {};
     setSelectedWorkflowId(null);
-    useCinemaStore.getState().resetSession();
+    selectedWorkflowIdRef.current = null;
+    setCameraAngles({});
+    setEnhancementPreferences(EMPTY_ENHANCEMENT_PREFERENCES);
+    enhancementPreferencesRef.current = EMPTY_ENHANCEMENT_PREFERENCES;
+    setDeletedImages(new Set());
+    setGlobalPromptOverride('');
+    setUseGlobalPrompt(false);
+    projectSavedFingerprintRef.current = projectStateFingerprint({
+      ...readCurrentProjectState(), panels: defaultPanels, parameters: {}, selectedWorkflowId: null,
+      settings: newSettings, cameraAngles: {}, enhancementPreferences: EMPTY_ENHANCEMENT_PREFERENCES,
+      deletedImages: [],
+      globalPromptOverride: '', useGlobalPrompt: false,
+    });
     setShowProjectSettings(true);
-  }, [panels, handleSaveProject, projectSettings.orchestratorUrl, setProjectSettings, showError]);
+  }, [hasUnsavedProjectWork, handleSaveProject, projectSettings.orchestratorUrl, readCurrentProjectState, setProjectSettings, showError]);
 
   // ---------------------------------------------------------------------------
   // Effects - Global keyboard shortcuts
@@ -5328,6 +7732,13 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
               {loadingProgress.currentFile}
             </p>
           </div>
+        </div>
+      )}
+
+      {isPromptEnhancementRunning && (
+        <div role="status" aria-live="polite" style={{ position: 'fixed', zIndex: 20, top: 8, right: 12, display: 'flex', alignItems: 'center', gap: 10, padding: '0.45rem 0.7rem', borderRadius: 6, background: 'var(--bg-medium)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          <span>Enhancing prompt with the selected agent…</span>
+          <button type="button" onClick={() => enhancementAbortControllerRef.current?.abort()}>Cancel</button>
         </div>
       )}
       
@@ -5491,19 +7902,35 @@ export function StoryboardUI({ onProjectLoadingChange, initialSession }: Storybo
                 </button>
                 <button 
                   className="icon-btn delete"
-                  onClick={() => {
-                    if (selectedWorkflowId && confirm('Are you sure you want to delete this workflow?')) {
-                      const workflow = workflows.find(w => w.id === selectedWorkflowId);
-                      setWorkflows(prev => prev.filter(w => w.id !== selectedWorkflowId));
-                      setSelectedWorkflowId(null);
-                      // Delete from persistent backend storage so it doesn't reappear on restart
-                      workflowStorage.delete(selectedWorkflowId).catch(err => {
-                        console.error('[Workflows] Failed to delete from backend:', err);
-                        addLog('error', `Failed to delete workflow file from storage: ${err}`);
-                      });
-                      if (workflow) {
+                  onClick={async () => {
+                    const workflowId = selectedWorkflowId;
+                    if (!workflowId || !confirm('Are you sure you want to delete this workflow?')) return;
+                    try {
+                      await flushPendingWorkflowSave();
+                      const workflow = workflowsRef.current.find(item => item.id === workflowId);
+                      if (!workflow) throw new Error('The selected workflow is no longer available.');
+                      const fingerprint = workflowContentFingerprint(workflow);
+                      workflowDeleteIdsRef.current.add(workflowId);
+                      const result = await workflowStorage.delete(workflowId);
+                      workflowCollectionRevisionRef.current = result.collectionRevision;
+                      workflowPersistedFingerprintRef.current.delete(workflowId);
+                      workflowDeleteIdsRef.current.delete(workflowId);
+                      const latest = workflowsRef.current.find(item => item.id === workflowId);
+                      if (latest && workflowContentFingerprint(latest) !== fingerprint) {
+                        workflowConflictIdsRef.current.add(workflowId);
+                        showError('The workflow was deleted while newer local edits were being made. Those edits remain in the current browser session and need an explicit re-import.');
+                      } else {
+                        workflowConflictIdsRef.current.delete(workflowId);
+                        setWorkflows(current => current.filter(item => item.id !== workflowId));
+                        setSelectedWorkflowId(current => current === workflowId ? null : current);
                         addLog('info', `Deleted workflow: ${workflow.name}`);
                       }
+                    } catch (err) {
+                      workflowDeleteIdsRef.current.delete(workflowId);
+                      try { await reconcileWorkflowStorage(); } catch { /* Preserve the local workflow if storage cannot be reconciled. */ }
+                      console.error('[Workflows] Failed to delete from backend:', err);
+                      showError(`Workflow was not deleted: ${err instanceof Error ? err.message : String(err)}`);
+                      addLog('error', `Failed to delete workflow file from storage: ${err}`);
                     }
                   }} 
                   disabled={!selectedWorkflow}

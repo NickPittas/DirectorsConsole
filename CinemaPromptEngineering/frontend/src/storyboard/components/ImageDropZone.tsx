@@ -167,7 +167,7 @@ export function ImageDropZone({
   acceptType = 'image',
   isBypassed = false,
   onBypassChange,
-  comfyUrl: _comfyUrl,
+  comfyUrl,
 }: ImageDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -549,6 +549,9 @@ export function ImageDropZone({
   };
   
   const placeholder = getPlaceholderContent();
+  const previewSrc = value && comfyUrl && /^storyboard_[A-Za-z0-9._-]+$/.test(value)
+    ? new URL('/view', comfyUrl).toString() + `?${new URLSearchParams({ filename: value, type: 'input' })}`
+    : value;
 
   return (
     <div className={`image-drop-zone-container ${isBypassed ? 'bypassed' : ''}`}>
@@ -586,12 +589,12 @@ export function ImageDropZone({
             {value ? (
               <div className="image-preview">
                 {currentMediaType === 'video' ? (
-                  <video src={value} controls muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                  <video src={previewSrc || undefined} controls muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                 ) : (
                   <>
                     {/* Show the processed value - but we need to show it without transparency for preview */}
                     {/* For preview, show original image cropped, with red overlay for mask */}
-                    <img src={value} alt={displayName} style={{ opacity: maskData ? 0 : 1 }} />
+                    <img src={previewSrc || undefined} alt={displayName} style={{ opacity: maskData ? 0 : 1 }} />
                     {/* When we have a mask, show original (cropped) without alpha + red overlay */}
                     {maskData && originalImage && (
                       <PreviewWithMask 

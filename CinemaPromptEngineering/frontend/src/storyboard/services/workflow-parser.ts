@@ -320,6 +320,8 @@ export class WorkflowParser {
       'KSampler': ['seed', 'control_after_generate', 'steps', 'cfg', 'sampler_name', 'scheduler', 'denoise'],
       'KSamplerAdvanced': ['add_noise', 'noise_seed', 'steps', 'cfg', 'sampler_name', 'scheduler', 'start_at_step', 'end_at_step', 'return_with_leftover_noise'],
       'CLIPTextEncode': ['text'],
+      'PrimitiveStringMultiline': ['value'],
+      'PrimitiveFloat': ['value'],
       'EmptyLatentImage': ['width', 'height', 'batch_size'],
       'EmptySD3LatentImage': ['width', 'height', 'batch_size'],
       'LoadImage': ['image', 'upload'],
@@ -347,6 +349,7 @@ export class WorkflowParser {
       
       // Resolution/resize nodes
       'FluxResolutionNode': ['megapixels', 'aspect_ratio', 'divisor', 'preview', 'last_ratio'],
+      'ResolutionSelector': ['aspect_ratio', 'megapixels', 'multiple'],
       'ImageResizeKJv2': ['width', 'height', 'upscale_method', 'crop', 'pad_color', 'pad_position', 'divisor', 'device'],
       'ImageScaleToTotalPixels': ['upscale_method', 'megapixels'],
       

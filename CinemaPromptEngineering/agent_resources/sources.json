@@ -1,0 +1,678 @@
+{
+  "meta": {
+    "indexId": "cpe-agent-resources-source-index",
+    "schemaVersion": 1,
+    "createdAt": "2026-11-05",
+    "taskRefs": ["T4b (bounded resource indexing)", "T9 (source index)"],
+    "planRef": "docs/plans/harness-agents-implementation-plan.md sections 5, 6, 7, 8, 14 (read-only reference; plan not modified)",
+    "scope": "Curated, provenance-verified source index of authoritative/reusable projects and exact task resources for the requested model families (MiniMax H3, LTX-2.3/2.5 with IC-LoRAs and distilled paths, Qwen-Image 2.1 generation/editing, FLUX.1 Kontext/Krea variants, FLUX.2 Dev/Klein, Krea 2 RAW/Turbo) plus official ComfyUI tooling (ComfyUI core, comfy-cli and its agent skill, comfy-mcp, official workflow templates).",
+    "status": "runtime-unwired: no running code reads this index yet. It is intended as offline, locally retained input for a future resolver (e.g. the search_workflow_sources / get_source_recipe actions in plan section 8). It is not wired into the gateway, frontend, or any service.",
+    "disclaimer": [
+      "This index is discovery metadata only. It is NOT a set of installed skills, NOT a runnable recipe collection, and NOT evidence that any listed file exists on any render backend.",
+      "Provenance verification here means: the repository/page/file path was confirmed to exist and its metadata was read on the verification date. It does NOT mean a model was downloaded, tested, rendered successfully, or is compatible with any particular backend or workflow.",
+      "Metadata discovery is not model compatibility: a documented model file or IC-LoRA may still be missing, version-mismatched, gated, or unsuitable for a given graph on any specific backend.",
+      "No entry in this index has been confirmed installed on any render backend (including Kamino-3). Dependency installation remains a separately authorized provisioning step (plan section 6)."
+    ],
+    "verification": {
+      "method": "Read-only GitHub REST API (repo metadata, head commits, contents paths, LICENSE names), HuggingFace model API (id, gated status, revision sha, lastModified), and HTTP status/raw-file fetches of official documentation pages. No downloads, no service launches, no model loads, no live model calls.",
+      "date": "2026-11-05"
+    },
+    "sourceKinds": {
+      "official": "Comfy-Org / comfyanonymous repositories and docs.comfy.org documentation (platform owner).",
+      "model-author": "The organization that created the model (Lightricks, Qwen/Alibaba, MiniMax, Black Forest Labs, Krea).",
+      "community": "Maintained third-party teams or adapters documented via other sources (e.g. FastVideo FastH3, acceleration LoRAs)."
+    },
+    "resourceKinds": ["platform", "tool", "mcp-server", "template-library", "node-pack", "model-repository", "model-weights", "documentation", "recipe", "skill", "checkpoint", "lora-adapter", "ic-lora-adapter", "upscaler", "text-encoder", "vae"],
+    "familyLabels": {
+      "note": "Family labels are deliberately distinct and must not be merged by a resolver. Known confusions called out:",
+      "distinct": {
+        "FLUX.1 Krea-dev vs Krea 2": "FLUX.1 Krea-dev is a Black Forest Labs x Krea co-trained FLUX.1 dev variant (2025-07, gated). Krea 2 is Krea's own model family (RAW base / Turbo distilled, 2026-07). Different lineages, different schedules.",
+        "MiniMax H3 FL2VA vs Ref2VA": "Separate diffusion checkpoints (minimax_h3_fl2va_pruned_int8_convrot vs minimax_h3_ref2va_pruned_int8_convrot). Never substitute one for the other.",
+        "Krea 2 RAW vs Krea 2 Turbo": "RAW is the undistilled 52-step base; Turbo is the 8-step distilled checkpoint. LoRAs are trained on RAW and applied to Turbo.",
+        "Qwen-Image 2.1 base vs Turbo": "Base samples in 25 steps; Turbo is a distilled 8-step checkpoint with its own prompt-enhancement encoders and separate Turbo/Lightning LoRA routes.",
+        "LTX-2.3 vs LTX-2.5": "Different model generations with different file layouts (single-checkpoint plus Gemma 3 text encoder for 2.3; split transformer/encoders/VAEs for 2.5). IC-LoRAs are version-matched; cross-version compatibility must not be inferred.",
+        "LTX Ingredients vs Union Control (and other IC-LoRAs)": "Ingredients is the composed-reference-sheet adapter with its exact two-part prompt format; Union Control, Motion Track, upscalers, HDR, layout, restore are separate adapters, each with its own recipe.",
+        "FastH3 vs MiniMax H3 base": "FastH3 is the FastVideo DMD2-distilled 8-step route for text-to-video and first/last-frame image-to-video only; it is not a Ref2VA route.",
+        "FLUX.2 Dev vs FLUX.2 Klein": "Klein is the small distilled-capable family (4B/9B, Base vs Distilled variants; Distilled is 4-step). Distilled Klein schedules must never be transferred to FLUX.2 Dev."
+      }
+    },
+    "localGuides": [
+      {
+        "family": "MiniMax H3",
+        "path": "/home/npittas/.agents/skills/minimax-h3-video-prompting/SKILL.md",
+        "note": "Existing local prompting guide (verified present 2026-11-05). Referenced, not copied, not modified by this subtask."
+      },
+      {
+        "family": "LTX (incl. LTX-2 IC-LoRA conventions)",
+        "path": "/home/npittas/.agents/skills/ltx-video-prompting/SKILL.md",
+        "note": "Existing local prompting guide (verified present 2026-11-05). Referenced, not copied, not modified by this subtask."
+      },
+      {
+        "family": "Qwen-Image 2.1",
+        "path": "/home/npittas/.agents/skills/qwen-image-prompting/SKILL.md",
+        "note": "Existing local prompting guide (verified present 2026-11-05). Referenced, not copied, not modified by this subtask."
+      }
+    ],
+    "settingsPolicy": "Optimization/sampling settings are recorded ONLY when the exact values are read from the primary documented source during this indexing pass (field verifiedPrimary: true). Where exact values were not re-verified from the primary source, the recipe is linked without invented numerics and the value is listed under meta.unknowns if it exists in collated form in the parent plan.",
+    "unknowns": [
+      "Official ComfyUI recipe URL for FLUX.1 Krea-dev was not located (candidate slugs returned 404 on 2026-11-05); only the FLUX.1 Kontext-dev recipe was verified (HTTP 200).",
+      "No GitHub repositories exist for black-forest-labs FLUX.1-Kontext-dev / FLUX.1-Krea-dev / FLUX.2 (GitHub API 404); their authoritative model-author sources are the HuggingFace repos.",
+      "HuggingFace repo id for FLUX.2 Klein 9B was not verified this pass (only FLUX.2-klein-4B).",
+      "docs.ltx.io IC-LoRA adapters page is client-rendered; the page and its meta description ('model cards and compatibility guidance') were verified reachable, but the individual adapter item list (Ingredients, Union Control, Motion Track, upscalers, HDR, layout, restore) was not item-verified from the rendered page this pass and is carried from parent plan section 5.",
+      "Qwen-Image 2.1 base sampler/scheduler exact values (cfg 1, euler, simple) and Turbo ManualSigmas usage are collated in parent plan section 5 but were not re-verified from the primary recipe page this pass; only '8 steps instead of 25' was primary-verified.",
+      "Filename krea2_style_reference.safetensors and the LTX-2.5 video/audio VAE filenames are collated in parent plan section 6 and were not re-verified from primary sources this pass.",
+      "GitHub license detection returned no SPDX license for MiniMax-AI/MiniMax-H3; comfy-mcp and ComfyUI-LTXVideo report custom/NOASSERTION licenses. See each repository's LICENSE file.",
+      "Community acceleration items beyond those documented in the official guides (e.g. third-party Lightning-style LoRAs for other families) were intentionally not indexed; only officially documented routes are recorded.",
+      "The requested name 'MiniMaxAI/MiniMax-H3' is the HuggingFace org/repo (verified). The GitHub org is 'MiniMax-AI' (verified repo MiniMax-AI/MiniMax-H3); there is no MiniMaxAI org repo on GitHub (404)."
+    ]
+  },
+  "projects": [
+    {
+      "id": "comfyui-core",
+      "title": "ComfyUI core",
+      "sourceKind": "official",
+      "familyLabel": ["ComfyUI tooling"],
+      "resourceKind": "platform",
+      "repositoryPath": "Comfy-Org/ComfyUI",
+      "legacyPath": "comfyanonymous/ComfyUI (redirects to Comfy-Org/ComfyUI)",
+      "url": "https://github.com/Comfy-Org/ComfyUI",
+      "commitOrVersion": { "branch": "master", "headSha": "fb2b26fdac50", "headShaDate": "2026-11-05T06:22:19Z" },
+      "license": "GPL-3.0",
+      "docsUrls": [
+        { "url": "https://docs.comfy.org/development/comfyui-server/comms_routes", "status": "verified 200 2026-11-05", "note": "Server communication routes (/prompt, /queue, /history, /ws, /object_info)." },
+        { "url": "https://docs.comfy.org/basic-concepts/models", "status": "verified 200 2026-11-05", "note": "Authoritative model loader folder names." }
+      ],
+      "summary": "Modular diffusion GUI/API/backend with graph/node interface. LTX-2 is natively supported in core (comfy/ldm/lightricks, per Lightricks/ComfyUI-LTXVideo README).",
+      "verified": { "method": "GitHub REST API repo + head commit", "date": "2026-11-05" },
+      "notes": "This project's app generates directly against ComfyUI HTTP/WS; this repo is the platform reference, not an integration target."
+    },
+    {
+      "id": "comfy-cli",
+      "title": "ComfyCLI (official CLI) with bundled agent skill",
+      "sourceKind": "official",
+      "familyLabel": ["ComfyUI tooling"],
+      "resourceKind": "tool",
+      "repositoryPath": "Comfy-Org/comfy-cli",
+      "url": "https://github.com/Comfy-Org/comfy-cli",
+      "commitOrVersion": { "branch": "main", "headSha": "5c2c18b7f459", "headShaDate": "2026-11-05T13:07:11Z" },
+      "license": "GPL-3.0",
+      "skillPath": { "path": "comfy_cli/skills/comfy/SKILL.md", "verified": true, "size": 77632, "blobSha": "218de59ec282" },
+      "docsUrls": [
+        { "url": "https://docs.comfy.org/comfy-cli/getting-started", "status": "verified 200 2026-11-05" }
+      ],
+      "summary": "Official CLI for installing/managing a local ComfyUI; ships an agent skill with workflow-first ComfyUI guidance. Plan section 6 selects this SKILL.md as the base for a locally attributed adaptation and a bounded CLI reuse tool (curated template discovery/details/export, slot/note inspection, schema validation).",
+      "verified": { "method": "GitHub REST API repo + head commit + contents path", "date": "2026-11-05" },
+      "notes": "Operates on the machine where it is installed; local CLI facts must never substitute for selected-backend runtime facts (plan section 6). Skill content is not copied into this index."
+    },
+    {
+      "id": "comfy-mcp",
+      "title": "comfy-mcp (official local MCP server) + official agent-tools MCP docs",
+      "sourceKind": "official",
+      "familyLabel": ["ComfyUI tooling"],
+      "resourceKind": "mcp-server",
+      "repositoryPath": "Comfy-Org/comfy-mcp",
+      "url": "https://github.com/Comfy-Org/comfy-mcp",
+      "commitOrVersion": { "branch": "main", "headSha": "5e4904fefbd2", "headShaDate": "2026-11-05T12:20:46Z" },
+      "license": "custom (GitHub API: NOASSERTION; see repository LICENSE)",
+      "docsUrls": [
+        { "url": "https://docs.comfy.org/agent-tools/mcp", "status": "verified 200 2026-11-05", "note": "Also documents a hosted remote MCP endpoint at https://cloud.comfy.org/mcp (remote HTTP transport)." }
+      ],
+      "summary": "Local MCP server for running ComfyUI from AI agents. README (verified) states COMFYUI_URL lets run/job tools target ComfyUI on another machine, but download_model writes the local machine's models directory and is not remoted; a hosted remote HTTP MCP is documented at cloud.comfy.org/mcp.",
+      "verified": { "method": "GitHub REST API repo + head commit + raw README grep (remote/local limitation lines)", "date": "2026-11-05" },
+      "notes": "Per plan section 1.6/6: optional domain tooling, never the application execution pipeline; MCP support does not prove remote model discovery, filesystem access, installation, or lifecycle control."
+    },
+    {
+      "id": "workflow-templates",
+      "title": "Official ComfyUI workflow templates",
+      "sourceKind": "official",
+      "familyLabel": ["ComfyUI templates"],
+      "resourceKind": "template-library",
+      "repositoryPath": "Comfy-Org/workflow_templates",
+      "url": "https://github.com/Comfy-Org/workflow_templates",
+      "commitOrVersion": { "branch": "main", "headSha": "cd0fcd08bc84", "headShaDate": "2026-11-05T01:02:44Z" },
+      "license": "MIT",
+      "summary": "Official ComfyUI template workflow library (Template Library search strings referenced by the official recipes, e.g. 'LTX-2.5 T2V', 'Qwen Image 2.1 Turbo'). Template JSON files follow api_*.json naming.",
+      "verified": { "method": "GitHub REST API repo + head commit; template search strings verified inside official recipe pages", "date": "2026-11-05" },
+      "notes": "Official templates are starting points, not automatically optimal (plan section 7); version-matched distilled templates are the required starting points for LTX (plan section 5)."
+    },
+    {
+      "id": "ltx-video-comfyui",
+      "title": "ComfyUI-LTXVideo (Lightricks node pack and example workflows)",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX-Video", "LTX-2.3", "LTX-2.5"],
+      "resourceKind": "node-pack",
+      "repositoryPath": "Lightricks/ComfyUI-LTXVideo",
+      "url": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+      "commitOrVersion": { "branch": "master", "headSha": "220e1d45aa04", "headShaDate": "2026-10-20T06:57:12Z" },
+      "license": "custom (GitHub API: NOASSERTION; see repository LICENSE)",
+      "summary": "Lightricks' ComfyUI support pack for LTX-Video/LTX-2: example workflows (verified example: example_workflows/2.3/LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json), links to Lightricks/LTX-2, Lightricks/LTX-2.3 on HF, the ltx-trainer package, and the LTX-2 technical report. README notes LTX-2 is natively supported in ComfyUI core, with this pack providing workflows/trainer utilities.",
+      "verified": { "method": "GitHub REST API repo + head commit + raw README grep", "date": "2026-11-05" },
+      "notes": "Pack README verified to reference LTX-2 and HF Lightricks/LTX-2.3; full IC-LoRA catalog lives in ltx-docs (see ltx-docs-ic-lora-catalog project)."
+    },
+    {
+      "id": "ltx-2-repo",
+      "title": "LTX-2 official inference/trainer repository (incl. LTX-2.3 model list)",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX-2.3", "LTX-2.5"],
+      "resourceKind": "model-repository",
+      "repositoryPath": "Lightricks/LTX-2",
+      "url": "https://github.com/Lightricks/LTX-2",
+      "commitOrVersion": { "branch": "main", "headSha": "4f521619ae00", "headShaDate": "2026-11-04T12:37:22Z" },
+      "license": "Apache-2.0",
+      "modelListDoc": { "path": "MODELS-LTX-2.3.md", "verified": true, "size": 6208 },
+      "summary": "Official Python inference and LoRA trainer package for the LTX-2 audio-video generative model. MODELS-LTX-2.3.md (verified present) documents the LTX-2.3 file set: transformer plus video and audio VAEs, text projection, Gemma text encoder, and checkpoint files such as ltx-2.3-22b-dev.safetensors.",
+      "verified": { "method": "GitHub REST API repo + head commit + contents path + raw file grep", "date": "2026-11-05" },
+      "notes": "The ltx-trainer package lives at packages/ltx-trainer (linked from ComfyUI-LTXVideo README)."
+    },
+    {
+      "id": "ltx-hf-2-3",
+      "title": "Lightricks/LTX-2.3 model weights (HuggingFace)",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX-2.3"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "Lightricks/LTX-2.3 (HuggingFace)",
+      "url": "https://huggingface.co/Lightricks/LTX-2.3",
+      "commitOrVersion": { "hfRevision": "c1521179de48", "lastModified": "2026-10-22" },
+      "license": "see repository (model card)",
+      "gated": false,
+      "summary": "LTX-2.3 weights repository linked from the ComfyUI-LTXVideo README; currently not gated.",
+      "verified": { "method": "HuggingFace model API", "date": "2026-11-05" }
+    },
+    {
+      "id": "ltx-hf-2-5",
+      "title": "Lightricks/LTX-2.5 model weights (HuggingFace, gated)",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX-2.5"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "Lightricks/LTX-2.5 (HuggingFace)",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5",
+      "commitOrVersion": { "hfRevision": "49b093a39c19", "lastModified": "2026-10-11" },
+      "license": "see repository (model card)",
+      "gated": true,
+      "summary": "LTX-2.5 split-layout weights (transformer, Gemma 4 text encoder, video VAE, audio VAE). Official recipe confirms model files are hosted in this gated repository.",
+      "verified": { "method": "HuggingFace model API (gated=auto); gating cross-confirmed by official recipe page", "date": "2026-11-05" },
+      "notes": "Gated: provisioning must report the required user authorization, never bypass the gate (plan sections 6, 11)."
+    },
+    {
+      "id": "ltx-hf-2-5-ic-lora-pixel-spatial-upscaler",
+      "title": "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler (HuggingFace, gated)",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX-2.5", "LTX IC-LoRA adapters"],
+      "resourceKind": "ic-lora-adapter",
+      "repositoryPath": "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler (HuggingFace)",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler",
+      "commitOrVersion": { "hfRevision": "59f26f1e0c11", "lastModified": "2026-10-22" },
+      "license": "see repository (model card)",
+      "gated": true,
+      "summary": "Version-matched LTX-2.5 IC-LoRA pixel spatial upscaler named by the official LTX-2.5 recipe as one of the two gated repositories hosting LTX-2.5 model files.",
+      "verified": { "method": "HuggingFace model API (gated=auto); repo name cross-confirmed by official recipe page", "date": "2026-11-05" }
+    },
+    {
+      "id": "ltx-docs-ic-lora-catalog",
+      "title": "LTX IC-LoRA adapter catalog and compatibility docs",
+      "sourceKind": "model-author",
+      "familyLabel": ["LTX IC-LoRA adapters"],
+      "resourceKind": "documentation",
+      "url": "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters",
+      "summary": "Lightricks docs page for IC-LoRA adapters: model cards and compatibility guidance (meta description verified). Per parent plan section 5, the catalog covers Ingredients, Union Control, Motion Track, upscalers, HDR, layout, restore and other adapters, each with its own recipe and adapter-version check.",
+      "verified": { "method": "HTTP 200 + meta description; page is client-rendered, item list carried from parent plan section 5", "date": "2026-11-05" },
+      "notes": "Ingredients accepts one composed sheet and exactly the two-part 'Reference sheet: ... / Generated video: ...' prompt (plan section 5). Cross-version IC-LoRA compatibility must not be inferred."
+    },
+    {
+      "id": "ltx-comfy-recipe-2-5",
+      "title": "Official ComfyUI recipe: LTX-2.5 (T2V/I2V/FLF2V/DFR)",
+      "sourceKind": "official",
+      "familyLabel": ["LTX-2.5"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-5",
+      "summary": "Official native-workflow recipe. Verified content: ComfyUI ships four native LTX-2.5 workflows (T2V, I2V, FLF2V first+last frame, DFR image-to-video); files hosted in gated Lightricks/LTX-2.5 and Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler repos; diffusion model entry 'ltx-2.5-22b-distilled-transformer-comfy-int8-convrot' in diffusion_models; custom Gemma 4 12B text encoder (gemma4-12b-with-proj-...); distilled model gives faster generation; output supports native 4K HDR.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "Exact video/audio VAE filenames are carried from parent plan section 6 (not re-verified this pass; see meta.unknowns)."
+    },
+    {
+      "id": "minimax-h3-hf",
+      "title": "MiniMaxAI/MiniMax-H3 model and prompting source (HuggingFace)",
+      "sourceKind": "model-author",
+      "familyLabel": ["MiniMax H3"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "MiniMaxAI/MiniMax-H3 (HuggingFace)",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+      "commitOrVersion": { "hfRevision": "42ed227ee7df", "lastModified": "2026-08-13" },
+      "license": "see repository (model card)",
+      "gated": false,
+      "summary": "Official MiniMax H3 model repository on HuggingFace; parent plan section 14 names it the model/prompt source for MiniMax H3. Currently not gated.",
+      "verified": { "method": "HuggingFace model API", "date": "2026-11-05" }
+    },
+    {
+      "id": "minimax-h3-github",
+      "title": "MiniMax-AI/MiniMax-H3 (GitHub)",
+      "sourceKind": "model-author",
+      "familyLabel": ["MiniMax H3"],
+      "resourceKind": "model-repository",
+      "repositoryPath": "MiniMax-AI/MiniMax-H3",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3",
+      "commitOrVersion": { "branch": "main", "headSha": "199b7d0e1fd9", "headShaDate": "2026-10-28T10:13:57Z" },
+      "license": "not detected via GitHub API (see repository)",
+      "summary": "GitHub repository for MiniMax H3 under the MiniMax-AI org. Note the org split: 'MiniMaxAI' is the HuggingFace org; 'MiniMax-AI' is the GitHub org (MiniMaxAI/MiniMax-H3 does not exist on GitHub; verified 404).",
+      "verified": { "method": "GitHub REST API repo + head commit; MiniMaxAI/MiniMax-H3 GitHub 404 verified", "date": "2026-11-05" }
+    },
+    {
+      "id": "minimax-h3-native-recipe",
+      "title": "Official ComfyUI recipe: MiniMax H3 native workflows (T2V/I2V/R2V)",
+      "sourceKind": "official",
+      "familyLabel": ["MiniMax H3 (FL2VA)", "MiniMax H3 (Ref2VA)"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native",
+      "summary": "Official page 'ComfyUI MiniMax H3 Text-to-Video, Image-to-Video, and Reference-to-Video Workflows'. Verified file lists and LoRA names (see taskResources minimax-h3-fl2va-set, minimax-h3-ref2va-set, h3-acceleration-loras). Sections include T2V, I2V, R2V (reference-to-video), and advanced workflows.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" }
+    },
+    {
+      "id": "minimax-h3-fastvideo-recipe",
+      "title": "Official ComfyUI recipe: MiniMax H3 FastVideo FastH3",
+      "sourceKind": "official",
+      "familyLabel": ["MiniMax H3 FastVideo FastH3 (distilled)"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fastvideo",
+      "summary": "Official page. Verified content: FastH3 is the FastVideo team's DMD2-distilled MiniMax H3 checkpoint generating video with synchronized native audio in 8 sampling steps instead of the base model's full schedule; reuses the H3 text encoder and base model setup; documented workflows are FastH3 Text->Video and FastH3 Image->Video First/last-frame only (ComfyUI ships an 8-step template). FastH3 preview work developed with Nuva Labs and NVIDIA FastGen.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "No reference (Ref2VA) workflow appears on this page; FastH3 must not be presented as a Ref2VA route (plan section 5)."
+    },
+    {
+      "id": "qwen-image-2-1-repo",
+      "title": "QwenLM/Qwen-Image-2.1 (GitHub, model author)",
+      "sourceKind": "model-author",
+      "familyLabel": ["Qwen-Image 2.1 (base)", "Qwen-Image 2.1 (Turbo)"],
+      "resourceKind": "model-repository",
+      "repositoryPath": "QwenLM/Qwen-Image-2.1",
+      "url": "https://github.com/QwenLM/Qwen-Image-2.1",
+      "commitOrVersion": { "branch": "main", "headSha": "ab96caa94415", "headShaDate": "2026-10-14T10:08:18Z" },
+      "license": "custom Qwen license (LICENSE file present; GitHub API SPDX: NOASSERTION)",
+      "summary": "Official Qwen repository for the Qwen-Image 2.1 image generation model (described as Qwen's most powerful open-source image generation model). Covers generation and editing; task-mode prompting contracts are in the local Qwen guide (see meta.localGuides).",
+      "verified": { "method": "GitHub REST API repo + head commit + LICENSE filename", "date": "2026-11-05" }
+    },
+    {
+      "id": "qwen-image-2-1-hf",
+      "title": "Qwen/Qwen-Image-2.1 weights (HuggingFace)",
+      "sourceKind": "model-author",
+      "familyLabel": ["Qwen-Image 2.1 (base)", "Qwen-Image 2.1 (Turbo)"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "Qwen/Qwen-Image-2.1 (HuggingFace)",
+      "url": "https://huggingface.co/Qwen/Qwen-Image-2.1",
+      "commitOrVersion": { "hfRevision": "d26bb61231c3", "lastModified": "2026-09-30" },
+      "license": "see repository (model card)",
+      "gated": false,
+      "summary": "Official Qwen-Image 2.1 weights; currently not gated. Distinct from the older Qwen/Qwen-Image (1.0) family label.",
+      "verified": { "method": "HuggingFace model API", "date": "2026-11-05" }
+    },
+    {
+      "id": "qwen-image-2-1-recipe",
+      "title": "Official ComfyUI recipe: Qwen-Image 2.1 (files and schedules)",
+      "sourceKind": "official",
+      "familyLabel": ["Qwen-Image 2.1 (base)", "Qwen-Image 2.1 (Turbo)"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1",
+      "summary": "Official recipe. Verified content: base templates use qwen_image_2.1_int8_convrot.safetensors (lower memory) or qwen_image_2.1_bf16.safetensors (full precision); Turbo templates use qwen_image_2.1_turbo_int8_convrot.safetensors / qwen_image_2.1_turbo_bf16.safetensors; prompt-enhancement text encoders qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors (text-to-image) and qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors (image edit); Turbo is a distilled checkpoint sampling in 8 steps instead of 25 (base); documented sections include 'Faster sampling with Turbo LoRA', 'Faster sampling with Lightning LoRA' (separate routes), 'Alpha channel output', remove-background image edit, and reference slots in image edit workflows.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "Base cfg/sampler/scheduler values and Turbo ManualSigmas are collated in parent plan section 5 but were not re-verified from this page this pass (see meta.unknowns). Turbo LoRA and community Lightning 4-step routes are distinct records, not interchangeable defaults (plan section 5)."
+    },
+    {
+      "id": "flux2-dev-hf",
+      "title": "black-forest-labs/FLUX.2-dev weights (HuggingFace, gated)",
+      "sourceKind": "model-author",
+      "familyLabel": ["FLUX.2 Dev"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "black-forest-labs/FLUX.2-dev (HuggingFace)",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-dev",
+      "commitOrVersion": { "hfRevision": "26afe3a78bb2", "lastModified": "2026-02-17" },
+      "license": "other (custom BFL license per model tags)",
+      "gated": true,
+      "summary": "Black Forest Labs FLUX.2-dev weights (image generation and editing pipeline tags). No GitHub repository exists for FLUX.2 (verified 404); HuggingFace is the authoritative model-author source.",
+      "verified": { "method": "HuggingFace model API; GitHub API 404 for black-forest-labs/FLUX.2", "date": "2026-11-05" }
+    },
+    {
+      "id": "flux2-dev-recipe",
+      "title": "Official ComfyUI recipe: FLUX.2 Dev",
+      "sourceKind": "official",
+      "familyLabel": ["FLUX.2 Dev"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/flux/flux-2-dev",
+      "summary": "Official recipe. Verified file list: flux2_dev_fp8mixed.safetensors, mistral_3_small_flux2_bf16.safetensors, flux2-vae.safetensors.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "Loader-folder mapping and FLUX.2 multi-reference role contract are carried from parent plan sections 5/6; base and dev recipes retain their own schedules (never transfer Klein distilled schedules)."
+    },
+    {
+      "id": "flux2-klein-hf",
+      "title": "black-forest-labs/FLUX.2-klein-4B weights (HuggingFace, Apache-2.0)",
+      "sourceKind": "model-author",
+      "familyLabel": ["FLUX.2 Klein"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "black-forest-labs/FLUX.2-klein-4B (HuggingFace)",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
+      "commitOrVersion": { "hfRevision": "e7b7dc27f91d", "lastModified": "2026-02-24" },
+      "license": "apache-2.0",
+      "gated": false,
+      "summary": "FLUX.2 Klein 4B weights; currently not gated and Apache-2.0 licensed. The Klein 9B HuggingFace repo id was not verified this pass.",
+      "verified": { "method": "HuggingFace model API", "date": "2026-11-05" }
+    },
+    {
+      "id": "flux2-klein-recipe",
+      "title": "Official ComfyUI recipe: FLUX.2 Klein 4B / 9B",
+      "sourceKind": "official",
+      "familyLabel": ["FLUX.2 Klein"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/flux/flux-2-klein",
+      "summary": "Official guide. Verified content: FLUX.2 [Klein] is the fastest FLUX-family model, unifying text-to-image and editing; ships 4B and 9B workflows, each with Base (undistilled, for fine-tuning flexibility) and Distilled variants; the Distilled variant is a 4-step route (described as delivering end-to-end inference around one second). Documented workflow pages: 4B/9B x Text-to-Image / Image Edit / Distilled Image Edit.",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "Exact fp8 checkpoint filenames are collated in parent plan section 6 (not re-verified this pass). Never transfer a Klein distilled schedule to FLUX.2 Dev (plan section 5)."
+    },
+    {
+      "id": "flux1-kontext-hf",
+      "title": "black-forest-labs/FLUX.1-Kontext-dev weights (HuggingFace, gated) + official recipe",
+      "sourceKind": "model-author",
+      "familyLabel": ["FLUX.1 Kontext-dev"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "black-forest-labs/FLUX.1-Kontext-dev (HuggingFace)",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev",
+      "commitOrVersion": { "hfRevision": "24e9dedc4ef6", "lastModified": "2026-01-01" },
+      "license": "see repository (model card)",
+      "gated": true,
+      "docsUrls": [
+        { "url": "https://docs.comfy.org/tutorials/flux/flux-1-kontext-dev", "status": "verified 200 2026-11-05", "note": "Official ComfyUI Kontext recipe." }
+      ],
+      "summary": "FLUX.1 Kontext-dev image editing weights. No GitHub repository exists for FLUX.1-Kontext-dev (verified 404); HuggingFace is the authoritative model-author source. Editing/reference capacity must come from the documented contract, never from the family label (plan section 5).",
+      "verified": { "method": "HuggingFace model API; GitHub API 404; recipe page HTTP 200", "date": "2026-11-05" }
+    },
+    {
+      "id": "flux1-krea-hf",
+      "title": "black-forest-labs/FLUX.1-Krea-dev weights (HuggingFace, gated)",
+      "sourceKind": "model-author",
+      "familyLabel": ["FLUX.1 Krea-dev"],
+      "resourceKind": "model-weights",
+      "repositoryPath": "black-forest-labs/FLUX.1-Krea-dev (HuggingFace)",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.1-Krea-dev",
+      "commitOrVersion": { "hfRevision": "8162a9c7b05a", "lastModified": "2025-07-31" },
+      "license": "see repository (model card)",
+      "gated": true,
+      "summary": "FLUX.1 Krea-dev, the Black Forest Labs x Krea co-trained FLUX.1 dev variant. Distinct from the separate Krea 2 family (see krea-2-repo). No GitHub repository exists (verified 404); the official ComfyUI recipe URL was not located this pass (see meta.unknowns).",
+      "verified": { "method": "HuggingFace model API; GitHub API 404; candidate recipe slugs returned 404", "date": "2026-11-05" }
+    },
+    {
+      "id": "krea-2-repo",
+      "title": "krea-ai/krea-2 (GitHub, model author; RAW + Turbo weights)",
+      "sourceKind": "model-author",
+      "familyLabel": ["Krea 2 RAW", "Krea 2 Turbo"],
+      "resourceKind": "model-repository",
+      "repositoryPath": "krea-ai/krea-2",
+      "url": "https://github.com/krea-ai/krea-2",
+      "commitOrVersion": { "branch": "main", "headSha": "db3984fbc6e1", "headShaDate": "2026-07-24T15:31:15Z" },
+      "license": "Apache-2.0",
+      "weightsRepos": [
+        { "repositoryPath": "krea/Krea-2-Raw (HuggingFace)", "url": "https://huggingface.co/krea/Krea-2-Raw", "gated": true, "hfRevision": "6b0ece7fffb6", "lastModified": "2026-07-24" },
+        { "repositoryPath": "krea/Krea-2-Turbo (HuggingFace)", "url": "https://huggingface.co/krea/Krea-2-Turbo", "gated": true, "hfRevision": "98e0fe118d17", "lastModified": "2026-07-24" }
+      ],
+      "summary": "Official Krea 2 inference code. README (verified): Krea 2 RAW is the undistilled base model (README raw-inference example documents '--steps 52 --cfg 3.5'); Krea 2 Turbo is the 8-step distilled checkpoint for fast high-quality text-to-image; the two are designed to work together - train LoRAs on RAW and apply them on Turbo (official recommendation); both safetensors are on HuggingFace under the 'krea' org (gated).",
+      "verified": { "method": "GitHub REST API repo + head commit + raw README grep; HuggingFace API for both weight repos", "date": "2026-11-05" },
+      "notes": "Weights org is 'krea', not 'krea-ai' (the 'krea/krea-2' and 'krea-ai/krea-2' HuggingFace ids do not resolve as model repos; verified auth errors). Keep 'Krea 2 RAW/Turbo' labels distinct from 'FLUX.1 Krea-dev'."
+    },
+    {
+      "id": "krea-2-recipe",
+      "title": "Official ComfyUI recipe: Krea 2 (T2I and style reference)",
+      "sourceKind": "official",
+      "familyLabel": ["Krea 2 RAW", "Krea 2 Turbo"],
+      "resourceKind": "recipe",
+      "url": "https://docs.comfy.org/tutorials/image/krea/krea-2",
+      "summary": "Official recipe. Verified content: Krea 2 ships two variants - RAW (base, full-step sampling at 52 steps, no distillation, for fine-tuning/LoRA training) and Turbo (8-step distilled checkpoint); LoRAs trained on RAW apply seamlessly to Turbo; documented ComfyUI workflows include 'Krea-2 Turbo text-to-image' and 'Krea-2 Int8: Image Style Reference' (style-reference workflow with dedicated model/LoRA graph per parent plan section 5).",
+      "verified": { "method": "HTTP 200 + raw page text extraction", "date": "2026-11-05" },
+      "notes": "Style-reference LoRA filename krea2_style_reference.safetensors is collated in parent plan section 6 (not re-verified this pass). Separate exploratory T2I from style-reference and img2img roles (plan section 5)."
+    }
+  ],
+  "taskResources": [
+    {
+      "id": "ltx-2.3-model-files",
+      "projectId": "ltx-2-repo",
+      "familyLabel": "LTX-2.3",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2v", "i2v", "fl2v"],
+      "documentedFiles": [
+        { "file": "ltx-2.3-22b-dev.safetensors", "loaderFolder": "checkpoints", "verifiedPrimary": true, "note": "Linked in MODELS-LTX-2.3.md (verified)." },
+        { "file": "ltx-2.3-22b-distilled-1.1.safetensors", "loaderFolder": "checkpoints", "verifiedPrimary": false, "note": "Collated in parent plan section 6; MODELS-LTX-2.3.md verified to document distilled variants at file level." },
+        { "file": "Gemma text encoder directory (gemma-3-12b-it-qat-q4_0-unquantized per plan)", "loaderFolder": "text_encoders", "verifiedPrimary": false, "note": "MODELS-LTX-2.3.md verified to document a Gemma text encoder; exact directory name collated in plan section 6." },
+        { "file": "spatial/temporal upscalers", "loaderFolder": "latent_upscale_models", "verifiedPrimary": false, "note": "Collated in parent plan section 6." },
+        { "file": "ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors (example IC-LoRA)", "loaderFolder": "loras", "verifiedPrimary": false, "note": "Collated in parent plan section 6." }
+      ],
+      "sourceUrl": "https://github.com/Lightricks/LTX-2/blob/main/MODELS-LTX-2.3.md",
+      "exactDocumentedSettings": [],
+      "summary": "LTX-2.3 dependency record: single-checkpoint layout with Gemma text encoder, two-stage spatial/temporal upscalers, and version-matched IC-LoRAs.",
+      "caveats": "IC-LoRAs are version-matched to the base checkpoint; never infer cross-version compatibility. These records are starting points, not evidence any backend contains the files (plan section 6)."
+    },
+    {
+      "id": "ltx-2.5-model-files",
+      "projectId": "ltx-comfy-recipe-2-5",
+      "familyLabel": "LTX-2.5",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2v", "i2v", "fl2v", "dfr"],
+      "documentedFiles": [
+        { "file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Named in the official recipe (verified). int8/dev variant selection is explicit (plan section 6)." },
+        { "file": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": false, "note": "Recipe text verified as 'gemma4-12b-with-proj...'; full filename collated in parent plan section 6." },
+        { "file": "ltx-2.5-video-vae-bf16.safetensors", "loaderFolder": "vae", "verifiedPrimary": false, "note": "Collated in parent plan section 6; recipe verifies split video/audio VAE layout at description level." },
+        { "file": "ltx-2.5-audio-vae-bf16.safetensors", "loaderFolder": "vae", "verifiedPrimary": false, "note": "Collated in parent plan section 6." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-5",
+      "exactDocumentedSettings": [
+        { "label": "distilled model", "value": "recipe states the distilled model provides faster generation and native 4K HDR output", "sourceUrl": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-5", "verifiedPrimary": true }
+      ],
+      "summary": "LTX-2.5 split-layout dependency record: transformer plus Gemma 4 text encoder plus separate video and audio VAEs; add only the exact task adapter and upscaler required by the chosen graph.",
+      "caveats": "Repository is gated (auto); report required user authorization rather than bypassing it (plan section 6)."
+    },
+    {
+      "id": "ltx-2.5-ic-lora-pixel-spatial-upscaler",
+      "projectId": "ltx-hf-2-5-ic-lora-pixel-spatial-upscaler",
+      "familyLabel": "LTX-2.5 / LTX IC-LoRA adapters",
+      "resourceKind": "ic-lora-adapter",
+      "tasks": ["upscaler"],
+      "documentedFiles": [
+        { "file": "(see gated HF repository)", "loaderFolder": "latent_upscale_models / loras (per recipe graph)", "verifiedPrimary": false, "note": "Filenames live in the gated repo; not fetched this pass." }
+      ],
+      "sourceUrl": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler",
+      "exactDocumentedSettings": [],
+      "summary": "Version-matched LTX-2.5 IC-LoRA pixel spatial upscaler named by the official recipe.",
+      "caveats": "Gated repository; version-matched to LTX-2.5 only."
+    },
+    {
+      "id": "ltx-ic-lora-adapter-catalog",
+      "projectId": "ltx-docs-ic-lora-catalog",
+      "familyLabel": "LTX IC-LoRA adapters",
+      "resourceKind": "ic-lora-adapter",
+      "tasks": ["ingredients-reference", "union-control", "motion-track", "upscalers", "hdr", "layout", "restore"],
+      "documentedFiles": [
+        { "file": "(per-adapter files listed in the docs catalog and parent plan section 6)", "loaderFolder": "loras", "verifiedPrimary": false, "note": "Page is client-rendered; item list carried from parent plan section 5." }
+      ],
+      "sourceUrl": "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters",
+      "exactDocumentedSettings": [],
+      "summary": "IC-LoRA catalog: Ingredients, Union Control, Motion Track, upscalers, HDR, layout, restore and others. Each adapter needs its own recipe and adapter-version check.",
+      "caveats": "Ingredients accepts one composed sheet and exactly the two-part 'Reference sheet: ... / Generated video: ...' prompt (plan section 5). Never infer cross-version adapter compatibility (plan sections 5, 7)."
+    },
+    {
+      "id": "minimax-h3-fl2va-set",
+      "projectId": "minimax-h3-native-recipe",
+      "familyLabel": "MiniMax H3 (FL2VA)",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2v", "i2v", "fl2v"],
+      "documentedFiles": [
+        { "file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true },
+        { "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": true },
+        { "file": "minimax_h3_video_vae_int8_convrot.safetensors", "loaderFolder": "vae", "verifiedPrimary": true },
+        { "file": "minimax_h3_audio_vae_fp32.safetensors", "loaderFolder": "vae", "verifiedPrimary": true }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native",
+      "exactDocumentedSettings": [],
+      "summary": "MiniMax H3 base FL2VA checkpoint set as listed in the official ComfyUI recipe.",
+      "caveats": "Base FL2VA and Ref2VA checkpoints differ; never substitute (plan section 5). Prompting contract: local named sections, <Picture N>/<Video N>/<Audio N> bindings, first/last alignment, hosted-vs-local dialects (plan section 5; see local guide)."
+    },
+    {
+      "id": "minimax-h3-ref2va-set",
+      "projectId": "minimax-h3-native-recipe",
+      "familyLabel": "MiniMax H3 (Ref2VA)",
+      "resourceKind": "checkpoint",
+      "tasks": ["ref2v"],
+      "documentedFiles": [
+        { "file": "minimax_h3_ref2va_pruned_int8_convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Filename verified on the official recipe page." },
+        { "file": "(text encoder / VAEs shared with the FL2VA set per recipe)", "loaderFolder": "text_encoders, vae", "verifiedPrimary": false, "note": "Shared-file layout per recipe page; confirm per-graph before any dependency claim." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native",
+      "exactDocumentedSettings": [],
+      "summary": "MiniMax H3 Ref2VA checkpoint for reference-to-video (R2V) workflows; distinct checkpoint from FL2VA.",
+      "caveats": "FastH3 is not a Ref2VA route (plan section 5)."
+    },
+    {
+      "id": "h3-acceleration-loras",
+      "projectId": "minimax-h3-native-recipe",
+      "familyLabel": "MiniMax H3 (FL2VA) / MiniMax H3 (Ref2VA)",
+      "resourceKind": "lora-adapter",
+      "tasks": ["fl2v-acceleration", "ref2v-acceleration"],
+      "documentedFiles": [
+        { "file": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors", "loaderFolder": "loras", "verifiedPrimary": true, "note": "FL2V 8-step LoRA, v1.0, listed as required in the official recipe." },
+        { "file": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors", "loaderFolder": "loras", "verifiedPrimary": true, "note": "Ref2V 4-step LoRA, v0.1, listed in the official recipe." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native",
+      "exactDocumentedSettings": [
+        { "label": "step counts", "value": "FL2V turbo LoRA: 8-step; Ref2V turbo LoRA: 4-step (as named in the official recipe)", "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native", "verifiedPrimary": true }
+      ],
+      "summary": "Acceleration LoRAs documented in the official MiniMax H3 guide (community LoRA routes referenced by plan section 5, with quality caveats).",
+      "caveats": "Plan section 5: these carry quality caveats; plan section 7: add acceleration LoRAs only from the exact matching recipe, never as a bare step-count label without the accompanying sampler/scheduler/guidance contract."
+    },
+    {
+      "id": "fasth3-checkpoint",
+      "projectId": "minimax-h3-fastvideo-recipe",
+      "familyLabel": "MiniMax H3 FastVideo FastH3 (distilled)",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2v", "fl2v"],
+      "documentedFiles": [
+        { "file": "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Filename verified on the official FastH3 recipe page." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fastvideo",
+      "exactDocumentedSettings": [
+        { "label": "sampling", "value": "8 sampling steps (DMD2-distilled checkpoint by the FastVideo team; reuses H3 text encoder and base setup)", "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fastvideo", "verifiedPrimary": true }
+      ],
+      "summary": "FastH3 distilled route for text-to-video and first/last-frame image-to-video with synchronized audio.",
+      "caveats": "Documented workflows on the recipe page are text-to-video and first/last-frame only; not a Ref2VA route (plan section 5). Community (FastVideo) checkpoint documented via the official ComfyUI recipe."
+    },
+    {
+      "id": "qwen-2-1-base-set",
+      "projectId": "qwen-image-2-1-recipe",
+      "familyLabel": "Qwen-Image 2.1 (base)",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2i", "i2i", "multi_reference", "rgba", "outpaint"],
+      "documentedFiles": [
+        { "file": "qwen_image_2.1_int8_convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Loaded by base templates, lower memory." },
+        { "file": "qwen_image_2.1_bf16.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Full precision, needs more memory." },
+        { "file": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": true, "note": "Prompt-enhancement encoder for text-to-image." },
+        { "file": "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": true, "note": "Prompt-enhancement encoder for image edit." },
+        { "file": "qwen3vl_8b_int8_convrot.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": false, "note": "Collated in parent plan section 6." },
+        { "file": "qwen_image_2.1_vae_bf16.safetensors", "loaderFolder": "vae", "verifiedPrimary": false, "note": "Collated in parent plan section 6." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1",
+      "exactDocumentedSettings": [
+        { "label": "base schedule", "value": "Turbo recipe text states Turbo samples 'in 8 steps instead of 25', i.e. base = 25 steps", "sourceUrl": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1", "verifiedPrimary": true }
+      ],
+      "summary": "Qwen-Image 2.1 base dependency record with task-specific prompt-enhancement encoders. Documented task modes include image edit (remove background), reference slots in image edit, and alpha-channel output.",
+      "caveats": "For 2.1, image_1 is the edit source and later images supply content; native <image1> markers only in the matching workflow (plan section 5; see local guide). Remaining cfg/sampler values are collated in the parent plan, not re-verified this pass."
+    },
+    {
+      "id": "qwen-2-1-turbo",
+      "projectId": "qwen-image-2-1-recipe",
+      "familyLabel": "Qwen-Image 2.1 (Turbo)",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2i", "i2i"],
+      "documentedFiles": [
+        { "file": "qwen_image_2.1_turbo_int8_convrot.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Loaded by Turbo templates, lower memory." },
+        { "file": "qwen_image_2.1_turbo_bf16.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true, "note": "Turbo at full precision." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1",
+      "exactDocumentedSettings": [
+        { "label": "sampling", "value": "Turbo is a distilled checkpoint sampling in 8 steps instead of 25", "sourceUrl": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1", "verifiedPrimary": true }
+      ],
+      "summary": "Qwen-Image 2.1 Turbo distilled route; Turbo templates load the Turbo diffusion model in place of the base one and use the PE encoders.",
+      "caveats": "The official Turbo LoRA and community Lightning routes are separate faster-sampling records (documented recipe sections 'Faster sampling with Turbo LoRA' / 'Faster sampling with Lightning LoRA'); they are distinct records, not interchangeable defaults (plan section 5). ManualSigmas usage is collated in the parent plan, not re-verified this pass."
+    },
+    {
+      "id": "flux2-dev-set",
+      "projectId": "flux2-dev-recipe",
+      "familyLabel": "FLUX.2 Dev",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2i", "i2i", "multi_reference"],
+      "documentedFiles": [
+        { "file": "flux2_dev_fp8mixed.safetensors", "loaderFolder": "diffusion_models", "verifiedPrimary": true },
+        { "file": "mistral_3_small_flux2_bf16.safetensors", "loaderFolder": "text_encoders", "verifiedPrimary": true },
+        { "file": "flux2-vae.safetensors", "loaderFolder": "vae", "verifiedPrimary": true }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/flux/flux-2-dev",
+      "exactDocumentedSettings": [],
+      "summary": "FLUX.2 Dev dependency record from the official recipe.",
+      "caveats": "Separate FLUX.1 T2I/img2img/Redux/Kontext from FLUX.2 generation/editing and ordered multi-reference roles; never infer editing or reference capacity from a family label (plan section 5). Weights are gated on HuggingFace."
+    },
+    {
+      "id": "flux2-klein-variants",
+      "projectId": "flux2-klein-recipe",
+      "familyLabel": "FLUX.2 Klein",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2i", "i2i"],
+      "documentedFiles": [
+        { "file": "flux-2-klein-4b-fp8.safetensors (distilled) / flux-2-klein-base-4b-fp8.safetensors / qwen_3_4b.safetensors (per plan)", "loaderFolder": "diffusion_models, text_encoders", "verifiedPrimary": false, "note": "Filenames collated in parent plan section 6; recipe page verifies the 4B/9B Base-vs-Distilled structure." }
+      ],
+      "sourceUrl": "https://docs.comfy.org/tutorials/flux/flux-2-klein",
+      "exactDocumentedSettings": [
+        { "label": "distilled route", "value": "Klein Distilled is a 4-step route (recipe page, verified)", "sourceUrl": "https://docs.comfy.org/tutorials/flux/flux-2-klein", "verifiedPrimary": true }
+      ],
+      "summary": "FLUX.2 Klein dependency record: 4B and 9B sizes, each with Base (undistilled) and Distilled (4-step) variants; the FLUX.2-klein-4B HuggingFace repo is Apache-2.0 and currently ungated.",
+      "caveats": "Never transfer a Klein distilled schedule to FLUX.2 Dev (plan section 5)."
+    },
+    {
+      "id": "krea-2-raw-turbo",
+      "projectId": "krea-2-repo",
+      "familyLabel": "Krea 2 RAW / Krea 2 Turbo",
+      "resourceKind": "checkpoint",
+      "tasks": ["t2i", "style_reference", "lora_training"],
+      "documentedFiles": [
+        { "file": "(RAW + Turbo safetensors in gated HF repos krea/Krea-2-Raw and krea/Krea-2-Turbo)", "loaderFolder": "diffusion_models / checkpoints (per graph)", "verifiedPrimary": false, "note": "Filenames inside the gated repos were not fetched this pass; repos and gating verified via HuggingFace API." },
+        { "file": "krea2_style_reference.safetensors", "loaderFolder": "loras", "verifiedPrimary": false, "note": "Collated in parent plan section 6." }
+      ],
+      "sourceUrl": "https://github.com/krea-ai/krea-2",
+      "exactDocumentedSettings": [
+        { "label": "RAW schedule", "value": "RAW is the base model with full-step sampling at 52 steps (README example: --steps 52 --cfg 3.5 for raw inference)", "sourceUrl": "https://github.com/krea-ai/krea-2", "verifiedPrimary": true },
+        { "label": "Turbo schedule", "value": "Turbo is the 8-step distilled checkpoint", "sourceUrl": "https://docs.comfy.org/tutorials/image/krea/krea-2", "verifiedPrimary": true },
+        { "label": "LoRA compatibility", "value": "LoRAs trained on RAW apply seamlessly to Turbo (official recommendation: train on RAW, infer on Turbo)", "sourceUrl": "https://github.com/krea-ai/krea-2", "verifiedPrimary": true }
+      ],
+      "summary": "Krea 2 family dependency record: RAW (52-step base) and Turbo (8-step distilled), plus the dedicated style-reference workflow documented in the official recipe.",
+      "caveats": "Keep Krea 2 distinct from FLUX.1 Krea-dev (plan section 5). Separate exploratory T2I from style-reference and img2img roles. Both weight repos are gated."
+    },
+    {
+      "id": "comfy-agent-skill",
+      "projectId": "comfy-cli",
+      "familyLabel": "ComfyUI tooling",
+      "resourceKind": "skill",
+      "tasks": ["comfyui-domain-guidance"],
+      "documentedFiles": [
+        { "file": "comfy_cli/skills/comfy/SKILL.md", "loaderFolder": null, "verifiedPrimary": true, "note": "Path, size (77,632 bytes) and blob sha verified at comfy-cli main 5c2c18b7f459." }
+      ],
+      "sourceUrl": "https://github.com/Comfy-Org/comfy-cli/blob/main/comfy_cli/skills/comfy/SKILL.md",
+      "exactDocumentedSettings": [],
+      "summary": "Official ComfyUI agent skill (workflow-first guidance). Plan section 6: adapt with local source attribution and the application's own action constraints; register one bounded Pi custom tool around the installed comfy-cli using argument-array subprocess calls without a shell, rejecting run/lifecycle/install/arbitrary-filesystem/arbitrary-command requests.",
+      "caveats": "This skill is NOT installed in Director's Console; this index only records its existence and provenance. It is not a runnable recipe."
+    },
+    {
+      "id": "official-template-library",
+      "projectId": "workflow-templates",
+      "familyLabel": "ComfyUI templates",
+      "resourceKind": "template-library",
+      "tasks": ["t2v", "i2v", "t2i", "i2i", "editing", "style_reference"],
+      "documentedFiles": [
+        { "file": "api_*.json template files", "loaderFolder": null, "verifiedPrimary": true, "note": "Template JSON naming observed in the repository; per-family template search strings ('LTX-2.5 T2V', 'Qwen Image 2.1 Turbo') verified inside the official recipe pages." }
+      ],
+      "sourceUrl": "https://github.com/Comfy-Org/workflow_templates",
+      "exactDocumentedSettings": [],
+      "summary": "Official template library used as the version-matched starting points required by the plan (LTX distilled templates; Kontext/Klein/Krea/Qwen recipes reference it).",
+      "caveats": "Official templates are starting points, not automatically optimal (plan section 7); any adaptation must keep sourceProvenance with URL, repository path, commit/version, author, license, retrieval date (plan section 6)."
+    }
+  ]
+}

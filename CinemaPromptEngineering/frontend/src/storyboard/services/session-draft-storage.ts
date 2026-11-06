@@ -348,8 +348,43 @@ export function deleteDraft(identity: string): Promise<void> {
 }
 
 /** Clear only the active pointer; archived draft records remain untouched. */
-export function clearActiveDraftPointer(): Promise<void> {
-  return runTransaction<void>('clear active pointer', 'readwrite', (store) => {
-    store.delete(ACTIVE_POINTER_KEY);
+export async function clearActiveDraftPointer(
+  assertCurrent?: () => void,
+  shouldRestore: () => boolean = () => true,
+): Promise<void> {
+  if (!assertCurrent) {
+    return runTransaction<void>('clear active pointer', 'readwrite', store => {
+      store.delete(ACTIVE_POINTER_KEY);
+    });
+  }
+  const previous = await runTransaction<ActiveDraftPointer | null>('clear active pointer', 'readwrite', (store, setResult, abort) => {
+    const request = store.get(ACTIVE_POINTER_KEY);
+    request.onerror = () => abort(request.error);
+    request.onsuccess = () => {
+      try {
+        assertCurrent?.();
+        setResult(request.result === undefined ? null : validatePointer(request.result));
+        store.delete(ACTIVE_POINTER_KEY);
+      } catch (cause) { abort(cause); }
+    };
   });
+  try {
+    assertCurrent?.();
+  } catch (cause) {
+    if (previous && shouldRestore()) {
+      await runTransaction<void>('restore active pointer', 'readwrite', (store, _setResult, abort) => {
+        const request = store.get(ACTIVE_POINTER_KEY);
+        request.onerror = () => abort(request.error);
+        request.onsuccess = () => {
+          if (request.result !== undefined || !shouldRestore()) return;
+          const record = store.get(draftKey(previous.identity));
+          record.onerror = () => abort(record.error);
+          record.onsuccess = () => {
+            if (record.result !== undefined && shouldRestore()) store.put(previous, ACTIVE_POINTER_KEY);
+          };
+        };
+      });
+    }
+    throw cause;
+  }
 }

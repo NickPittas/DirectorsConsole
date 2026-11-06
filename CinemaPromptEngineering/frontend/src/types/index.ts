@@ -107,6 +107,8 @@ export interface GeneratePromptResponse {
   prompt: string;
   negative_prompt?: string;
   validation: ValidationResult;
+  preset_context?: Record<string, unknown> | null;
+  style_context?: Record<string, unknown> | null;
 }
 
 export interface EnumResponse {

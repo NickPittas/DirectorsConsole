@@ -12,7 +12,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from cinema_rules.schemas.common import (
     ProjectType,
@@ -38,10 +38,12 @@ from api.providers.credential_storage import (
     CredentialStorageError,
     ProviderCredentials,
     StoredSettings,
+    AgentSettingsRecord,
 )
 from api.providers.prompt_profiles import (
     EnhancementAsset,
     EnhancementContext,
+    Task,
     get_dialect,
     get_profile,
     profile_metadata,
@@ -52,17 +54,32 @@ from api.providers.enhancement_images import (
     EnhancementImage,
     ImageMode,
     format_image_context,
+    get_image_dialect,
     image_capability_metadata,
     image_native_tokens,
     resolve_image_aliases,
     validate_image_mode,
     validate_images,
 )
+from api.providers.prompt_skill_resources import (
+    PromptConditioningAdapter,
+    PromptSkillResolution,
+    PromptSkillTask,
+    prompt_skill_catalog,
+    resolve_prompt_skill,
+)
+from api.providers.standalone_prompt import (
+    StandalonePromptInput,
+    StandalonePromptPreparation,
+    prepare_standalone_prompt,
+)
 
 # Import template router
 from api.templates import router as templates_router
 # Import workflow storage router
 from api.workflow_storage import router as workflows_router
+from api.workflow_recipe_routes import router as workflow_recipes_router
+from api.prompt_guidance_routes import router as prompt_guidance_router
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +99,10 @@ app.include_router(templates_router)
 
 # Include workflow storage router (persistent filesystem storage)
 app.include_router(workflows_router)
+
+# Include the read-only curated workflow recipe catalog.
+app.include_router(workflow_recipes_router)
+app.include_router(prompt_guidance_router)
 
 # CORS for frontend
 # Desktop app - allow all origins for LAN/VPN/Tailscale access
@@ -122,6 +143,7 @@ class GeneratePromptRequest(BaseModel):
     project_type: ProjectType
     config: dict[str, Any]
     target_model: str = "generic"
+    preset_id: str | None = None
 
 
 class GeneratePromptResponse(BaseModel):
@@ -129,6 +151,8 @@ class GeneratePromptResponse(BaseModel):
     prompt: str
     negative_prompt: str | None = None
     validation: ValidationResult
+    preset_context: dict[str, Any] | None = None
+    style_context: dict[str, Any] | None = None
 
 
 class OptionsRequest(BaseModel):
@@ -155,7 +179,7 @@ async def root():
     """Root endpoint - serves frontend in Docker, health check in development."""
     from pathlib import Path as PathLib
     from fastapi.responses import FileResponse
-    
+
     # In Docker/production, serve the frontend
     static_dir = PathLib(__file__).parent.parent / "static"
     index_path = static_dir / "index.html"
@@ -275,11 +299,21 @@ async def generate_prompt(request: GeneratePromptRequest):
             config = AnimationConfig(**request.config)
             validation = engine.validate_animation(config)
             prompt = generator.generate_animation_prompt(config)
+
+        preset_context = style_context = None
+        if request.preset_id is not None:
+            preset_context, style_context = _enhancement_preset_context(
+                request.project_type,
+                request.config,
+                request.preset_id,
+            )
         
         return GeneratePromptResponse(
             prompt=prompt,
             negative_prompt=generator.get_negative_prompt(),
             validation=validation,
+            preset_context=preset_context,
+            style_context=style_context,
         )
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -2085,6 +2119,26 @@ async def update_settings(update: SettingsUpdate) -> dict[str, Any]:
     return {"success": True}
 
 
+@app.get("/agent-settings", response_model=AgentSettingsRecord)
+async def get_agent_settings() -> AgentSettingsRecord:
+    """Return the versioned non-secret harness selection and migration state."""
+    try:
+        return get_credential_storage().get_agent_settings()
+    except Exception as exc:
+        logger.exception("Failed to load agent settings")
+        raise HTTPException(status_code=500, detail="Agent settings could not be loaded.") from exc
+
+
+@app.put("/agent-settings", response_model=AgentSettingsRecord)
+async def update_agent_settings(settings: AgentSettingsRecord) -> AgentSettingsRecord:
+    """Validate and replace the versioned non-secret harness settings record."""
+    try:
+        return get_credential_storage().set_agent_settings(settings)
+    except Exception as exc:
+        logger.exception("Failed to save agent settings")
+        raise HTTPException(status_code=500, detail="Agent settings could not be saved.") from exc
+
+
 @app.post("/credentials/import")
 async def import_credentials(request: ImportRequest) -> dict[str, Any]:
     """
@@ -2272,20 +2326,71 @@ async def get_target_ai_models() -> list[TargetModelInfo]:
 # =============================================================================
 
 
-class EnhancePromptRequest(BaseModel):
-    """Request to enhance a prompt using LLM."""
+class EnhancementInput(BaseModel):
+    """Credential-free prompt inputs shared by legacy and harness enhancement."""
     user_prompt: str
-    llm_provider: str
-    llm_model: str
     target_model: str
     project_type: ProjectType
     config: dict[str, Any]
-    credentials: dict[str, Any]
     enhancement_context: EnhancementContext | None = None
     preset_id: str | None = None
     images: Any = None
     image_mode: ImageMode = "description_only"
     image_dialect: str | None = None
+    skill_model_version: str | None = None
+    skill_task: PromptSkillTask | None = None
+    conditioning_adapter: PromptConditioningAdapter | None = None
+
+
+class EnhancePromptRequest(EnhancementInput):
+    """Request to enhance a prompt using an explicitly selected LLM provider."""
+    llm_provider: str
+    llm_model: str
+    credentials: dict[str, Any]
+
+
+class CredentialFreeEnhancementInput(EnhancementInput):
+    """Reject unknown fields, including accidental provider credentials."""
+    model_config = ConfigDict(extra="forbid")
+    images: list[EnhancementImage] | None = None
+
+
+class PrepareEnhancementResponse(BaseModel):
+    """Validated prompts, task metadata, and unchanged image inputs for Pi."""
+    system_prompt: str
+    user_prompt: str
+    canonical_target_model: str
+    task: Task | None = None
+    dialect_id: str | None = None
+    enhancement_context: EnhancementContext | None = None
+    images: list[EnhancementImage] | None = None
+    images_were_supplied: bool
+    prompt_skill: PromptSkillResolution
+
+
+class ValidateEnhancementRequest(CredentialFreeEnhancementInput):
+    """Revalidate a harness result against the current exact request context."""
+    enhanced_prompt: str
+    expected_target_model: str
+    expected_task: Task | None = None
+    expected_dialect_id: str | None = None
+    expected_enhancement_context: EnhancementContext | None = None
+    expected_prompt_skill_fingerprint: str | None = None
+    truncated: bool = False
+
+
+class LegacyStandalonePromptRequest(StandalonePromptInput):
+    """Standalone enhancement through an explicitly selected direct provider."""
+    llm_provider: str = Field(min_length=1, max_length=128)
+    llm_model: str = Field(min_length=1, max_length=128)
+    credentials: dict[str, Any]
+
+
+class ValidateStandalonePromptRequest(StandalonePromptInput):
+    """Revalidate a standalone harness result against its prepared prompt."""
+    enhanced_prompt: str = Field(min_length=1, max_length=65_536)
+    expected_fingerprint: str = Field(min_length=64, max_length=64, pattern=r"[0-9a-fA-F]{64}")
+    truncated: bool = False
 
 
 class EnhancePromptResponse(BaseModel):
@@ -2304,7 +2409,14 @@ class EnhancePromptResponse(BaseModel):
 async def sanitize_enhance_validation_errors(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    if not request.url.path.endswith("/enhance-prompt"):
+    if request.url.path not in {
+        "/enhance-prompt",
+        "/prompt-enhancement/prepare",
+        "/prompt-enhancement/validate",
+        "/prompt-enhancement/standalone/prepare",
+        "/prompt-enhancement/standalone/validate",
+        "/prompt-enhancement/standalone/enhance",
+    }:
         return await request_validation_exception_handler(request, exc)
     return JSONResponse(
         status_code=422,
@@ -2318,12 +2430,14 @@ async def sanitize_enhance_validation_errors(
 
 
 def _enhancement_preset_context(
-    request: EnhancePromptRequest,
+    project_type: ProjectType,
+    config: dict[str, Any],
+    preset_id: str | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    is_live_action = request.project_type == ProjectType.LIVE_ACTION
+    is_live_action = project_type == ProjectType.LIVE_ACTION
     selected_id = (
-        request.preset_id if request.preset_id is not None else
-        request.config.get("film_preset" if is_live_action else "style_preset")
+        preset_id if preset_id is not None else
+        config.get("film_preset" if is_live_action else "style_preset")
     )
     if selected_id is None:
         return None, None
@@ -2335,7 +2449,7 @@ def _enhancement_preset_context(
     preset = expected.get(selected_id)
     if preset is None:
         if selected_id in other:
-            raise ValueError(f"Preset '{selected_id}' does not match project type '{request.project_type.value}'.")
+            raise ValueError(f"Preset '{selected_id}' does not match project type '{project_type.value}'.")
         raise ValueError(f"Unknown preset: {selected_id}")
 
     style = CINEMATOGRAPHY_STYLES.get(selected_id)
@@ -2346,7 +2460,7 @@ def _enhancement_preset_context(
 
 
 def _uploaded_enhancement_context(
-    request: EnhancePromptRequest,
+    request: EnhancementInput,
     images: list[EnhancementImage],
     target_model: str,
 ) -> tuple[EnhancementContext | None, str | None]:
@@ -2390,6 +2504,15 @@ async def get_prompt_enhancement_profiles() -> dict[str, Any]:
         "profiles": profile_metadata(),
         "image_capabilities": image_capability_metadata(),
     }
+
+
+@app.get("/prompt-enhancement/skills")
+async def get_prompt_enhancement_skills(
+    target_model: str | None = None,
+    model_version: str | None = None,
+) -> dict[str, Any]:
+    """Return the locally packaged task-skill catalog for an optional target."""
+    return prompt_skill_catalog(target_model, model_version)
 
 
 def _remove_duplicate_prompt(content: str) -> str:
@@ -2438,28 +2561,34 @@ def _remove_duplicate_prompt(content: str) -> str:
     return content
 
 
-@app.post("/enhance-prompt")
-async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse:
-    """
-    Enhance a user's prompt using an LLM with cinematic context.
-    
-    Takes a base user prompt, combines it with the current cinematic configuration,
-    and sends to the selected LLM to generate a professional prompt optimized for
-    the target image/video generation model.
-    """
-    refreshed_oauth_token: str | None = None
+class EnhancementPreparationError(ValueError):
+    """Preparation error retaining the legacy image-error boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        image_preflight_complete: bool,
+        disclose_detail: bool = False,
+    ):
+        super().__init__(message)
+        self.image_preflight_complete = image_preflight_complete
+        self.disclose_detail = disclose_detail
+
+
+class EnhancementContextLimitError(ValueError):
+    """Context size must be reported clearly even when image inputs are present."""
+
+
+def _prepare_enhancement(request: EnhancementInput) -> PrepareEnhancementResponse:
+    """Validate inputs and build the same reviewed prompt used by legacy providers."""
     image_request = request.images is not None
     image_preflight_complete = False
-    uploaded_images: list[EnhancementImage] = []
     try:
-        # Validate images, modes, and semantic context before touching credentials.
-        if image_request:
-            uploaded_images = validate_images(request.images)
+        uploaded_images = validate_images(request.images) if image_request else []
         from cinema_rules.target_models import normalize_target_model
 
-        canonical_target = (
-            normalize_target_model(request.target_model) if image_request else request.target_model
-        )
+        canonical_target = normalize_target_model(request.target_model) if image_request else request.target_model
         image_dialect = None
         native_tokens: list[str] = []
         image_context = None
@@ -2471,10 +2600,10 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             native_tokens = image_native_tokens(
                 canonical_target, image_dialect, request.image_mode, uploaded_images
             )
-        if image_request:
-            user_prompt = resolve_image_aliases(request.user_prompt, uploaded_images, native_tokens)
-        else:
-            user_prompt = request.user_prompt
+        user_prompt = (
+            resolve_image_aliases(request.user_prompt, uploaded_images, native_tokens)
+            if image_request else request.user_prompt
+        )
 
         effective_context = request.enhancement_context
         target_profile = get_profile(canonical_target)
@@ -2506,14 +2635,72 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             )
             dialect_id = target_profile["default_dialect"]
 
-        preset_context, style_context = _enhancement_preset_context(request)
-        image_preflight_complete = True
-        # Get system prompt for target model and project type.
-        # Animation projects use animation-specific prompts without camera references.
-        system_prompt = get_system_prompt(canonical_target, request.project_type.value)
+        if (
+            not image_request
+            and request.image_dialect
+            and (request.skill_model_version or request.skill_task or request.conditioning_adapter)
+        ):
+            from api.providers.system_prompts import is_image_model
+            from cinema_rules.target_models import normalize_target_model
 
-        warnings: list[str] = []
-        # Build the full prompt with cinematic context
+            if is_image_model(canonical_target):
+                image_dialect = get_image_dialect(
+                    normalize_target_model(canonical_target), request.image_dialect
+                )
+
+        inferred_skill_task: str | None = None
+        if effective_context is not None and (request.enhancement_context is not None or image_request):
+            roles = {asset.role for asset in effective_context.assets}
+            if effective_context.task == "t2v":
+                inferred_skill_task = "t2v"
+            elif effective_context.task == "i2v":
+                inferred_skill_task = (
+                    "first_last"
+                    if {"first_frame", "last_frame"}.issubset(roles)
+                    else "i2v"
+                )
+            elif effective_context.task == "ref2v" and "reference_video" not in roles:
+                inferred_skill_task = "reference"
+
+        if (
+            request.skill_task is not None
+            and request.skill_task in {"t2v", "i2v", "first_last", "reference", "v2v"}
+            and inferred_skill_task is not None
+            and request.skill_task != inferred_skill_task
+        ):
+            raise ValueError(
+                f"Selected prompt skill task '{request.skill_task}' does not match the validated media task '{inferred_skill_task}'."
+            )
+
+        skill_dialect_id = dialect_id or (image_dialect["id"] if image_dialect else None)
+        prompt_skill = resolve_prompt_skill(
+            target_model=canonical_target,
+            model_version=request.skill_model_version,
+            task=request.skill_task,
+            inferred_task=inferred_skill_task,
+            conditioning_adapter=request.conditioning_adapter,
+            dialect_id=skill_dialect_id,
+            image_mode=request.image_mode,
+            images=uploaded_images,
+            asset_roles={asset.role for asset in effective_context.assets} if effective_context else set(),
+        )
+        explicit_skill_selection = any((
+            request.skill_model_version,
+            request.skill_task,
+            request.conditioning_adapter,
+        ))
+        if explicit_skill_selection and prompt_skill.status != "available":
+            raise ValueError(prompt_skill.message or "The selected prompt skill is unavailable.")
+
+        preset_context, style_context = _enhancement_preset_context(
+            request.project_type,
+            request.config,
+            request.preset_id,
+        )
+        image_preflight_complete = True
+        system_prompt = get_system_prompt(canonical_target, request.project_type.value)
+        if prompt_skill.status == "available":
+            system_prompt = f"{system_prompt}\n\nTASK-SPECIFIC PROMPT SKILL (supplements the target guidance above):\n{prompt_skill.system_context_text}"
         full_prompt = build_enhancement_prompt(
             user_prompt,
             request.config,
@@ -2525,6 +2712,219 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
             style_context=style_context,
             image_context=image_context,
         )
+        if prompt_skill.status == "available":
+            context_bytes = len(system_prompt.encode("utf-8")) + len(full_prompt.encode("utf-8"))
+            if context_bytes > 65536:
+                raise EnhancementContextLimitError(
+                    "The prepared prompt and selected skill exceed the 64 KiB gateway context limit; shorten the request or configuration."
+                )
+        return PrepareEnhancementResponse(
+            system_prompt=system_prompt,
+            user_prompt=full_prompt,
+            canonical_target_model=canonical_target,
+            task=effective_context.task if effective_context is not None else None,
+            dialect_id=dialect_id,
+            enhancement_context=effective_context,
+            images=uploaded_images if image_request else None,
+            images_were_supplied=image_request,
+            prompt_skill=prompt_skill,
+        )
+    except ValueError as exc:
+        raise EnhancementPreparationError(
+            str(exc),
+            image_preflight_complete=image_preflight_complete,
+            disclose_detail=isinstance(exc, EnhancementContextLimitError),
+        ) from exc
+
+
+def _finalize_enhancement(
+    content: str,
+    prepared: PrepareEnhancementResponse | StandalonePromptPreparation,
+    *,
+    truncated: bool = False,
+    oauth_token: str | None = None,
+    tokens_used: int = 0,
+    model_used: str = "",
+) -> EnhancePromptResponse:
+    """Apply the existing local-H3 validation and non-H3 deduplication once."""
+    if truncated and prepared.dialect_id == "local_h3":
+        return EnhancePromptResponse(
+            success=False,
+            oauth_token=oauth_token,
+            error="The provider stopped at its output limit; the structured prompt is incomplete. Try again with a larger provider limit.",
+        )
+    if prepared.dialect_id == "local_h3" and prepared.enhancement_context is not None:
+        structure_error = validate_local_h3_output(content, prepared.enhancement_context)
+        if structure_error:
+            return EnhancePromptResponse(success=False, oauth_token=oauth_token, error=structure_error)
+    enhanced = content if prepared.dialect_id == "local_h3" else _remove_duplicate_prompt(content)
+    return EnhancePromptResponse(
+        success=True,
+        enhanced_prompt=enhanced,
+        oauth_token=oauth_token,
+        tokens_used=tokens_used,
+        model_used=model_used,
+        warnings=[],
+    )
+
+
+def _finalize_standalone_prompt(
+    content: str,
+    prepared: StandalonePromptPreparation,
+    *,
+    expected_fingerprint: str | None = None,
+    truncated: bool = False,
+    oauth_token: str | None = None,
+    tokens_used: int = 0,
+    model_used: str = "",
+) -> EnhancePromptResponse:
+    """Validate a standalone result before applying shared output rules."""
+    if expected_fingerprint is not None and expected_fingerprint.lower() != prepared.fingerprint:
+        raise HTTPException(status_code=409, detail="Standalone prompt guidance changed; run enhancement again.")
+    if not content.strip() or len(content) > 65_536:
+        raise HTTPException(status_code=400, detail="enhanced_prompt must contain 1 to 65536 characters.")
+    if truncated:
+        raise HTTPException(status_code=400, detail="Truncated standalone prompt enhancements are not accepted.")
+    if prepared.dialect_id == "local_h3" and prepared.enhancement_context is None:
+        raise HTTPException(status_code=400, detail="Standalone local H3 validation requires enhancement_context.")
+    response = _finalize_enhancement(
+        content,
+        prepared,
+        truncated=truncated,
+        oauth_token=oauth_token,
+        tokens_used=tokens_used,
+        model_used=model_used,
+    )
+    response.warnings = [*prepared.warnings, *response.warnings]
+    return response
+
+
+@app.post("/prompt-enhancement/prepare", response_model=PrepareEnhancementResponse)
+async def prepare_prompt_enhancement(request: CredentialFreeEnhancementInput) -> PrepareEnhancementResponse:
+    """Return validated prompt context for an authenticated local harness."""
+    try:
+        return _prepare_enhancement(request)
+    except EnhancementPreparationError as exc:
+        if request.images is not None and exc.image_preflight_complete and not exc.disclose_detail:
+            raise HTTPException(status_code=400, detail="Image enhancement inputs are invalid.") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/prompt-enhancement/standalone/prepare", response_model=StandalonePromptPreparation)
+async def prepare_standalone_prompt_enhancement(
+    request: StandalonePromptInput,
+) -> StandalonePromptPreparation:
+    """Return a model-specific prompt prepared without PE configuration."""
+    try:
+        prepared = prepare_standalone_prompt(request)
+        if prepared.dialect_id == "local_h3" and prepared.enhancement_context is None:
+            raise HTTPException(status_code=400, detail="Standalone local H3 enhancement requires workflow media context.")
+        return prepared
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Local prompt guidance is unavailable.") from exc
+
+
+@app.post("/prompt-enhancement/validate", response_model=EnhancePromptResponse)
+async def validate_prompt_enhancement(request: ValidateEnhancementRequest) -> EnhancePromptResponse:
+    """Rebuild current context and validate a harness result with local rules."""
+    try:
+        prepared = _prepare_enhancement(request)
+        if (
+            request.expected_target_model != prepared.canonical_target_model
+            or request.expected_task != prepared.task
+            or request.expected_dialect_id != prepared.dialect_id
+            or request.expected_enhancement_context != prepared.enhancement_context
+        ):
+            raise HTTPException(status_code=409, detail="Enhancement target or task context changed; run enhancement again.")
+        if (
+            request.expected_prompt_skill_fingerprint is not None
+            and request.expected_prompt_skill_fingerprint != prepared.prompt_skill.fingerprint
+        ):
+            raise HTTPException(status_code=409, detail="Prompt skill selection or packaged content changed; run enhancement again.")
+        return _finalize_enhancement(request.enhanced_prompt, prepared, truncated=request.truncated)
+    except EnhancementPreparationError as exc:
+        if request.images is not None and exc.image_preflight_complete and not exc.disclose_detail:
+            raise HTTPException(status_code=400, detail="Image enhancement inputs are invalid.") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/prompt-enhancement/standalone/validate", response_model=EnhancePromptResponse)
+async def validate_standalone_prompt_enhancement(
+    request: ValidateStandalonePromptRequest,
+) -> EnhancePromptResponse:
+    """Rebuild standalone prompt guidance and validate a harness result."""
+    try:
+        prepared = prepare_standalone_prompt(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Local prompt guidance is unavailable.") from exc
+    return _finalize_standalone_prompt(
+        request.enhanced_prompt,
+        prepared,
+        expected_fingerprint=request.expected_fingerprint,
+        truncated=request.truncated,
+    )
+
+
+@app.post("/prompt-enhancement/standalone/enhance", response_model=EnhancePromptResponse)
+async def enhance_standalone_prompt(request: LegacyStandalonePromptRequest) -> EnhancePromptResponse:
+    """Enhance a Console prompt without reading cinematic configuration."""
+    prepared = await prepare_standalone_prompt_enhancement(request)
+    refreshed_token: str | None = None
+    try:
+        credentials, refresh_error = await _refresh_expiring_saved_oauth(request.llm_provider, request.credentials)
+        if credentials.get("oauth_token") != request.credentials.get("oauth_token"):
+            refreshed_token = credentials.get("oauth_token")
+        if refresh_error:
+            return EnhancePromptResponse(success=False, error=refresh_error)
+        result = await llm_service.enhance_prompt(
+            user_prompt=prepared.user_prompt,
+            system_prompt=prepared.system_prompt,
+            provider=request.llm_provider,
+            model=request.llm_model,
+            credentials=LLMCredentials(
+                api_key=credentials.get("api_key"),
+                endpoint=credentials.get("endpoint"),
+                oauth_token=credentials.get("oauth_token"),
+            ),
+            output_token_budget=4096 if prepared.dialect_id == "local_h3" else None,
+        )
+        if not result.success:
+            return EnhancePromptResponse(success=False, oauth_token=refreshed_token, error=result.error)
+        current = await prepare_standalone_prompt_enhancement(request)
+        return _finalize_standalone_prompt(
+            result.content,
+            current,
+            expected_fingerprint=prepared.fingerprint,
+            truncated=result.truncated,
+            oauth_token=refreshed_token,
+            tokens_used=result.tokens_used,
+            model_used=result.model_used,
+        )
+    except HTTPException as exc:
+        if refreshed_token is not None:
+            return EnhancePromptResponse(success=False, oauth_token=refreshed_token, error=str(exc.detail))
+        raise
+    except Exception:
+        return EnhancePromptResponse(success=False, oauth_token=refreshed_token, error="Standalone prompt enhancement failed.")
+
+
+@app.post("/enhance-prompt")
+async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse:
+    """
+    Enhance a user's prompt using an LLM with cinematic context.
+
+    Takes a base user prompt, combines it with the current cinematic configuration,
+    and sends to the selected LLM to generate a professional prompt optimized for
+    the target image/video generation model.
+    """
+    refreshed_oauth_token: str | None = None
+    image_request = request.images is not None
+    try:
+        prepared = _prepare_enhancement(request)
         
         # Refresh only a matching, known-expiring saved standard OAuth token.
         # Explicitly supplied ad-hoc credentials remain untouched.
@@ -2549,45 +2949,23 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
         
         # Call LLM service
         result = await llm_service.enhance_prompt(
-            user_prompt=full_prompt,
-            system_prompt=system_prompt,
+            user_prompt=prepared.user_prompt,
+            system_prompt=prepared.system_prompt,
             provider=request.llm_provider,
             model=request.llm_model,
             credentials=creds,
-            output_token_budget=4096 if dialect_id == "local_h3" else None,
-            images=uploaded_images or None,
+            output_token_budget=4096 if prepared.dialect_id == "local_h3" else None,
+            images=prepared.images or None,
         )
 
         if result.success:
-            if result.truncated and dialect_id == "local_h3":
-                return EnhancePromptResponse(
-                    success=False,
-                    oauth_token=refreshed_oauth_token,
-                    error="The provider stopped at its output limit; the structured prompt is incomplete. Try again with a larger provider limit.",
-                )
-            if dialect_id == "local_h3" and effective_context is not None:
-                structure_error = validate_local_h3_output(result.content, effective_context)
-                if structure_error:
-                    return EnhancePromptResponse(
-                        success=False,
-                        oauth_token=refreshed_oauth_token,
-                        error=structure_error,
-                    )
-
-            # Structured local H3 output must not be paragraph-deduplicated.
-            enhanced = (
-                result.content
-                if dialect_id == "local_h3"
-                else _remove_duplicate_prompt(result.content)
-            )
-
-            return EnhancePromptResponse(
-                success=True,
-                enhanced_prompt=enhanced,
+            return _finalize_enhancement(
+                result.content,
+                prepared,
+                truncated=result.truncated,
                 oauth_token=refreshed_oauth_token,
                 tokens_used=result.tokens_used,
                 model_used=result.model_used,
-                warnings=warnings,
             )
         else:
             return EnhancePromptResponse(
@@ -2595,8 +2973,12 @@ async def enhance_prompt(request: EnhancePromptRequest) -> EnhancePromptResponse
                 oauth_token=refreshed_oauth_token,
                 error=result.error,
             )
+    except EnhancementPreparationError as exc:
+        if image_request and exc.image_preflight_complete and not exc.disclose_detail:
+            return EnhancePromptResponse(success=False, error="Image enhancement failed. Check the image and provider settings.")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
-        if image_request and image_preflight_complete:
+        if image_request:
             return EnhancePromptResponse(success=False, error="Image enhancement failed. Check the image and provider settings.")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:

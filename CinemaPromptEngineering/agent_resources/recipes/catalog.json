@@ -1,0 +1,2835 @@
+{
+  "schemaVersion": 1,
+  "recipes": [
+    {
+      "id": "ltx-2.3-distilled-t2v",
+      "title": "LTX-2.3 distilled text-to-video",
+      "summary": "Pinned official ComfyUI text-to-video graph using the LTX-2.3 FP8 dev checkpoint with the version-matched Comfy-Org distilled LoRA. Exact model artifacts and sampler schedules are recorded below.",
+      "target": {
+        "targetModel": "ltx_2.3",
+        "modelVersion": "2.3",
+        "modelVariant": "22B dev FP8 plus LTX-2.3 distilled dynamic LoRA",
+        "task": "t2v",
+        "dialectId": "ltx_native",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The source graph and every declared model artifact have pinned publisher records. Backend node schemas, advertised loader choices, installed file identities, and end-to-end execution have not been verified.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Hugging Face cardData reports other; pinned Lightricks and Comfy-Org model cards name LTX-2 Community terms, which have not been reviewed"
+      },
+      "sourceGraph": {
+        "path": "ltx-2.3-distilled-t2v/workflow.json",
+        "filename": "video_ltx2_3_t2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "7a6c13e24754c2525d176f439a4e1ce230b15d13928f6c303a62c643281a2da9",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_ltx2_3_t2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_ltx2_3_t2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05T17:41:19Z"
+        }
+      },
+      "sourceIndexRefs": {
+        "projectIds": ["workflow-templates", "ltx-2-repo", "ltx-hf-2-3"],
+        "taskResourceIds": ["official-template-library", "ltx-2.3-model-files"]
+      },
+      "applicationOverlay": {
+        "status": "no_graph_change",
+        "operations": [],
+        "note": "Keep the pinned source graph intact. Its T2V path already carries the version-matched sampler, CFG, sigma schedules, model, and adapter settings."
+      },
+      "inputBindings": [
+        {"role": "prompt", "nodeId": 266, "nodeClass": "PrimitiveStringMultiline", "widgetPath": ["widgets_values", 0], "default": "upstream example prompt", "required": true},
+        {"role": "width", "nodeId": 257, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 1280, "required": true},
+        {"role": "height", "nodeId": 258, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 720, "required": true},
+        {"role": "duration_seconds", "nodeId": 225, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 5, "required": true},
+        {"role": "fps", "nodeId": 260, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 25, "required": true},
+        {"role": "prompt_enhancement", "nodeId": 330, "nodeClass": "PrimitiveBoolean", "widgetPath": ["widgets_values", 0], "default": true, "required": false}
+      ],
+      "controlProposal": {
+        "status": "proposed_unverified",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": ["sampler", "cfg", "sigmaSchedules", "distilledLora", "modelFiles"],
+        "note": "Existing browser parser and live backend schema remain authoritative for control binding."
+      },
+      "recipeSettings": {
+        "optimization": "Version-matched distilled-LoRA workflow; no measured speed claim.",
+        "samplerPaths": [
+          {"nodeIds": [209, 219], "sampler": "euler", "cfg": 1, "stepCount": 8, "sigmas": [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]},
+          {"nodeIds": [246, 215], "sampler": "euler", "cfg": 1, "stepCount": 3, "sigmas": [0.85, 0.725, 0.4219, 0.0]}
+        ],
+        "distilledLora": {
+          "nodeId": 232,
+          "filename": "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+          "strength": 0.5
+        }
+      },
+      "requiredNodeClasses": [
+        "CFGGuider", "CLIPTextEncode", "CheckpointLoaderSimple", "ComfyMathExpression",
+        "ComfySwitchNode", "CreateVideo", "EmptyImage", "EmptyLTXVLatentVideo",
+        "KSamplerSelect", "LTXAVTextEncoderLoader", "LTXVAudioVAEDecode",
+        "LTXVAudioVAELoader", "LTXVConcatAVLatent", "LTXVConditioning",
+        "LTXVCropGuides", "LTXVEmptyLatentAudio", "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler", "LTXVPreprocess", "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader", "LoraLoader", "LoraLoaderModelOnly",
+        "ManualSigmas", "PreviewAny", "PrimitiveBoolean", "PrimitiveInt",
+        "PrimitiveStringMultiline", "RandomNoise", "ResizeImageMaskNode",
+        "SamplerCustomAdvanced", "SaveVideo", "TextGenerateLTX2Prompt", "VAEDecodeTiled"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "7a6c13e24754c2525d176f439a4e1ce230b15d13928f6c303a62c643281a2da9",
+        "required_node_classes": [
+          "CFGGuider", "CLIPTextEncode", "CheckpointLoaderSimple", "ComfyMathExpression",
+          "ComfySwitchNode", "CreateVideo", "EmptyImage", "EmptyLTXVLatentVideo",
+          "KSamplerSelect", "LTXAVTextEncoderLoader", "LTXVAudioVAEDecode",
+          "LTXVAudioVAELoader", "LTXVConcatAVLatent", "LTXVConditioning",
+          "LTXVCropGuides", "LTXVEmptyLatentAudio", "LTXVImgToVideoInplace",
+          "LTXVLatentUpsampler", "LTXVPreprocess", "LTXVSeparateAVLatent",
+          "LatentUpscaleModelLoader", "LoraLoader", "LoraLoaderModelOnly",
+          "ManualSigmas", "PreviewAny", "PrimitiveBoolean", "PrimitiveInt",
+          "PrimitiveStringMultiline", "RandomNoise", "ResizeImageMaskNode",
+          "SamplerCustomAdvanced", "SaveVideo", "TextGenerateLTX2Prompt", "VAEDecodeTiled"
+        ],
+        "dependencies": [
+          {
+            "identity": "ltx23-dev-fp8-checkpoint",
+            "filename": "ltx-2.3-22b-dev-fp8.safetensors",
+            "loader_category": "checkpoints",
+            "loader_node_class": "CheckpointLoaderSimple",
+            "loader_input": "ckpt_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d/ltx-2.3-22b-dev-fp8.safetensors",
+              "provenance": "Lightricks/LTX-2.3-fp8 at HF revision 91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (HF model card license_name; Hugging Face cardData license=other)",
+              "gated": false,
+              "sha256": "28606c5b5a06ce56f896d4dfcb20f212739e07a68fbe48e53638188449d26450",
+              "size_bytes": 29145431166
+            }
+          },
+          {
+            "identity": "ltx23-dev-fp8-audio-vae-checkpoint",
+            "filename": "ltx-2.3-22b-dev-fp8.safetensors",
+            "loader_category": "checkpoints",
+            "loader_node_class": "LTXVAudioVAELoader",
+            "loader_input": "ckpt_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d/ltx-2.3-22b-dev-fp8.safetensors",
+              "provenance": "Lightricks/LTX-2.3-fp8 at HF revision 91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (HF model card license_name; Hugging Face cardData license=other)",
+              "gated": false,
+              "sha256": "28606c5b5a06ce56f896d4dfcb20f212739e07a68fbe48e53638188449d26450",
+              "size_bytes": 29145431166
+            }
+          },
+          {
+            "identity": "ltx23-gemma3-12b-fp4-text-encoder",
+            "filename": "gemma_3_12B_it_fp4_mixed.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "LTXAVTextEncoderLoader",
+            "loader_input": "text_encoder",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/ccde4ba417d7900669fd56dd292a883cee11ff37/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
+              "provenance": "Comfy-Org/ltx-2 at HF revision ccde4ba417d7900669fd56dd292a883cee11ff37; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (pinned HF model card license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "aaca463d11e6d8d2a4bdb0d6299214c15ef78a3f73e0ef8113d5a9d0219b3f6d",
+              "size_bytes": 9447702218
+            }
+          },
+          {
+            "identity": "ltx23-dev-fp8-text-encoder-loader-checkpoint",
+            "filename": "ltx-2.3-22b-dev-fp8.safetensors",
+            "loader_category": "checkpoints",
+            "loader_node_class": "LTXAVTextEncoderLoader",
+            "loader_input": "ckpt_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d/ltx-2.3-22b-dev-fp8.safetensors",
+              "provenance": "Lightricks/LTX-2.3-fp8 at HF revision 91eda216f820e5ecb3d17dc9fe3b7cdaf56b587d; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (HF model card license_name; Hugging Face cardData license=other)",
+              "gated": false,
+              "sha256": "28606c5b5a06ce56f896d4dfcb20f212739e07a68fbe48e53638188449d26450",
+              "size_bytes": 29145431166
+            }
+          },
+          {
+            "identity": "ltx23-distilled-dynamic-lora",
+            "filename": "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+            "loader_category": "loras",
+            "loader_node_class": "LoraLoaderModelOnly",
+            "loader_input": "lora_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/ltx-2.3/resolve/f20f3a54378001e5e6d642acc84719cc78addf4b/split_files/loras/ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
+              "provenance": "Comfy-Org/ltx-2.3 at HF revision f20f3a54378001e5e6d642acc84719cc78addf4b; selected by the pinned source graph.",
+              "license": "ltx-2-community-license (pinned HF model card license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "31e0c0195fb841bf31af78e8b60858f489e87ddcea4a5239abc80943da65e3ac",
+              "size_bytes": 2741024390
+            }
+          },
+          {
+            "identity": "ltx23-spatial-upscaler-x2",
+            "filename": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            "loader_category": "latent_upscale_models",
+            "loader_node_class": "LatentUpscaleModelLoader",
+            "loader_input": "model_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/c1521179de480464f366a98a9d9b2acc4cc097b9/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+              "provenance": "Lightricks/LTX-2.3 at HF revision c1521179de480464f366a98a9d9b2acc4cc097b9; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (pinned HF model card license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "5f416311fa8172b65af67530758964708d29a317b830d689a51143b7f91913ed",
+              "size_bytes": 995743560
+            }
+          },
+          {
+            "identity": "ltx23-gemma3-12b-abliterated-lora",
+            "filename": "gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
+            "loader_category": "loras",
+            "loader_node_class": "LoraLoader",
+            "loader_input": "lora_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/ccde4ba417d7900669fd56dd292a883cee11ff37/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
+              "provenance": "Comfy-Org/ltx-2 at HF revision ccde4ba417d7900669fd56dd292a883cee11ff37; selected by the pinned source graph.",
+              "license": "ltx-2-community-license-agreement (pinned HF model card license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "87bcabeac9bec9f374232b5122d6511c2b2112d479e50176149e944b3712eb4a",
+              "size_bytes": 628203616
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {"identity": "ltx23-dev-fp8-checkpoint", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "ltx23-gemma3-12b-fp4-text-encoder", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "ltx23-distilled-dynamic-lora", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "ltx23-spatial-upscaler-x2", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "ltx23-gemma3-12b-abliterated-lora", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"}
+      ]
+    },
+    {
+      "id": "flux-2-klein-4b-distilled-t2i",
+      "title": "FLUX.2 Klein 4B distilled text-to-image",
+      "summary": "Pinned official ComfyUI text-to-image graph, with an explicit route-selection overlay that keeps only the separately wired 4-step distilled subgraph.",
+      "target": {
+        "targetModel": "flux_2_klein",
+        "modelVersion": "2 Klein",
+        "modelVariant": "4B Distilled",
+        "task": "t2i",
+        "dialectId": null,
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The selected distilled subgraph and its exact publisher artifacts are source-identified. Backend node schemas, advertised loader choices, installed file identities, and end-to-end execution have not been verified.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "flux2VaeLicenseTerms": "pinned model card names flux-1-dev-non-commercial-license; review the linked license terms"
+      },
+      "sourceGraph": {
+        "path": "flux-2-klein-4b-distilled-t2i/workflow.json",
+        "filename": "image_flux2_klein_text_to_image.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "cd4a29b0be6f71a7391f2f023e69dfc3b47d7da9f2aa215b4c8b8e17c2eea107",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/image_flux2_klein_text_to_image.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/image_flux2_klein_text_to_image.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05T17:41:19Z"
+        }
+      },
+      "sourceIndexRefs": {
+        "projectIds": ["workflow-templates", "flux2-klein-hf", "flux2-klein-recipe"],
+        "taskResourceIds": ["official-template-library", "flux2-klein-variants"]
+      },
+      "applicationOverlay": {
+        "status": "select_distilled_subgraph",
+        "selectedSubgraphId": "a67caa28-5f85-4917-8396-36004960dd30",
+        "operations": [
+          {
+            "operation": "remove_route",
+            "nodeIds": [75, 9],
+            "linkIds": [154, 155],
+            "subgraphDefinitionId": "7b34ab90-36f9-45ba-a665-71d418f0df18",
+            "expectedSubgraphName": "Text to Image (FLUX.2 Klein 4B)",
+            "reason": "This base route is independently wired from prompt node 76 through subgraph node 75 to SaveImage node 9. The distilled route remains separately wired from prompt node 76 through subgraph node 77 to SaveImage node 78."
+          },
+          {
+            "operation": "activate_route",
+            "nodeIds": [77, 78],
+            "expectedMode": 4,
+            "mode": 0,
+            "reason": "The source bypasses the distilled subgraph and its output; both must be active when selecting that route."
+          }
+        ],
+        "note": "The source artifact remains unchanged. This selects the official 4-step distilled route and does not claim a benchmark or a speedup from fewer UI nodes."
+      },
+      "inputBindings": [
+        {"role": "prompt", "nodeId": 76, "nodeClass": "PrimitiveStringMultiline", "widgetPath": ["widgets_values", 0], "default": "upstream example prompt", "required": true},
+        {"role": "width", "nodeId": 68, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 1024, "required": true},
+        {"role": "height", "nodeId": 69, "nodeClass": "PrimitiveInt", "widgetPath": ["widgets_values", 0], "default": 1024, "required": true},
+        {"role": "seed", "nodeId": 73, "nodeClass": "RandomNoise", "widgetPath": ["widgets_values", 0], "default": 432262096973490, "required": false}
+      ],
+      "controlProposal": {
+        "status": "proposed_unverified",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": ["sampler", "cfg", "stepCount", "modelFiles"],
+        "note": "Existing browser parser and live backend schema remain authoritative for control binding."
+      },
+      "recipeSettings": {
+        "optimization": "Official FLUX.2 Klein 4B distilled route; exact graph settings retained; no measured speed claim.",
+        "sampler": "euler",
+        "stepCount": 4,
+        "cfg": 1,
+        "width": 1024,
+        "height": 1024
+      },
+      "requiredNodeClasses": [
+        "CFGGuider", "CLIPLoader", "CLIPTextEncode", "ConditioningZeroOut",
+        "EmptyFlux2LatentImage", "Flux2Scheduler", "KSamplerSelect", "PrimitiveInt",
+        "PrimitiveStringMultiline", "RandomNoise", "SamplerCustomAdvanced", "SaveImage",
+        "UNETLoader", "VAEDecode", "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "cd4a29b0be6f71a7391f2f023e69dfc3b47d7da9f2aa215b4c8b8e17c2eea107",
+        "required_node_classes": [
+          "CFGGuider", "CLIPLoader", "CLIPTextEncode", "ConditioningZeroOut",
+          "EmptyFlux2LatentImage", "Flux2Scheduler", "KSamplerSelect", "PrimitiveInt",
+          "PrimitiveStringMultiline", "RandomNoise", "SamplerCustomAdvanced", "SaveImage",
+          "UNETLoader", "VAEDecode", "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "flux2-klein-4b-distilled",
+            "filename": "flux-2-klein-4b.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/5b3abca5c0dc1ecd4eaf3340868d09063fc1c965/split_files/diffusion_models/flux-2-klein-4b.safetensors",
+              "provenance": "Comfy-Org/flux2-klein at HF revision 5b3abca5c0dc1ecd4eaf3340868d09063fc1c965; exact file is selected by the distilled subgraph.",
+              "license": "Apache-2.0 (Comfy-Org repository metadata)",
+              "gated": false,
+              "sha256": "ec3d4e733a771f61c052fb4856c48b336c55eaf2c65487c2a1faeb9bbda7a343",
+              "size_bytes": 7751105712
+            }
+          },
+          {
+            "identity": "flux2-klein-qwen3-4b-text-encoder",
+            "filename": "qwen_3_4b.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/5b3abca5c0dc1ecd4eaf3340868d09063fc1c965/split_files/text_encoders/qwen_3_4b.safetensors",
+              "provenance": "Comfy-Org/flux2-klein at HF revision 5b3abca5c0dc1ecd4eaf3340868d09063fc1c965; selected by the pinned source graph.",
+              "license": "Apache-2.0 (Comfy-Org repository metadata)",
+              "gated": false,
+              "sha256": "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a",
+              "size_bytes": 8044982048
+            }
+          },
+          {
+            "identity": "flux2-vae-klein-workflow-source",
+            "filename": "flux2-vae.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/9630c1b4b6e690497ae0c19bb6b1b35d4ebedcb7/split_files/vae/flux2-vae.safetensors",
+              "provenance": "Comfy-Org/flux2-dev at HF revision 9630c1b4b6e690497ae0c19bb6b1b35d4ebedcb7; exact URL appears in the selected workflow node metadata.",
+              "license": "flux-1-dev-non-commercial-license (pinned HF model card license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5",
+              "size_bytes": 336213556
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {"identity": "flux2-klein-4b-distilled", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "flux2-klein-qwen3-4b-text-encoder", "status": "publisher_metadata_verified", "backendInstallation": "not_checked"},
+        {"identity": "flux2-vae-klein-workflow-source", "status": "publisher_file_metadata_verified", "licenseTerms": "model card name recorded; linked terms not reviewed", "backendInstallation": "not_checked"}
+      ]
+    },
+        {
+      "id": "minimax-h3-fl2va-t2v",
+      "title": "MiniMax H3 FL2VA base text-to-video",
+      "summary": "Task-specific local MiniMax H3 text-to-video on the FL2VA checkpoint. This is T2V only; it does not claim I2V, first/last, or Ref2VA support.",
+      "target": {
+        "targetModel": "minimax_h3",
+        "modelVersion": "H3",
+        "modelVariant": "FL2VA pruned INT8 ConvRot, base 20-step schedule",
+        "task": "t2v",
+        "dialectId": "local_h3",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The bounded export and application preparation path are implemented. Parent offline composition produced 18 base-only nodes, retained 20 steps, matched four advertised loader paths, and mapped all scalar controls. Browser save/attachment, installed model identity, and rendering remain unverified. The raw source JSON is unchanged.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_huggingface_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Publisher license and gate metadata recorded; terms not reviewed."
+      },
+      "sourceGraph": {
+        "path": "minimax-h3-fl2va-t2v/workflow.json",
+        "filename": "video_minimax_h3_t2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "8a5eb23b0dd2df9e99b6f7af9684e770f188feca820d241364b729e01dedf3b6",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_minimax_h3_t2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_minimax_h3_t2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05"
+        },
+        "conversionRequirement": "The pinned official UI graph contains definitions.subgraphs. Current WorkflowParser does not flatten subgraphs; a supported upstream API-format export is required before execution. The raw source JSON is preserved unchanged.",
+        "artifactNote": "workflow.json is a byte-for-byte copy of the pinned upstream artifact. Embedded mutable main URLs are superseded by the pinned dependency URLs and publisher file hashes in this catalog."
+      },
+      "sourceIndexRefs": {
+        "projectIds": [
+          "workflow-templates",
+          "minimax-h3-native-recipe",
+          "minimax-h3-hf"
+        ],
+        "taskResourceIds": [
+          "minimax-h3-fl2va-set",
+          "minimax-h3-ref2va-set",
+          "h3-acceleration-loras"
+        ]
+      },
+      "applicationOverlay": {
+        "status": "remove_disabled_turbo_branch",
+        "operations": [
+          {
+            "operation": "use_base_model",
+            "stage": "after_upstream_api_export",
+            "expectedEnabled": false,
+            "steps": 20,
+            "removedNodeIds": [
+              "140:134",
+              "140:135",
+              "140:136",
+              "140:138",
+              "140:139"
+            ]
+          }
+        ],
+        "note": "Offline clone only; preserves the source switch's originally selected false state and base 20-step route. No measured speed or acceleration claim."
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": "140:131",
+          "nodeClass": "MiniMaxH3ImageToVideo",
+          "inputName": "prompt",
+          "default": "Realistic live-action cinematic look, action movie trailer: practical film photography style, a post-rain dusk metropolis, anamorphic lens, shallow depth of field, film grain, city volumetric fog, flying-car traffic between the towers, restrained grading for a premium feel, powerful natural movement.\n\nScene overview: at dusk on a cluster of skyscrapers, the protagonist is being chased, sprinting and leaping across rooftops, jumping from one building's roof to the next with pursuers closing in behind. This is the escape sequence of an action movie trailer: every leap is life-or-death, thrilling and fluid.\n\nStoryboard (each shot a separate scene, rapid cuts, all landing on the musical beats):\n[0s-1.5s] Shot 1: high side angle: the protagonist sprinting at the roof edge, pursuers appearing in the rooftop doorway behind him, wind catching his coat.\n[1s-2.5s] Shot 2: the protagonist leaps across the gap between buildings, body stretching mid-air, towers and flying-car light trails behind him, a slight slow-motion feel.\n[2.5s-4s] Shot 3: he lands, rolls and rises, low-angle shot, tower shadows and fog behind him, he keeps running.\n[4s-5s] Shot 4: freeze: the instant he hits the edge of the next roof and launches into the jump, silhouette, holding.\n\nCamera: each shot its own angle, cuts clean and hard, no dissolves, a slight frame jitter on the jumps.\n\nAudio: wind, rapid footsteps, city ambience, low score underneath, an accent hit on each leap, the score bursting at 4s, closing the last 1s.\n\nNo text, subtitles, logos or watermarks of any kind, no animation or cartoon rendering, no overly-CG look, keep the live-action texture.",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": "140:133",
+          "nodeClass": "PrimitiveFloat",
+          "inputName": "value",
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "seed",
+          "nodeId": "140:129",
+          "nodeClass": "RandomNoise",
+          "inputName": "noise_seed",
+          "default": 757358688076805,
+          "required": false
+        },
+        {
+          "role": "aspect_ratio",
+          "nodeId": "115",
+          "nodeClass": "ResolutionSelector",
+          "inputName": "aspect_ratio",
+          "default": "16:9 (Widescreen)",
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "blocked_by_source_or_artifact_status",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "checkpoint",
+          "sampler",
+          "cfg",
+          "scheduler",
+          "sigmaSchedule",
+          "steps",
+          "lora"
+        ],
+        "note": "These four controls bind pinned upstream API-export nodes and require the bounded export path. Base checkpoint and sampling settings remain locked. The exact local_h3 T2V prompt skill applies; no hosted dialect or PE JSON is sent to CLIP."
+      },
+      "recipeSettings": {
+        "optimization": "Preserve the task-matched checkpoint and sampling contract. Prefer only a matching installed LoRA alternative listed here; no speed measurement is claimed.",
+        "sampling": {
+          "checkpointIdentity": "minimax-h3-fl2va-int8-convrot",
+          "sampler": "res_multistep",
+          "guidance": {
+            "node": "BasicGuider",
+            "cfg": null,
+            "note": "The graph has no CFG scale input; no scalar is inferred."
+          },
+          "scheduler": "simple",
+          "sigmaSchedule": {
+            "node": "BasicScheduler",
+            "explicitSigmaVector": false,
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "stepCount": 20
+          },
+          "steps": 20,
+          "lora": null
+        },
+        "artifactPinPolicy": "Dependency URLs use immutable publisher revisions and report SHA-256/size where supplied. No installation or backend availability is implied.",
+        "unsupportedTurboBranch": {
+          "status": "unsupported_artifact_mismatch",
+          "loraFilename": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+          "sourceGraphStepCount": 6,
+          "officialGuideStepCount": 8,
+          "note": "No 6-step or invented 3-step route is advertised. The promoted API export has 8 turbo steps, but this base route does not activate or resolve that branch."
+        }
+      },
+      "requiredNodeClasses": [
+        "BasicGuider",
+        "BasicScheduler",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "KSamplerSelect",
+        "MiniMaxH3ImageToVideo",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "8a5eb23b0dd2df9e99b6f7af9684e770f188feca820d241364b729e01dedf3b6",
+        "required_node_classes": [
+          "BasicGuider",
+          "BasicScheduler",
+          "CLIPLoader",
+          "ComfyMathExpression",
+          "CreateVideo",
+          "KSamplerSelect",
+          "MiniMaxH3ImageToVideo",
+          "PrimitiveFloat",
+          "PrimitiveInt",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecode",
+          "VAEDecodeAudio",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "minimax-h3-fl2va-int8-convrot",
+            "filename": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+              "size_bytes": 20970379616
+            }
+          },
+          {
+            "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+            "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+              "size_bytes": 15687142551,
+              "note": "CLIPLoader type is minimax; this artifact is not PE JSON input."
+            }
+          },
+          {
+            "identity": "minimax-h3-video-vae-int8-convrot",
+            "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+              "size_bytes": 2811065184
+            }
+          },
+          {
+            "identity": "minimax-h3-audio-vae-fp32",
+            "filename": "minimax_h3_audio_vae_fp32.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_audio_vae_fp32.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+              "size_bytes": 605254808
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "minimax-h3-fl2va-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-video-vae-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-audio-vae-fp32",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        }
+      ]
+    },
+    {
+      "id": "minimax-h3-fl2va-i2v",
+      "title": "MiniMax H3 FL2VA base image-to-video",
+      "summary": "Task-specific local MiniMax H3 image-to-video using the FL2VA checkpoint and a first-frame input. First/last-frame conditioning is a separate recipe.",
+      "target": {
+        "targetModel": "minimax_h3",
+        "modelVersion": "H3",
+        "modelVariant": "FL2VA pruned INT8 ConvRot, base 20-step schedule",
+        "task": "i2v",
+        "dialectId": "local_h3",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The bounded export and application preparation path are implemented. Parent offline composition produced 21 base-only nodes, retained 20 steps, matched four advertised loader paths and scalar controls, and preserved first_frame from node 114. The panel requires a starting-frame upload. Browser save/attachment, installed model identity, and rendering remain unverified. The raw 6-step versus promoted 8-step turbo branch and separate FL2V conflict remain unresolved; neither is activated by this base route.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_huggingface_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Publisher license and gate metadata recorded; terms not reviewed."
+      },
+      "sourceGraph": {
+        "path": "minimax-h3-fl2va-i2v/workflow.json",
+        "filename": "video_minimax_h3_i2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "34ee39544808fd3b0dc8de9df082940d4d41c3771beb80d3988c1ea5531cec0d",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_minimax_h3_i2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_minimax_h3_i2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05"
+        },
+        "conversionRequirement": "The pinned official UI graph contains definitions.subgraphs. Current WorkflowParser does not flatten subgraphs; a supported upstream API-format export is required before execution. The raw source JSON is preserved unchanged.",
+        "artifactNote": "workflow.json is a byte-for-byte copy of the pinned upstream artifact. Embedded mutable main URLs are superseded by the pinned dependency URLs and publisher file hashes in this catalog."
+      },
+      "sourceIndexRefs": {
+        "projectIds": [
+          "workflow-templates",
+          "minimax-h3-native-recipe",
+          "minimax-h3-hf"
+        ],
+        "taskResourceIds": [
+          "minimax-h3-fl2va-set",
+          "minimax-h3-ref2va-set",
+          "h3-acceleration-loras"
+        ]
+      },
+      "applicationOverlay": {
+        "status": "remove_disabled_turbo_branch",
+        "operations": [
+          {
+            "operation": "use_base_model",
+            "stage": "after_upstream_api_export",
+            "expectedEnabled": false,
+            "steps": 20,
+            "removedNodeIds": [
+              "105:121",
+              "105:122",
+              "105:123",
+              "105:125",
+              "105:126"
+            ]
+          }
+        ],
+        "note": "The cloned API export retains turbo selected=false and the base 20-step schedule, with first-frame link [\"114\",0] unchanged. The inactive optional LoRA is removed; no speed claim is made."
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": "105:104",
+          "nodeClass": "MiniMaxH3ImageToVideo",
+          "inputName": "prompt",
+          "default": "Editorial tech product film. The transparent gaming mouse from <Picture 1> in its original scene: a pitch-black studio void with a dark, subtle reflective surface, lit by dramatic duotone vibrant blue and warm neon orange rim lighting, deep soft shadow falloff into pure black. Monochromatic dark palette with electric blue and amber accents. Material motif: glowing internal metallic micro-components and glossy acrylic refractions. The environment is constant throughout.\nSHOT 1: The scene opens exactly on image 1, the mouse resting confidently on the dark surface; the blue and orange lights slowly pulse brighter, refracting deeply through the transparent acrylic shell as the camera executes a slow, deliberate push-in to reveal the intricate circuitry.\nSHOT 2: Cut to an extreme macro profile of the ridged scroll wheel and layered internal micro-components; the camera glides slowly along the side as a sharp beam of warm orange light sweeps across the metallic textures, contrasting perfectly against the deep blue ambient glow.\nSHOT 3: Cut to a low-angle beauty shot: the mouse levitates weightlessly a few centimeters above the dark reflective surface, rotating in a slow, precise orbit; the duotone lighting flares gently along the glassy transparent edges before fading slowly into a sleek silhouette.\nAudio: deep pulsing sub-bass room tone, sharp tactile mechanical clicks, a sweeping glassy whoosh on cuts, and a rising electronic swell that resolves to near-silence on the final fade. ",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": "105:111",
+          "nodeClass": "PrimitiveFloat",
+          "inputName": "value",
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "seed",
+          "nodeId": "105:15",
+          "nodeClass": "RandomNoise",
+          "inputName": "noise_seed",
+          "default": 757358688076805,
+          "required": false
+        },
+        {
+          "role": "aspect_ratio",
+          "nodeId": "115",
+          "nodeClass": "ResolutionSelector",
+          "inputName": "aspect_ratio",
+          "default": "1:1 (Square)",
+          "required": true
+        },
+        {
+          "role": "first_frame",
+          "nodeId": "105:104",
+          "nodeClass": "MiniMaxH3ImageToVideo",
+          "inputName": "first_frame",
+          "sourceImageNodeId": 114,
+          "ordinal": 1,
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "blocked_by_source_or_artifact_status",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "checkpoint",
+          "sampler",
+          "cfg",
+          "scheduler",
+          "sigmaSchedule",
+          "steps",
+          "lora"
+        ],
+        "note": "The starting-frame media binding requires a panel upload; the sample LoadImage filename is not selected as user media.",
+        "bindingFormat": "Node IDs target the pinned upstream API export and are usable only through a future verified export path."
+      },
+      "recipeSettings": {
+        "optimization": "Preserve the task-matched checkpoint and sampling contract. Prefer only a matching installed LoRA alternative listed here; no speed measurement is claimed.",
+        "sampling": {
+          "checkpointIdentity": "minimax-h3-fl2va-int8-convrot",
+          "sampler": "res_multistep",
+          "guidance": {
+            "node": "BasicGuider",
+            "cfg": null,
+            "note": "The graph has no CFG scale input; no scalar is inferred."
+          },
+          "scheduler": "simple",
+          "sigmaSchedule": {
+            "node": "BasicScheduler",
+            "explicitSigmaVector": false,
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "stepCount": 20
+          },
+          "steps": 20,
+          "lora": null
+        },
+        "artifactPinPolicy": "Dependency URLs use immutable publisher revisions and report SHA-256/size where supplied. No installation or backend availability is implied.",
+        "unsupportedTurboBranch": {
+          "status": "unsupported_artifact_mismatch",
+          "loraFilename": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+          "sourceGraphStepCount": 6,
+          "officialGuideStepCount": 8
+        }
+      },
+      "requiredNodeClasses": [
+        "BasicGuider",
+        "BasicScheduler",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "GetImageSize",
+        "ImageScaleToTotalPixels",
+        "KSamplerSelect",
+        "LoadImage",
+        "MiniMaxH3ImageToVideo",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "34ee39544808fd3b0dc8de9df082940d4d41c3771beb80d3988c1ea5531cec0d",
+        "required_node_classes": [
+          "BasicGuider",
+          "BasicScheduler",
+          "CLIPLoader",
+          "ComfyMathExpression",
+          "CreateVideo",
+          "GetImageSize",
+          "ImageScaleToTotalPixels",
+          "KSamplerSelect",
+          "LoadImage",
+          "MiniMaxH3ImageToVideo",
+          "PrimitiveFloat",
+          "PrimitiveInt",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecode",
+          "VAEDecodeAudio",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "minimax-h3-fl2va-int8-convrot",
+            "filename": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+              "size_bytes": 20970379616
+            }
+          },
+          {
+            "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+            "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+              "size_bytes": 15687142551,
+              "note": "CLIPLoader type is minimax; this artifact is not PE JSON input."
+            }
+          },
+          {
+            "identity": "minimax-h3-video-vae-int8-convrot",
+            "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+              "size_bytes": 2811065184
+            }
+          },
+          {
+            "identity": "minimax-h3-audio-vae-fp32",
+            "filename": "minimax_h3_audio_vae_fp32.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_audio_vae_fp32.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+              "size_bytes": 605254808
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "minimax-h3-fl2va-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-video-vae-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-audio-vae-fp32",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        }
+      ]
+    },
+    {
+      "id": "minimax-h3-fl2va-fl2v",
+      "title": "MiniMax H3 FL2VA first-and-last-frame video",
+      "summary": "Task-specific local MiniMax H3 first/last-frame video on the FL2VA checkpoint. The official 8-step LoRA alternative is recorded but blocked by the pinned graph’s 6-step branch.",
+      "target": {
+        "targetModel": "minimax_h3",
+        "modelVersion": "H3",
+        "modelVariant": "FL2VA pruned INT8 ConvRot, base 20-step schedule",
+        "task": "first_last",
+        "dialectId": "local_h3",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "unsupported_artifact_mismatch_requires_supported_export",
+      "readiness": "not_verified",
+      "statusReason": "The pinned official UI graph contains definitions.subgraphs. Current WorkflowParser does not flatten subgraphs; a supported upstream API-format export is required before execution. The raw source JSON is preserved unchanged. Source graph exposes first_frame and last_frame, but its turbo branch is 6 steps while the official guide says 8. Do not apply the turbo toggle or advertise execution until Comfy-Org supplies a supported, matching export.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_huggingface_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Publisher license and gate metadata recorded; terms not reviewed."
+      },
+      "sourceGraph": {
+        "path": "minimax-h3-fl2va-fl2v/workflow.json",
+        "filename": "video_minimax_h3_i2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "34ee39544808fd3b0dc8de9df082940d4d41c3771beb80d3988c1ea5531cec0d",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_minimax_h3_i2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_minimax_h3_i2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05"
+        },
+        "conversionRequirement": "The pinned official UI graph contains definitions.subgraphs. Current WorkflowParser does not flatten subgraphs; a supported upstream API-format export is required before execution. The raw source JSON is preserved unchanged.",
+        "artifactNote": "workflow.json is a byte-for-byte copy of the pinned upstream artifact. Embedded mutable main URLs are superseded by the pinned dependency URLs and publisher file hashes in this catalog."
+      },
+      "sourceIndexRefs": {
+        "projectIds": [
+          "workflow-templates",
+          "minimax-h3-native-recipe",
+          "minimax-h3-hf"
+        ],
+        "taskResourceIds": [
+          "minimax-h3-fl2va-set",
+          "minimax-h3-ref2va-set",
+          "h3-acceleration-loras"
+        ]
+      },
+      "applicationOverlay": {
+        "status": "blocked_by_subgraph_and_step_mismatch",
+        "operations": [
+          {
+            "operation": "bind_media_role",
+            "subgraphNodeId": 105,
+            "inputName": "first_frame",
+            "role": "first_frame"
+          },
+          {
+            "operation": "bind_media_role",
+            "subgraphNodeId": 105,
+            "inputName": "last_frame",
+            "role": "last_frame"
+          }
+        ],
+        "note": "Semantic overlay only; no graph edits are applied to workflow.json."
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "subgraphDefinitionId": "4c314f31-ecda-4b08-ae98-faaba1bf613f",
+          "sourceNodeId": 104,
+          "nodeClass": "MiniMaxH3ImageToVideo",
+          "inputName": "prompt",
+          "required": true
+        },
+        {
+          "role": "first_frame",
+          "sourceNodeId": 105,
+          "nodeClass": "4c314f31-ecda-4b08-ae98-faaba1bf613f",
+          "inputName": "first_frame",
+          "sourceImageNodeId": 114,
+          "required": true
+        },
+        {
+          "role": "last_frame",
+          "sourceNodeId": 105,
+          "nodeClass": "4c314f31-ecda-4b08-ae98-faaba1bf613f",
+          "inputName": "last_frame",
+          "required": true
+        },
+        {
+          "role": "width",
+          "sourceNodeId": 115,
+          "nodeClass": "ResolutionSelector",
+          "outputIndex": 0,
+          "required": true
+        },
+        {
+          "role": "height",
+          "sourceNodeId": 115,
+          "nodeClass": "ResolutionSelector",
+          "outputIndex": 1,
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "subgraphDefinitionId": "4c314f31-ecda-4b08-ae98-faaba1bf613f",
+          "sourceNodeId": 111,
+          "nodeClass": "PrimitiveFloat",
+          "widgetPath": [
+            "widgets_values",
+            0
+          ],
+          "default": 2,
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "blocked_by_source_or_artifact_status",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "checkpoint",
+          "sampler",
+          "cfg",
+          "scheduler",
+          "sigmaSchedule",
+          "steps",
+          "lora"
+        ],
+        "note": "Exact local_h3 first_last prompting applies. The acceleration alternative is visible as unsupported because the pinned graph selects 6, not 8, steps."
+      },
+      "recipeSettings": {
+        "optimization": "Preserve the task-matched checkpoint and sampling contract. Prefer only a matching installed LoRA alternative listed here; no speed measurement is claimed.",
+        "sampling": {
+          "checkpointIdentity": "minimax-h3-fl2va-int8-convrot",
+          "sampler": "res_multistep",
+          "guidance": {
+            "node": "BasicGuider",
+            "cfg": null,
+            "note": "The graph has no CFG scale input; no scalar is inferred."
+          },
+          "scheduler": "simple",
+          "sigmaSchedule": {
+            "node": "BasicScheduler",
+            "explicitSigmaVector": false,
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "stepCount": 20
+          },
+          "steps": 20,
+          "lora": null
+        },
+        "artifactPinPolicy": "Dependency URLs use immutable publisher revisions and report SHA-256/size where supplied. No installation or backend availability is implied.",
+        "optimizationAlternatives": [
+          {
+            "id": "fl2v-lightning-lora-8step-v1",
+            "task": "first_last",
+            "status": "unsupported_artifact_mismatch_requires_supported_export",
+            "checkpointIdentity": "minimax-h3-fl2va-int8-convrot",
+            "lora": {
+              "identity": "minimax-h3-fl2v-turbo-8step-v1-comfyui-bf16",
+              "filename": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+              "loader_category": "loras",
+              "loader_node_class": "LoraLoaderModelOnly",
+              "loader_input": "lora_name",
+              "source": {
+                "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/30f485ed874aa44c8183348ad361c5eabad318da/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                "provenance": "lightx2v/Minimax-h3-Turbo at Hugging Face revision 30f485ed874aa44c8183348ad361c5eabad318da; publisher file metadata read 2026-11-05.",
+                "license": "not declared in LightX2V metadata; Comfy-Org mirror with same SHA-256 reports minimax-h3-community-license-agreement; terms not reviewed",
+                "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                "gated": false,
+                "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+                "size_bytes": 1956193000,
+                "note": "LightX2V metadata does not declare a license. Comfy-Org mirror has the same SHA-256 and size and reports the H3 community license; terms not reviewed.",
+                "mirror": {
+                  "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                  "revision": "54472221d27c695fca9621b0c3ed52f06c4af707",
+                  "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+                  "size_bytes": 1956193000
+                }
+              },
+              "strengthModel": 1.0
+            },
+            "sampler": "res_multistep",
+            "guidance": {
+              "node": "BasicGuider",
+              "cfg": null,
+              "note": "No CFG input in the source graph."
+            },
+            "scheduler": "simple",
+            "sigmaSchedule": {
+              "node": "BasicScheduler",
+              "explicitSigmaVector": false,
+              "scheduler": "simple",
+              "denoise": 1.0,
+              "stepCount": 8
+            },
+            "steps": 8,
+            "sourceGraphObservedSteps": 6,
+            "officialDocumentedSteps": 8,
+            "applicationOverlay": {
+              "status": "not_applied",
+              "operations": [
+                {
+                  "operation": "set_subgraph_widget",
+                  "subgraphDefinitionId": "4c314f31-ecda-4b08-ae98-faaba1bf613f",
+                  "sourceNodeId": 126,
+                  "widgetPath": [
+                    "widgets_values",
+                    0
+                  ],
+                  "value": true
+                }
+              ],
+              "note": "Would select the source turbo branch, but that branch is 6 steps. Keep it disabled until a supported export and matching graph are available."
+            },
+            "qualityCaveat": "Official guide reports slightly softer motion/audio in turbo mode.",
+            "dependencies": [
+              {
+                "identity": "minimax-h3-fl2v-turbo-8step-v1-comfyui-bf16",
+                "filename": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                "loader_category": "loras",
+                "loader_node_class": "LoraLoaderModelOnly",
+                "loader_input": "lora_name",
+                "source": {
+                  "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/30f485ed874aa44c8183348ad361c5eabad318da/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                  "provenance": "lightx2v/Minimax-h3-Turbo at Hugging Face revision 30f485ed874aa44c8183348ad361c5eabad318da; publisher file metadata read 2026-11-05.",
+                  "license": "not declared in LightX2V metadata; Comfy-Org mirror with same SHA-256 reports minimax-h3-community-license-agreement; terms not reviewed",
+                  "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                  "gated": false,
+                  "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+                  "size_bytes": 1956193000,
+                  "note": "LightX2V metadata does not declare a license. Comfy-Org mirror has the same SHA-256 and size and reports the H3 community license; terms not reviewed.",
+                  "mirror": {
+                    "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                    "revision": "54472221d27c695fca9621b0c3ed52f06c4af707",
+                    "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+                    "size_bytes": 1956193000
+                  }
+                }
+              }
+            ],
+            "noThreeStepRoute": true
+          }
+        ],
+        "noThreeStepRoute": true
+      },
+      "requiredNodeClasses": [
+        "BasicGuider",
+        "BasicScheduler",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "CreateVideo",
+        "GetImageSize",
+        "ImageScaleToTotalPixels",
+        "KSamplerSelect",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "MiniMaxH3ImageToVideo",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "34ee39544808fd3b0dc8de9df082940d4d41c3771beb80d3988c1ea5531cec0d",
+        "required_node_classes": [
+          "BasicGuider",
+          "BasicScheduler",
+          "CLIPLoader",
+          "ComfyMathExpression",
+          "ComfySwitchNode",
+          "CreateVideo",
+          "GetImageSize",
+          "ImageScaleToTotalPixels",
+          "KSamplerSelect",
+          "LoadImage",
+          "LoraLoaderModelOnly",
+          "MiniMaxH3ImageToVideo",
+          "PrimitiveBoolean",
+          "PrimitiveFloat",
+          "PrimitiveInt",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecode",
+          "VAEDecodeAudio",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "minimax-h3-fl2va-int8-convrot",
+            "filename": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+              "size_bytes": 20970379616
+            }
+          },
+          {
+            "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+            "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+              "size_bytes": 15687142551,
+              "note": "CLIPLoader type is minimax; this artifact is not PE JSON input."
+            }
+          },
+          {
+            "identity": "minimax-h3-video-vae-int8-convrot",
+            "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+              "size_bytes": 2811065184
+            }
+          },
+          {
+            "identity": "minimax-h3-audio-vae-fp32",
+            "filename": "minimax_h3_audio_vae_fp32.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_audio_vae_fp32.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+              "size_bytes": 605254808
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "minimax-h3-fl2va-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-video-vae-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-audio-vae-fp32",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        }
+      ]
+    },
+    {
+      "id": "minimax-h3-ref2va-reference",
+      "title": "MiniMax H3 Ref2VA reference-to-video",
+      "summary": "Task-specific local MiniMax H3 reference-to-video using the distinct Ref2VA checkpoint. This is not an FL2VA graph and is not universal H3 reference support.",
+      "target": {
+        "targetModel": "minimax_h3",
+        "modelVersion": "H3",
+        "modelVariant": "Ref2VA pruned INT8 ConvRot, base 20-step schedule",
+        "task": "reference",
+        "dialectId": "local_h3",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The pinned official graph is a plain UI workflow with no subgraphs and uses the existing graph-format normalization path. Source and artifact metadata are verified; selected-backend schemas, loader options, installed files, and execution are not.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "verified_at_immutable_huggingface_revisions",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Publisher license and gate metadata recorded; terms not reviewed."
+      },
+      "sourceGraph": {
+        "path": "minimax-h3-ref2va-reference/workflow.json",
+        "filename": "video_minimax_h3_r2v.json",
+        "format": "comfyui-ui-workflow",
+        "sha256": "8e18770e0fb1dac4f05b0faa47fd0cb54474fbbbd7a14e640bbd5451a9afc694",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_minimax_h3_r2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_minimax_h3_r2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-05"
+        },
+        "conversionRequirement": "Use existing WorkflowParser.normalizeWorkflowFormat/buildWorkflow; this source has no definitions.subgraphs. Backend node schemas and loader choices remain unverified.",
+        "artifactNote": "workflow.json is a byte-for-byte copy of the pinned upstream artifact. Embedded mutable main URLs are superseded by the pinned dependency URLs and publisher file hashes in this catalog."
+      },
+      "sourceIndexRefs": {
+        "projectIds": [
+          "workflow-templates",
+          "minimax-h3-native-recipe",
+          "minimax-h3-hf",
+          "minimax-h3-fastvideo-recipe"
+        ],
+        "taskResourceIds": [
+          "minimax-h3-fl2va-set",
+          "minimax-h3-ref2va-set",
+          "h3-acceleration-loras"
+        ]
+      },
+      "applicationOverlay": {
+        "status": "proposed_unverified",
+        "operations": [],
+        "optimizationAlternatives": [
+          {
+            "status": "proposed_unverified",
+            "operations": [
+              {
+                "operation": "set_widget",
+                "nodeId": 146,
+                "nodeClass": "PrimitiveBoolean",
+                "widgetPath": [
+                  "widgets_values",
+                  0
+                ],
+                "value": true
+              }
+            ],
+            "note": "The existing source toggle selects the listed LoRA and 4-step branch without changing the Ref2VA checkpoint."
+          }
+        ],
+        "note": "Copied upstream Ref2VA graph is unchanged; the optional 4-step overlay only enables its existing LoRA branch."
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": 138,
+          "nodeClass": "PrimitiveStringMultiline",
+          "widgetPath": [
+            "widgets_values",
+            0
+          ],
+          "required": true
+        },
+        {
+          "role": "reference_image",
+          "ordinal": 1,
+          "nodeId": 136,
+          "nodeClass": "MiniMaxH3ReferenceToVideo",
+          "inputName": "ref_images.ref_image_0",
+          "sourceImageNodeId": 137,
+          "required": true
+        },
+        {
+          "role": "reference_image",
+          "ordinal": 2,
+          "nodeId": 136,
+          "nodeClass": "MiniMaxH3ReferenceToVideo",
+          "inputName": "ref_images.ref_image_1",
+          "sourceImageNodeId": 139,
+          "required": false
+        },
+        {
+          "role": "reference_video",
+          "ordinal": 1,
+          "nodeId": 136,
+          "nodeClass": "MiniMaxH3ReferenceToVideo",
+          "inputName": "ref_videos.ref_video_0",
+          "required": false
+        },
+        {
+          "role": "reference_audio",
+          "ordinal": 1,
+          "nodeId": 136,
+          "nodeClass": "MiniMaxH3ReferenceToVideo",
+          "inputName": "ref_audios.ref_audio_0",
+          "required": false
+        },
+      {
+        "role": "aspect_ratio",
+          "nodeId": 115,
+          "nodeClass": "ResolutionSelector",
+        "inputName": "aspect_ratio",
+        "widgetPath": [
+          "widgets_values",
+          0
+        ],
+        "default": "16:9 (Widescreen)",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": 132,
+          "nodeClass": "PrimitiveFloat",
+          "widgetPath": [
+            "widgets_values",
+            0
+          ],
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "reference_image_size",
+          "nodeId": 136,
+          "nodeClass": "MiniMaxH3ReferenceToVideo",
+          "widgetPath": [
+            "widgets_values",
+            4
+          ],
+          "default": "match",
+          "required": false
+        }
+      ],
+      "controlProposal": {
+        "status": "proposed_unverified",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "checkpoint",
+          "sampler",
+          "cfg",
+          "scheduler",
+          "sigmaSchedule",
+          "steps",
+          "lora"
+        ],
+        "note": "Preserve per-kind reference ordinals and use only caller-confirmed assets. The exact local_h3 reference skill applies; do not send hosted dialect or PE JSON to CLIP."
+      },
+      "recipeSettings": {
+        "optimization": "Preserve the task-matched checkpoint and sampling contract. Prefer only a matching installed LoRA alternative listed here; no speed measurement is claimed.",
+        "sampling": {
+          "checkpointIdentity": "minimax-h3-ref2va-int8-convrot",
+          "sampler": "res_multistep",
+          "guidance": {
+            "node": "BasicGuider",
+            "cfg": null,
+            "note": "The graph has no CFG scale input; no scalar is inferred."
+          },
+          "scheduler": "simple",
+          "sigmaSchedule": {
+            "node": "BasicScheduler",
+            "explicitSigmaVector": false,
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "stepCount": 20
+          },
+          "steps": 20,
+          "lora": null
+        },
+        "artifactPinPolicy": "Dependency URLs use immutable publisher revisions and report SHA-256/size where supplied. No installation or backend availability is implied.",
+        "optimizationAlternatives": [
+          {
+            "id": "ref2v-lightning-lora-4step-v01",
+            "task": "reference",
+            "status": "source_verified_runtime_unverified",
+            "checkpointIdentity": "minimax-h3-ref2va-int8-convrot",
+            "lora": {
+              "identity": "minimax-h3-ref2v-turbo-4step-v01-comfyui-bf16",
+              "filename": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+              "loader_category": "loras",
+              "loader_node_class": "LoraLoaderModelOnly",
+              "loader_input": "lora_name",
+              "source": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+                "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+                "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                "gated": false,
+                "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
+                "size_bytes": 1956193000
+              },
+              "strengthModel": 1.0
+            },
+            "sampler": "res_multistep",
+            "guidance": {
+              "node": "BasicGuider",
+              "cfg": null,
+              "note": "No CFG input in the source graph."
+            },
+            "scheduler": "simple",
+            "sigmaSchedule": {
+              "node": "BasicScheduler",
+              "explicitSigmaVector": false,
+              "scheduler": "simple",
+              "denoise": 1.0,
+              "stepCount": 4
+            },
+            "steps": 4,
+            "applicationOverlay": {
+              "status": "proposed_unverified",
+              "operations": [
+                {
+                  "operation": "set_widget",
+                  "nodeId": 146,
+                  "nodeClass": "PrimitiveBoolean",
+                  "widgetPath": [
+                    "widgets_values",
+                    0
+                  ],
+                  "value": true
+                }
+              ],
+              "note": "The existing source toggle selects the listed LoRA and 4-step branch without changing the Ref2VA checkpoint."
+            },
+            "qualityCaveat": "Official guide reports weaker reference/audio fidelity in turbo mode; prefer 20–25 steps when references must hold.",
+            "dependencies": [
+              {
+                "identity": "minimax-h3-ref2v-turbo-4step-v01-comfyui-bf16",
+                "filename": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                "loader_category": "loras",
+                "loader_node_class": "LoraLoaderModelOnly",
+                "loader_input": "lora_name",
+                "source": {
+                  "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                  "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+                  "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+                  "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                  "gated": false,
+                  "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
+                  "size_bytes": 1956193000
+                }
+              }
+            ]
+          }
+        ],
+        "referenceInputLimit": "The graph exposes three image slots, one video slot, one paired-video-audio slot, and one standalone-audio slot; broader family limits are not claimed.",
+        "checkpointSeparation": {
+          "identity": "fastvideo-fasth3-8step-v2-int8-convrot",
+          "kind": "separate DMD2-distilled checkpoint; not a LoRA",
+          "filename": "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+          "loader_category": "diffusion_models",
+          "source": {
+            "url": "https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy/resolve/ec1e3aa374a91c57b0b94a1623b7e657c0498cf2/diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+            "provenance": "FastVideo/FastVideo-FastH3-Comfy at Hugging Face revision ec1e3aa374a91c57b0b94a1623b7e657c0498cf2; publisher file metadata read 2026-11-05.",
+            "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+            "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+            "gated": false,
+            "sha256": "0922785978dc9bfe1adf27d8b291b0ca763f9f165f882e6cb297c72fbb6deda8",
+            "size_bytes": 22128378696,
+            "note": "Separate DMD2-distilled checkpoint, not a LoRA."
+          },
+          "documentedTasks": [
+            "t2v",
+            "first_last"
+          ],
+          "notForTask": "reference",
+          "sampler": "res_multistep",
+          "scheduler": "simple",
+          "steps": 8,
+          "sigmaShift": {
+            "video": 10,
+            "audio": 3
+          },
+          "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fastvideo",
+          "notPartOfThisRecipeDependencies": true,
+          "note": "Never substitute FastH3 for Ref2VA based on the shared family name. It is separate from both LoRA routes."
+        },
+        "noThreeStepRoute": true
+      },
+      "requiredNodeClasses": [
+        "BasicGuider",
+        "BasicScheduler",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "CreateVideo",
+        "KSamplerSelect",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "MiniMaxH3ReferenceToVideo",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "8e18770e0fb1dac4f05b0faa47fd0cb54474fbbbd7a14e640bbd5451a9afc694",
+        "required_node_classes": [
+          "BasicGuider",
+          "BasicScheduler",
+          "CLIPLoader",
+          "ComfyMathExpression",
+          "ComfySwitchNode",
+          "CreateVideo",
+          "KSamplerSelect",
+          "LoadImage",
+          "LoraLoaderModelOnly",
+          "MiniMaxH3ReferenceToVideo",
+          "PrimitiveBoolean",
+          "PrimitiveFloat",
+          "PrimitiveInt",
+          "PrimitiveStringMultiline",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecode",
+          "VAEDecodeAudio",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "minimax-h3-ref2va-int8-convrot",
+            "filename": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
+              "size_bytes": 20970379616
+            }
+          },
+          {
+            "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+            "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+              "size_bytes": 15687142551,
+              "note": "CLIPLoader type is minimax; this artifact is not PE JSON input."
+            }
+          },
+          {
+            "identity": "minimax-h3-video-vae-int8-convrot",
+            "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+              "size_bytes": 2811065184
+            }
+          },
+          {
+            "identity": "minimax-h3-audio-vae-fp32",
+            "filename": "minimax_h3_audio_vae_fp32.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_audio_vae_fp32.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+              "size_bytes": 605254808
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "minimax-h3-ref2va-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-video-vae-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-audio-vae-fp32",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        }
+      ]
+    },
+    {
+      "id": "ltx-2.5-distilled-t2v",
+      "title": "LTX-2.5 distilled text-to-video",
+      "summary": "Pinned official ComfyUI text-to-video graph using the LTX-2.5 22B distilled Comfy INT8 ConvRot transformer. Artifact metadata, exact backend binding, and runtime readiness remain unverified.",
+      "target": {
+        "targetModel": "ltx_2.5",
+        "modelVersion": "2.5",
+        "modelVariant": "22B distilled Comfy INT8 ConvRot",
+        "task": "t2v",
+        "dialectId": "ltx_native",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The bounded upstream export, disabled-enhancer removal, exact advertised loader binding, and application preparation path are implemented. Parent offline composition and parser checks passed against the observed Kamino schema. Browser save/attachment, model identity and metadata, license review, and rendering remain unverified.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "unknown",
+        "nodeSchema": "parent_offline_transformation_observed_40_api_nodes; live_schema_not_verified",
+        "backendLoaderOptions": "parent_offline_loader_matching_observed_five_unique_advertisements; live_backend_binding_not_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Model artifact licenses are unknown and unreviewed; workflow template repository license is MIT."
+      },
+      "sourceGraph": {
+        "path": "ltx-2.5-distilled-t2v/workflow.json",
+        "filename": "video_ltx2_5_t2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "eb1a415a467a2ef1ea63cdb4e79a35315e29c971b1e4f7646ed149a2971fdbd7",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_ltx2_5_t2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_ltx2_5_t2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-06"
+        }
+      },
+      "sourceIndexRefs": {
+        "projectIds": [],
+        "taskResourceIds": []
+      },
+      "applicationOverlay": {
+        "status": "remove_disabled_prompt_enhancer",
+        "operations": [
+          {
+            "operation": "use_original_prompt",
+            "stage": "after_upstream_api_export",
+            "expectedEnabled": false,
+            "removedNodeIds": [
+              "405:382",
+              "405:383",
+              "405:380",
+              "405:393"
+            ],
+            "promptNodeId": "405:376",
+            "consumers": [
+              {
+                "nodeId": "405:364",
+                "inputName": "text"
+              },
+              {
+                "nodeId": "405:381",
+                "inputName": "source"
+              }
+            ]
+          }
+        ],
+        "note": "The original cached UI graph is unchanged. This bounded post-export optimization uses the existing false selection and requires pinned branch checks; no speed proof is claimed. Source SHA and graph fingerprint stay pinned to the original recipe; dependency planning describes this overlay route, while the raw graph still has six model records.",
+        "omittedDependencies": [
+          {
+            "identity": "ltx25-gemma4-e2b-int8-enhancer",
+            "filename": "gemma4_e2b_it_int8_convrot.safetensors",
+            "reason": "Disabled enhancer removed only in bounded post-export route; original source still contains this node."
+          }
+        ]
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": "405:376",
+          "nodeClass": "PrimitiveStringMultiline",
+          "inputName": "value",
+          "default": "A close-up of an Arctic hunter's face, his eyes fixed straight ahead, narrowed and locked on something in the far distance directly in front of him, frost dusting his dark beard, one hand slowly reaching toward the rifle slung on his back, his breath quick and shallow, the tension in his jaw visible even through the scarf. The camera slowly pulls back, revealing him crouched at the edge of an ice floe, and ahead of him, in the exact direction of his gaze, a polar bear moves slowly along a distant ice ridge, its pale coat blending into the white haze, facing toward him. The pull-back continues, the hunter in the foreground and the bear far ahead, the two facing each other across the dark lead of water, the ice field and grey sea stretching around them, seabirds wheeling overhead. Midway through the shot, the complete title \"LTX-2.5\" fades in large and centered, plain white sans-serif letters with wide spacing, no glow, no shadow, no ornament, the lettering large enough to dominate the center of the frame, emerging slowly from the mist, resting still and blending into the snowscape, with the hunter and the bear still visible below on either side of the title, staying through the end of the scene. The wind carries the distant sound of shifting ice, a single low growl rolling across the water.",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": "405:362",
+          "nodeClass": "PrimitiveInt",
+          "inputName": "value",
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "fps",
+          "nodeId": "405:361",
+          "nodeClass": "PrimitiveInt",
+          "inputName": "value",
+          "default": 24,
+          "required": true
+        },
+        {
+          "role": "seed",
+          "nodeId": "405:339",
+          "nodeClass": "RandomNoise",
+          "inputName": "noise_seed",
+          "default": 558811532553686,
+          "required": false
+        },
+        {
+          "role": "aspect_ratio",
+          "nodeId": "409",
+          "nodeClass": "ResolutionSelector",
+          "inputName": "aspect_ratio",
+          "default": "16:9 (Widescreen)",
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "proposed_unverified",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "sampler",
+          "guiderWidgetValues",
+          "sigmaSchedules",
+          "modelFiles"
+        ],
+        "note": "Binding targets describe the pinned upstream API-export form in the parent offline export; they cannot be applied against the raw UI graph. No handler changes are included."
+      },
+      "recipeSettings": {
+        "promptEnhancement": {
+          "enabled": false,
+          "locked": true,
+          "mode": "original_prompt_passthrough"
+        },
+        "optimization": "Distilled transformer route; no measured speed or hardware-fit claim.",
+        "samplerPaths": [
+          {
+            "nodeIds": [
+              344,
+              352
+            ],
+            "sampler": "euler_ancestral",
+            "guiderNodeId": 388,
+            "guiderWidgetValues": [
+              1,
+              1
+            ],
+            "sigmaNodeId": 404,
+            "intervalCount": 8,
+            "sigmas": [
+              1,
+              0.99375,
+              0.9875,
+              0.98125,
+              0.975,
+              0.909375,
+              0.725,
+              0.421875,
+              0
+            ]
+          },
+          {
+            "nodeIds": [
+              368,
+              341
+            ],
+            "sampler": "euler_ancestral",
+            "guiderNodeId": 391,
+            "guiderWidgetValues": [
+              1,
+              1
+            ],
+            "sigmaNodeId": 395,
+            "intervalCount": 3,
+            "sigmas": [
+              0.85,
+              0.725,
+              0.4219,
+              0
+            ]
+          }
+        ]
+      },
+      "requiredNodeClasses": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "EmptyLTXVLatentVideo",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVDualCFGGuider",
+        "LTXVEmptyLatentAudio",
+        "LTXVLatentUpsampler",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "ManualSigmas",
+        "PreviewAny",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "eb1a415a467a2ef1ea63cdb4e79a35315e29c971b1e4f7646ed149a2971fdbd7",
+        "required_node_classes": [
+          "CLIPLoader",
+          "CLIPTextEncode",
+          "ComfyMathExpression",
+          "CreateVideo",
+          "EmptyLTXVLatentVideo",
+          "KSamplerSelect",
+          "LTXVAudioVAEDecode",
+          "LTXVConcatAVLatent",
+          "LTXVConditioning",
+          "LTXVDualCFGGuider",
+          "LTXVEmptyLatentAudio",
+          "LTXVLatentUpsampler",
+          "LTXVSeparateAVLatent",
+          "LatentUpscaleModelLoader",
+          "ManualSigmas",
+          "PreviewAny",
+          "PrimitiveInt",
+          "PrimitiveStringMultiline",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecodeTiled",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "ltx25-spatial-upscaler",
+            "filename": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+            "loader_category": "latent_upscale_models",
+            "loader_node_class": "LatentUpscaleModelLoader",
+            "loader_input": "model_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 371 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-distilled-transformer-int8",
+            "filename": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 384 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-video-vae",
+            "filename": "ltx-2.5-video-vae-bf16.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-bf16.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 385 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-audio-vae",
+            "filename": "ltx-2.5-audio-vae-bf16.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 386 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-gemma4-12b-int8",
+            "filename": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 387 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "ltx25-spatial-upscaler",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-distilled-transformer-int8",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-video-vae",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-audio-vae",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-gemma4-12b-int8",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        }
+      ]
+    },
+    {
+      "id": "minimax-fasth3-t2v",
+      "title": "MiniMax H3 FastVideo FastH3 8-step T2V",
+      "summary": "Task-specific local MiniMax H3 text-to-video using the separate FastVideo FastH3 8-step V2 INT8 ConvRot DMD2-distilled checkpoint.",
+      "target": {
+        "targetModel": "minimax_h3",
+        "modelVersion": "H3",
+        "modelVariant": "FastVideo FastH3 8-step V2 INT8 ConvRot",
+        "task": "t2v",
+        "dialectId": "local_h3",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The bounded upstream export, exact FastVideo V2 binding and application preparation path are implemented. Parent offline composition preserved the 20-node 8-step route, matched four advertised model paths, and mapped all four controls with matching defaults and browser/gateway hashes. Browser save/attachment, installed model identity, hardware behavior and rendering remain unverified.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "previously_recorded_at_immutable_huggingface_revision",
+        "offlineConversion": "parent_supplied_20_node_upstream_api_export_observed",
+        "nodeSchema": "not_live_verified",
+        "backendLoaderOptions": "not_live_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Pinned publisher license and gate metadata were recorded previously; terms were not reviewed and metadata is not permission."
+      },
+      "sourceGraph": {
+        "path": "minimax-fasth3-t2v/workflow.json",
+        "filename": "video_fastvideo_fasth3_t2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "size_bytes": 60008,
+        "sha256": "416fdaf93f35e90c41afc531f05fbfd234ff55c61bd99f643527b2204324da62",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_fastvideo_fasth3_t2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_fastvideo_fasth3_t2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-06"
+        },
+        "conversionRequirement": "The raw official UI graph contains subgraphs and must pass through the pinned upstream exporter and fixed FastH3 binder. The source is preserved unchanged; direct raw-UI preparation remains blocked. Application integration is implemented, while live browser and render acceptance remain pending.",
+        "artifactNote": "workflow.json is the cached 60,008-byte official source artifact at the pinned upstream commit; its raw SHA-256 is recorded above."
+      },
+      "sourceIndexRefs": {
+        "projectIds": [
+          "minimax-h3-fastvideo-recipe"
+        ],
+        "taskResourceIds": []
+      },
+      "applicationOverlay": {
+        "status": "no_graph_change",
+        "operations": [],
+        "note": "The original official FastH3 source graph is preserved; no graph pruning, LoRA overlay, or checkpoint substitution is applied."
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": "105:104",
+          "nodeClass": "MiniMaxH3ImageToVideo",
+          "inputName": "prompt",
+          "default": "integrated_multimodal_description: [Shot 1] Cinematic, a wide-angle shot filmed from an extreme low-angle, worm's-eye perspective. In the extreme foreground of the square frame, a massive tan suede work boot features a thick, chunky brown rubber sole and tightly laced brown shoelaces, rendered slightly out of focus. Above the boot, a young adult man wears loose-fitting, olive green cargo pants, an unbuttoned dark navy blue heavy-cotton overshirt, and a tan baseball cap. He has a serious expression, looking directly down into the lens. Behind him, a modern skyscraper made of reflective glass panels stretches into an overcast, pale grey sky. Large, bold, white typography reading \"STREETWEAR\" bursts into the frame, positioned seamlessly between the man's back and the skyscraper, creating a three-dimensional interlaced title sequence effect. The man lowers his raised foot, and the massive tan boot descends rapidly, striking the pavement. He then raises both hands to adjust his cap's brim. The camera pushes in slowly, intensifying the visual scale of the figure and the floating text. [Shot 2] At 00:02.100, the camera cuts to a medium shot from a slightly elevated low-angle vantage point. The man from Shot 1 now stands fully planted on the ground against the sheer glass facade of the skyscraper. Fast-paced, neon-yellow text reading \"VOL. 1\" flashes rapidly in the extreme foreground, momentarily overlapping his navy jacket. He drops his hands and executes a sharp, forceful turn of his shoulders to the right, striking a dynamic, angular pose. His jacket flares out, revealing a neutral-toned t-shirt underneath. His gaze shifts away from the camera, looking off into the distance. The camera arcs right at a medium speed, tracking his rotation and capturing the shifting reflections of the city on the glass building behind him. [Shot 3] At 00:03.600, the camera cuts to a wide tracking shot positioned just above the pavement level. The man from Shot 1 strides purposefully forward along the grey concrete sidewalk. Clean, white typography reading \"AVAILABLE NOW\" scrolls vertically down the right side of the frame, weaving behind his swinging right arm to maintain the interlaced text aesthetic. The focus is directed toward the lower half of his body, highlighting the movement of his olive green cargo pants as they wrinkle dynamically. His heavy tan boots stomp rhythmically on the concrete. The camera pulls out at a fast speed, maintaining a constant distance just ahead of his advancing boots while the vertical grid lines of the skyscraper blur in the background.\noverall_soundscape: A faint, continuous urban hum of distant city traffic provides a subtle ambient baseline. A loud, resonant thud is heard prominently in the foreground as the heavy tan boot strikes the concrete pavement, followed by the crisp, audible rustle of thick cotton and denim as the man adjusts his cap. When the shot changes, a sharp, distinct swish of heavy fabric accompanies his sudden shoulder rotation. Finally, a rhythmic series of heavy, pronounced footsteps—thick rubber soles slapping firmly against the concrete—dominates the foreground, accompanied by the continuous, rough rustling of cargo pants.\nnon_diegetic_music: Electronic bass music, fast tempo, featuring a heavy, rhythmic drum machine beat, deep synthesizer drones, and sudden aggressive bass drops with no melodic swell.",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": "105:111",
+          "nodeClass": "PrimitiveFloat",
+          "inputName": "value",
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "seed",
+          "nodeId": "105:15",
+          "nodeClass": "RandomNoise",
+          "inputName": "noise_seed",
+          "default": 631153434041465,
+          "required": false
+        },
+        {
+          "role": "aspect_ratio",
+          "nodeId": "143",
+          "nodeClass": "ResolutionSelector",
+          "inputName": "aspect_ratio",
+          "default": "1:1 (Square)",
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "blocked_by_source_or_artifact_status",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "checkpoint",
+          "sampler",
+          "steps",
+          "sigmaShift",
+          "attention",
+          "modelFiles"
+        ],
+        "note": "These four bindings use the supplied pinned upstream API export as a future bounded path. The exported prompt is only a sample default; the application binder must supply the user prompt. Keep the checkpoint, sampler, steps, sigma shift, attention settings, and model files locked while binder, application, and runtime integration remain pending."
+      },
+      "recipeSettings": {
+        "optimization": "FastH3 is a separate DMD2-distilled checkpoint, not a LoRA. The official guide documents a quality tradeoff; no measured speed or hardware fit is claimed.",
+        "sampling": {
+          "checkpointIdentity": "fastvideo-fasth3-8step-v2-int8-convrot",
+          "sampler": "res_multistep",
+          "samplerNodeId": "105:17",
+          "guidance": {
+            "node": "BasicGuider",
+            "nodeId": "105:16",
+            "cfg": null,
+            "note": "BasicGuider has no scalar CFG input; no CFG value or control is inferred."
+          },
+          "scheduler": "simple",
+          "sigmaSchedule": {
+            "node": "BasicScheduler",
+            "nodeId": "105:9",
+            "explicitSigmaVector": false,
+            "scheduler": "simple",
+            "denoise": 1,
+            "stepCount": 8
+          },
+          "steps": 8,
+          "lora": null
+        },
+        "sigmaShift": {
+          "node": "MiniMaxH3SigmaShift",
+          "nodeId": "105:148",
+          "shift_video": 10,
+          "shift_audio": 3
+        },
+        "attention": {
+          "modelAttentionBackend": {
+            "node": "ModelAttentionBackend",
+            "nodeId": "105:128",
+            "attention": "comfy kitchen attention"
+          },
+          "blockSparseAttention": {
+            "node": "BlockSparseAttention",
+            "nodeId": "105:127",
+            "selection": "vsa",
+            "selection.keep_percent": 10,
+            "start_percent": 0.2,
+            "end_percent": 1,
+            "dense_blocks": "",
+            "min_tokens": 12288,
+            "extra_tokens": 256,
+            "sink_conditioning": "exact_kv_and_rows",
+            "verbose": false
+          }
+        },
+        "artifactPinPolicy": "Dependency URLs use immutable publisher revisions and report SHA-256/size where supplied. No installation or backend availability is implied.",
+        "checkpointSeparation": {
+          "identity": "fastvideo-fasth3-8step-v2-int8-convrot",
+          "kind": "separate DMD2-distilled checkpoint; not a LoRA",
+          "filename": "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+          "loader_category": "diffusion_models",
+          "source": {
+            "url": "https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy/resolve/ec1e3aa374a91c57b0b94a1623b7e657c0498cf2/diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+            "provenance": "FastVideo/FastVideo-FastH3-Comfy at Hugging Face revision ec1e3aa374a91c57b0b94a1623b7e657c0498cf2; publisher file metadata read 2026-11-05.",
+            "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+            "gated": false,
+            "sha256": "0922785978dc9bfe1adf27d8b291b0ca763f9f165f882e6cb297c72fbb6deda8",
+            "size_bytes": 22128378696
+          },
+          "sourceUrl": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fastvideo",
+          "note": "Separate DMD2-distilled checkpoint, not a LoRA; used directly without an overlay or checkpoint substitution. Publisher-advertised basename is source evidence, not installed-file identity."
+        }
+      },
+      "requiredNodeClasses": [
+        "BasicGuider",
+        "BasicScheduler",
+        "BlockSparseAttention",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "KSamplerSelect",
+        "MiniMaxH3ImageToVideo",
+        "MiniMaxH3SigmaShift",
+        "ModelAttentionBackend",
+        "PrimitiveFloat",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "416fdaf93f35e90c41afc531f05fbfd234ff55c61bd99f643527b2204324da62",
+        "required_node_classes": [
+          "BasicGuider",
+          "BasicScheduler",
+          "BlockSparseAttention",
+          "CLIPLoader",
+          "ComfyMathExpression",
+          "CreateVideo",
+          "KSamplerSelect",
+          "MiniMaxH3ImageToVideo",
+          "MiniMaxH3SigmaShift",
+          "ModelAttentionBackend",
+          "PrimitiveFloat",
+          "RandomNoise",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecode",
+          "VAEDecodeAudio",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "fastvideo-fasth3-8step-v2-int8-convrot",
+            "filename": "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy/resolve/ec1e3aa374a91c57b0b94a1623b7e657c0498cf2/diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+              "provenance": "FastVideo/FastVideo-FastH3-Comfy at Hugging Face revision ec1e3aa374a91c57b0b94a1623b7e657c0498cf2; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "gated": false,
+              "sha256": "0922785978dc9bfe1adf27d8b291b0ca763f9f165f882e6cb297c72fbb6deda8",
+              "size_bytes": 22128378696
+            }
+          },
+          {
+            "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+            "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+              "size_bytes": 15687142551,
+              "note": "CLIPLoader type is minimax; this artifact is not PE JSON input."
+            }
+          },
+          {
+            "identity": "minimax-h3-video-vae-int8-convrot",
+            "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
+              "size_bytes": 2811065184
+            }
+          },
+          {
+            "identity": "minimax-h3-audio-vae-fp32",
+            "filename": "minimax_h3_audio_vae_fp32.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/54472221d27c695fca9621b0c3ed52f06c4af707/vae/minimax_h3_audio_vae_fp32.safetensors",
+              "provenance": "Comfy-Org/MiniMax-H3 at Hugging Face revision 54472221d27c695fca9621b0c3ed52f06c4af707; publisher file metadata read 2026-11-05.",
+              "license": "minimax-h3-community-license-agreement (cardData license_name; cardData license=other)",
+              "licenseUrl": "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+              "gated": false,
+              "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+              "size_bytes": 605254808
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "fastvideo-fasth3-8step-v2-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "Publisher metadata was previously recorded; terms were not reviewed and metadata is not permission.",
+          "note": "The advertised basename is source evidence, not installed model identity."
+        },
+        {
+          "identity": "minimax-h3-qwen3vl-32b-nvfp4-awq",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-video-vae-int8-convrot",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        },
+        {
+          "identity": "minimax-h3-audio-vae-fp32",
+          "status": "publisher_file_metadata_verified",
+          "publisherGated": false,
+          "backendInstallation": "not_checked",
+          "licenseTerms": "metadata recorded; terms not reviewed"
+        }
+      ]
+    },
+    {
+      "id": "ltx-2.5-distilled-i2v",
+      "title": "LTX-2.5 distilled image-to-video",
+      "summary": "Pinned official LTX-2.5 distilled image-to-video graph with integrated bounded API export, disabled-enhancer removal, five advertised-loader bindings and six panel controls. Execution and installed model identity remain unverified.",
+      "target": {
+        "targetModel": "ltx_2.5",
+        "modelVersion": "2.5",
+        "modelVariant": "22B distilled Comfy INT8 ConvRot",
+        "task": "i2v",
+        "dialectId": "ltx_native",
+        "conditioningAdapter": null
+      },
+      "supportStatus": "source_verified_runtime_unverified",
+      "readiness": "not_verified",
+      "statusReason": "The pinned offline export and post-export cleanup/binding are integrated for this exact source hash. Prepare it through the registered workflow preparation tool with a fresh selected-backend schema. Browser attachment and rendering remain unverified; installed file identities are not checked.",
+      "verification": {
+        "sourceGraph": "verified_at_immutable_commit",
+        "modelArtifactMetadata": "unknown",
+        "nodeSchema": "parent_offline_conversion_observed_50_api_nodes; application_integration_not_verified",
+        "backendLoaderOptions": "not_verified",
+        "installedModelIdentity": "not_checked",
+        "execution": "not_run",
+        "gpuBenchmark": "not_run",
+        "licenseTerms": "Model artifact licenses are unknown and unreviewed; workflow template repository license is MIT."
+      },
+      "sourceGraph": {
+        "path": "ltx-2.5-distilled-i2v/workflow.json",
+        "filename": "video_ltx2_5_i2v.json",
+        "format": "comfyui-ui-workflow-with-subgraphs",
+        "sha256": "03b136ba0ad752c1e91e496a23fa4f4826ef881777d591dc9129c459922e7dac",
+        "origin": {
+          "kind": "official",
+          "repository": "Comfy-Org/workflow_templates",
+          "commit": "cd0fcd08bc84a242f6073c5440d85a3f0eb817a9",
+          "path": "templates/video_ltx2_5_i2v.json",
+          "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/templates/video_ltx2_5_i2v.json",
+          "author": "Comfy-Org",
+          "license": "MIT",
+          "licenseUrl": "https://github.com/Comfy-Org/workflow_templates/blob/cd0fcd08bc84a242f6073c5440d85a3f0eb817a9/LICENSE",
+          "retrievedAt": "2026-11-06"
+        }
+      },
+      "sourceIndexRefs": {
+        "projectIds": [],
+        "taskResourceIds": []
+      },
+      "applicationOverlay": {
+        "status": "remove_disabled_prompt_enhancer",
+        "operations": [
+          {
+            "operation": "use_original_prompt",
+            "stage": "after_upstream_api_export",
+            "expectedEnabled": false,
+            "removedNodeIds": [
+              "398:382",
+              "398:383",
+              "398:380",
+              "398:393"
+            ],
+            "promptNodeId": "398:376",
+            "consumers": [
+              {
+                "nodeId": "398:364",
+                "inputName": "text"
+              },
+              {
+                "nodeId": "398:381",
+                "inputName": "source"
+              }
+            ]
+          }
+        ],
+        "note": "The original cached UI graph is unchanged. The post-export path removes the disabled enhancer branch (source root prompt_enhance=false); no speed or hardware-fit claim is made. The parent offline export contains 50 API nodes; integration and rendering remain unverified. The raw graph still contains six model records, including the optional enhancer.",
+        "omittedDependencies": [
+          {
+            "identity": "ltx25-gemma4-e2b-int8-enhancer",
+            "filename": "gemma4_e2b_it_int8_convrot.safetensors",
+            "reason": "Disabled enhancer removed only in bounded post-export route; original source still contains this node."
+          }
+        ]
+      },
+      "inputBindings": [
+        {
+          "role": "prompt",
+          "nodeId": "398:376",
+          "nodeClass": "PrimitiveStringMultiline",
+          "inputName": "value",
+          "default": "Use the provided start image as the first frame. The cybernetic figure slowly turns his head to the right, his glowing blue eyes scanning the horizon, mechanical joints in his neck whirring faintly. The camera follows his gaze, panning across the rooftop to reveal the city beyond: a river of light winding between dark towers, a flying vehicle gliding past between the buildings, its lights streaking. He watches it pass, then his eyes narrow slightly. The camera settles on his profile against the city glow, distant hover traffic humming, wind gusting across the rooftop. No text, no black frames.",
+          "required": true
+        },
+        {
+          "role": "duration_seconds",
+          "nodeId": "398:362",
+          "nodeClass": "PrimitiveInt",
+          "inputName": "value",
+          "default": 5,
+          "required": true
+        },
+        {
+          "role": "fps",
+          "nodeId": "398:361",
+          "nodeClass": "PrimitiveInt",
+          "inputName": "value",
+          "default": 24,
+          "required": true
+        },
+        {
+          "role": "seed",
+          "nodeId": "398:339",
+          "nodeClass": "RandomNoise",
+          "inputName": "noise_seed",
+          "default": 875362541677469,
+          "required": false
+        },
+        {
+          "role": "aspect_ratio",
+          "nodeId": "403",
+          "nodeClass": "ResolutionSelector",
+          "inputName": "aspect_ratio",
+          "default": "16:9 (Widescreen)",
+          "required": true
+        },
+        {
+          "role": "first_frame",
+          "nodeId": "395",
+          "nodeClass": "LoadImage",
+          "inputName": "image",
+          "sourceImageNodeId": 395,
+          "ordinal": 1,
+          "required": true
+        }
+      ],
+      "controlProposal": {
+        "status": "proposed_unverified",
+        "controls": "inputBindings",
+        "lockedRecipeSettings": [
+          "sampler",
+          "guiderWidgetValues",
+          "sigmaSchedules",
+          "modelFiles"
+        ],
+        "note": "The promoted first_frame input requires a panel upload or generated asset: the captured workflow only references an example filename and contains no image bytes. Binding targets describe the pinned upstream API-export form in the parent offline export; they cannot be applied to the raw UI graph. No handler changes are included."
+      },
+      "recipeSettings": {
+        "promptEnhancement": {
+          "enabled": false,
+          "locked": true,
+          "mode": "original_prompt_passthrough"
+        },
+        "optimization": "Distilled transformer route; no measured speed or hardware-fit claim.",
+        "samplerPaths": [
+          {
+            "nodeIds": [
+              344,
+              352
+            ],
+            "sampler": "euler_ancestral",
+            "guiderNodeId": 388,
+            "guiderWidgetValues": [
+              1,
+              1
+            ],
+            "sigmaNodeId": 397,
+            "intervalCount": 8,
+            "sigmas": [
+              1.0,
+              0.99375,
+              0.9875,
+              0.98125,
+              0.975,
+              0.909375,
+              0.725,
+              0.421875,
+              0.0
+            ]
+          },
+          {
+            "nodeIds": [
+              368,
+              341
+            ],
+            "sampler": "euler_ancestral",
+            "guiderNodeId": 391,
+            "guiderWidgetValues": [
+              1,
+              1
+            ],
+            "sigmaNodeId": 396,
+            "intervalCount": 3,
+            "sigmas": [
+              0.85,
+              0.725,
+              0.4219,
+              0.0
+            ]
+          }
+        ]
+      },
+      "requiredNodeClasses": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "EmptyLTXVLatentVideo",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVDualCFGGuider",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "ManualSigmas",
+        "PreviewAny",
+        "PrimitiveBoolean",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImageMaskNode",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader"
+      ],
+      "dependencyPlanRequest": {
+        "graph_fingerprint": "03b136ba0ad752c1e91e496a23fa4f4826ef881777d591dc9129c459922e7dac",
+        "required_node_classes": [
+          "CLIPLoader",
+          "CLIPTextEncode",
+          "ComfyMathExpression",
+          "CreateVideo",
+          "EmptyLTXVLatentVideo",
+          "KSamplerSelect",
+          "LTXVAudioVAEDecode",
+          "LTXVConcatAVLatent",
+          "LTXVConditioning",
+          "LTXVDualCFGGuider",
+          "LTXVEmptyLatentAudio",
+          "LTXVImgToVideoInplace",
+          "LTXVLatentUpsampler",
+          "LTXVPreprocess",
+          "LTXVSeparateAVLatent",
+          "LatentUpscaleModelLoader",
+          "LoadImage",
+          "ManualSigmas",
+          "PreviewAny",
+          "PrimitiveBoolean",
+          "PrimitiveInt",
+          "PrimitiveStringMultiline",
+          "RandomNoise",
+          "ResizeImageMaskNode",
+          "ResolutionSelector",
+          "SamplerCustomAdvanced",
+          "SaveVideo",
+          "UNETLoader",
+          "VAEDecodeTiled",
+          "VAELoader"
+        ],
+        "dependencies": [
+          {
+            "identity": "ltx25-spatial-upscaler",
+            "filename": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+            "loader_category": "latent_upscale_models",
+            "loader_node_class": "LatentUpscaleModelLoader",
+            "loader_input": "model_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 371 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-distilled-transformer-int8",
+            "filename": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+            "loader_category": "diffusion_models",
+            "loader_node_class": "UNETLoader",
+            "loader_input": "unet_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 384 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-video-vae",
+            "filename": "ltx-2.5-video-vae-bf16.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-bf16.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 385 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-audio-vae",
+            "filename": "ltx-2.5-audio-vae-bf16.safetensors",
+            "loader_category": "vae",
+            "loader_node_class": "VAELoader",
+            "loader_input": "vae_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 386 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          },
+          {
+            "identity": "ltx25-gemma4-12b-int8",
+            "filename": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+            "loader_category": "text_encoders",
+            "loader_node_class": "CLIPLoader",
+            "loader_input": "clip_name",
+            "source": {
+              "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+              "provenance": "Pinned Comfy-Org/workflow_templates source graph node 387 properties.models entry. This URL uses the mutable main branch; artifact publisher metadata, file identity, and license are unverified."
+            }
+          }
+        ]
+      },
+      "dependencyVerification": [
+        {
+          "identity": "ltx25-spatial-upscaler",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-distilled-transformer-int8",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-video-vae",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-audio-vae",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        },
+        {
+          "identity": "ltx25-gemma4-12b-int8",
+          "status": "publisher_metadata_unverified",
+          "backendInstallation": "not_checked"
+        }
+      ]
+    }
+  ]
+}

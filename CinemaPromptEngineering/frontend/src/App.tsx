@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react';
 import { CinemaPromptEngineering } from './CinemaPromptEngineering';
 import { useCinemaStore } from './store';
 import { StoryboardUI } from './StoryboardUI';
-import { GalleryUI } from './gallery';
+import { GalleryWorkspace } from './gallery/GalleryWorkspace';
+import { AgentChatPanel } from './components/agent/AgentChatPanel';
+import { mountWorkspaceApplicationBridge } from './services/workspace-agent-bridge';
+import { dispatchWorkspaceApplicationAction } from './services/workspace-agent-actions';
+import { getAgentExecutionFingerprint, getCurrentPiSessionRef } from './services/agent-gateway-client';
+import { beginApplicationAction, getActiveWorkspaceUserRequest, getAgentConversationScopeKey, registerAgentSurfaceContext, settleApplicationAction } from './services/agent-conversations';
+import type { WorkspaceActionResult } from './services/workspace-agent-contracts';
 import { projectManager } from './storyboard/services/project-manager';
 import {
   installSessionFlushHandlers,
@@ -23,7 +29,7 @@ const isOAuthCallback = window.location.pathname.includes('/oauth/callback') ||
                          window.location.search.includes('code=') ||
                          window.location.search.includes('error=');
 
-type TabId = 'cinema' | 'storyboard' | 'gallery';
+type TabId = 'cinema' | 'storyboard' | 'gallery' | 'agent';
 
 interface Tab {
   id: TabId;
@@ -62,14 +68,42 @@ function DirectorsConsole({ initialDraft, initialTab, recoveryStatus }: {
   initialTab: TabId;
   recoveryStatus: RecoveryStatus;
 }) {
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
-  const [galleryProject, setGalleryProject] = useState(() => projectManager.getProject());
-  const [projectRevision, setProjectRevision] = useState(0);
-  const [isProjectLoading, setIsProjectLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab === 'agent' ? 'storyboard' : initialTab);
+  const [isAgentVisible, setIsAgentVisible] = useState(true);
 
-  useEffect(() => projectManager.subscribe((settings) => {
-    setGalleryProject(settings);
-    setProjectRevision((revision) => revision + 1);
+  useEffect(() => registerAgentSurfaceContext('workspace', () => ({
+    projectIdentity: null,
+    statusNote: null,
+    getRevision: () => 'workspace',
+  })), []);
+
+  useEffect(() => mountWorkspaceApplicationBridge(async (message, signal) => {
+    const request = getActiveWorkspaceUserRequest();
+    const fingerprint = getAgentExecutionFingerprint('workspace');
+    const isCurrent = () => Boolean(request
+      && getActiveWorkspaceUserRequest()?.turnId === request.turnId
+      && getCurrentPiSessionRef('workspace')?.sessionId === message.sessionId
+      && getAgentExecutionFingerprint('workspace') === fingerprint);
+    const feedId = beginApplicationAction(message.command);
+    let result: WorkspaceActionResult;
+    try {
+      result = await dispatchWorkspaceApplicationAction(message, {
+        signal,
+        isCurrent,
+        consoleBindingId: request?.consoleBindingId ?? null,
+        workspaceTurn: request ? { scopeKey: getAgentConversationScopeKey('workspace'), turnId: request.turnId } : undefined,
+      });
+    } catch {
+      result = {
+        ok: false,
+        commandId: message.command.commandId,
+        action: message.command.action,
+        ...(message.command.expectedConsoleBindingId ? { consoleBindingId: message.command.expectedConsoleBindingId } : {}),
+        error: { code: 'workspace_action_failed', message: 'The application action could not be confirmed; inspect its state before retrying.', retryable: false },
+      };
+    }
+    settleApplicationAction(feedId, result);
+    return result;
   }), []);
 
   useEffect(() => {
@@ -97,35 +131,49 @@ function DirectorsConsole({ initialDraft, initialTab, recoveryStatus }: {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className="tab-button"
+          aria-expanded={isAgentVisible}
+          aria-controls="directors-console-agent-panel"
+          onClick={() => setIsAgentVisible(visible => !visible)}
+        >
+          {isAgentVisible ? 'Hide agent' : 'Show agent'}
+        </button>
       </nav>
 
       {/* Tab Content - All components stay mounted to preserve state */}
-      <main className="directors-console__content">
-        <div style={{ display: activeTab === 'cinema' ? 'contents' : 'none' }}>
-          <ErrorBoundary>
-            <CinemaPromptEngineering />
-          </ErrorBoundary>
-        </div>
-        <div style={{ display: activeTab === 'storyboard' ? 'contents' : 'none' }}>
-          <ErrorBoundary>
-            <StoryboardUI
-              initialSession={initialDraft?.storyboard as StoryboardDraftState | undefined}
-              onProjectLoadingChange={setIsProjectLoading}
-            />
-          </ErrorBoundary>
-        </div>
-        <div style={{ display: activeTab === 'gallery' ? 'contents' : 'none' }}>
-          <ErrorBoundary>
-            <GalleryUI
-              orchestratorUrl={galleryProject.orchestratorUrl}
-              projectPath={galleryProject.path}
-              projectRevision={projectRevision}
-              isProjectLoading={isProjectLoading}
-              isActive={activeTab === 'gallery'}
-            />
-          </ErrorBoundary>
-        </div>
-      </main>
+      <div className="directors-console__workspace">
+        <main className="directors-console__content">
+          <div style={{ display: activeTab === 'cinema' ? 'contents' : 'none' }}>
+            <ErrorBoundary>
+              <CinemaPromptEngineering />
+            </ErrorBoundary>
+          </div>
+          <div style={{ display: activeTab === 'storyboard' ? 'contents' : 'none' }}>
+            <ErrorBoundary>
+              <StoryboardUI
+                initialSession={initialDraft?.storyboard as StoryboardDraftState | undefined}
+              />
+            </ErrorBoundary>
+          </div>
+          <div style={{ display: activeTab === 'gallery' ? 'contents' : 'none' }}>
+            <ErrorBoundary>
+              <GalleryWorkspace isActive={activeTab === 'gallery'} />
+            </ErrorBoundary>
+          </div>
+        </main>
+        <aside
+          id="directors-console-agent-panel"
+          className="directors-console__agent"
+          aria-label="Agent chat"
+          style={{ display: isAgentVisible ? undefined : 'none' }}
+        >
+          <div className="directors-console__agent-surface">
+            <AgentChatPanel surface="workspace" applicationLabel={activeTab === 'cinema' ? 'Prompt Engineer' : activeTab === 'gallery' ? 'Gallery' : 'Director Console'} />
+          </div>
+        </aside>
+      </div>
       {(recoveryStatus.state === 'saving' || recoveryStatus.state === 'failed') && (
         <div role="status" style={{ position: 'fixed', bottom: 12, left: 12, zIndex: 1000 }}>
           {recoveryStatus.state === 'saving' ? 'Autosaving…' : recoveryStatus.message}

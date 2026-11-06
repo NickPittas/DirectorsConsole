@@ -1,10 +1,32 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useCinemaStore } from '@/store';
-import { api, type EnhancementImage, type EnhancementImageMode, type ImageCapabilities, type PromptEnhancementProfile } from '@/api/client';
+import { api, type EnhancementImage, type EnhancementImageMode, type ImageCapabilities, type PromptEnhancementInput, type PromptEnhancementProfile, type PromptSkillCatalogResponse } from '@/api/client';
 import { EnhancementImageInputs } from '@/components/EnhancementImageInputs';
+import {
+  PromptSkillSelector,
+  evaluateSkillProfiles,
+  skillProfileKey,
+  skillProfileLabel,
+  type SkillProfileOption,
+  type SkillProfileSelection,
+} from '@/components/PromptSkillSelector';
 import type { RuleSeverity, FilmPresetSummary, AnimationPresetSummary, CinematographyStyle, OptionsResponse } from '@/types';
 import Settings, { getConfiguredProviders, getSelectedLlmSettings, loadTargetModel, saveTargetModel, updateSavedOAuthToken, type ConfiguredProvider } from '@/components/Settings';
+import {
+  getAgentGatewaySnapshot,
+  getAgentExecutionFingerprint,
+  getAgentSettingsState,
+  loadAgentSettings,
+  subscribeAgentGateway,
+  subscribeAgentSettings,
+} from '@/services/agent-gateway-client';
+import {
+  notifyAgentSurfaceContextChanged,
+  registerAgentSurfaceContext,
+  type PromptEngineerSurfaceContext,
+} from '@/services/agent-conversations';
+import { enhancePromptWithPi } from '@/services/prompt-enhancement-agent';
 
 // Fallback enum options; production builds fetch current availability from the API.
 const ENUMS = {
@@ -2072,6 +2094,8 @@ const ANIMATION_FIELDS = [
 ];
 
 function App() {
+  const agentSettings = useSyncExternalStore(subscribeAgentSettings, getAgentSettingsState, getAgentSettingsState);
+  const agentGateway = useSyncExternalStore(subscribeAgentGateway, getAgentGatewaySnapshot, getAgentGatewaySnapshot);
   const {
     projectType,
     setProjectType,
@@ -2243,6 +2267,8 @@ function App() {
   const [enhancementImageMode, setEnhancementImageMode] = useState<EnhancementImageMode>('description_only');
   const [imageDialect, setImageDialect] = useState('');
   const enhancementRevisionRef = useRef(0);
+  const enhancementAbortRef = useRef<AbortController | null>(null);
+  const enhancementUsesAgentRef = useRef(false);
   const userPromptRef = useRef(userPrompt);
   const projectTypeRef = useRef(projectType);
   const enhancementDialectRef = useRef(enhancementDialect);
@@ -2263,13 +2289,340 @@ function App() {
   imagesRef.current = enhancementImages;
   imageModeRef.current = enhancementImageMode;
   imageDialectRef.current = imageDialect;
+  const activeImageCapability = imageCapabilities?.targets.find(item => item.target_model === targetModel);
+  const enhancedPromptRef = useRef(enhancedPrompt);
+  enhancedPromptRef.current = enhancedPrompt;
+  const enhancementProfilesRef = useRef(enhancementProfiles);
+  enhancementProfilesRef.current = enhancementProfiles;
+  const activeImageCapabilityRef = useRef(activeImageCapability);
+  activeImageCapabilityRef.current = activeImageCapability;
+  const selectedLiveActionPresetRef = useRef(selectedLiveActionPreset);
+  selectedLiveActionPresetRef.current = selectedLiveActionPreset;
+  const selectedAnimationPresetRef = useRef(selectedAnimationPreset);
+  selectedAnimationPresetRef.current = selectedAnimationPreset;
+  const cinematographyStyleRef = useRef(cinematographyStyle);
+  cinematographyStyleRef.current = cinematographyStyle;
+  const enhancedPromptProvenanceRef = useRef<{ text: string; revision: string } | null>(null);
+  const contextObjectIdsRef = useRef(new WeakMap<object, number>());
+  const contextObjectIdCounterRef = useRef(0);
+  const objectRevision = (value: object | null | undefined): number | null => {
+    if (!value) return null;
+    let id = contextObjectIdsRef.current.get(value);
+    if (id === undefined) {
+      id = ++contextObjectIdCounterRef.current;
+      contextObjectIdsRef.current.set(value, id);
+    }
+    return id;
+  };
+
+  // Task-specific prompt guidance: a local catalog of generation purposes
+  // (video/image tasks) for the current generation target. This never selects
+  // an agent model and never changes the generation target or attached media.
+  const [skillSelection, setSkillSelection] = useState<SkillProfileSelection | null>(null);
+  const skillSelectionRef = useRef<SkillProfileSelection | null>(null);
+  skillSelectionRef.current = skillSelection;
+  const skillOptionsRef = useRef<SkillProfileOption[]>([]);
+  const skillCatalogRef = useRef<PromptSkillCatalogResponse | undefined>(undefined);
+  const getPromptEngineerContextRevision = () => {
+    const input = JSON.stringify([
+      enhancementRevisionRef.current,
+      userPromptRef.current,
+      targetModelRef.current,
+      projectTypeRef.current,
+      objectRevision(enhancementConfigRef.current as object | undefined),
+      presetIdRef.current,
+      objectRevision(projectTypeRef.current === 'live_action' ? selectedLiveActionPresetRef.current : selectedAnimationPresetRef.current),
+      objectRevision(cinematographyStyleRef.current),
+      enhancementDialectRef.current,
+      objectRevision(skillSelectionRef.current),
+      objectRevision(skillCatalogRef.current),
+      objectRevision(imagesRef.current),
+      imagesRef.current.map(image => [image.id, image.mimeType, image.data.length]),
+      imageModeRef.current,
+      imageDialectRef.current,
+      objectRevision(activeImageCapabilityRef.current),
+    ]);
+    let hash = 2166136261;
+    for (let index = 0; index < input.length; index++) hash = Math.imul(hash ^ input.charCodeAt(index), 16777619);
+    return `pe-${enhancementRevisionRef.current}-${(hash >>> 0).toString(36)}`;
+  };
+
+  // T7: expose the current cinematic state to the Prompt Engineer conversation.
+  // Context is read on demand at send time through refs, so chat turns and
+  // handoffs never apply stale closure values. This registers context only;
+  // it does not change enhancement, generation, or target selection.
+  useEffect(() => registerAgentSurfaceContext('prompt-engineer', (): PromptEngineerSurfaceContext => {
+    const buildInput = (chatMessage: string): PromptEnhancementInput | null => {
+      const requestedMessage = chatMessage.trim();
+      const requestedTarget = targetModelRef.current;
+      const requestedProjectType = projectTypeRef.current;
+      const requestedConfig = enhancementConfigRef.current;
+      if (!requestedMessage || !requestedTarget || !requestedConfig) return null;
+      const requestedImages = imagesRef.current.map(image => ({ ...image }));
+      const selectedProfile = enhancementProfilesRef.current.find(profile => profile.target_model === requestedTarget);
+      const requestedDialect = selectedProfile
+        ? (selectedProfile.dialects.some(item => item.id === enhancementDialectRef.current)
+          ? enhancementDialectRef.current
+          : selectedProfile.default_dialect)
+        : '';
+      const skill = skillSelectionRef.current;
+      const requestedSkill = skill && skill.targetModel === requestedTarget ? skill : null;
+      if (requestedSkill) {
+        const option = skillOptionsRef.current.find(item => skillProfileKey(item) === skillProfileKey(requestedSkill));
+        if (!skillCatalogRef.current || !option?.selectable || option.guidance) return null;
+      }
+      const imageMode = imageModeRef.current;
+      const imageDialect = imageDialectRef.current || activeImageCapabilityRef.current?.default_dialect || '';
+      return {
+        userPrompt: requestedMessage,
+        targetModel: requestedTarget,
+        projectType: requestedProjectType,
+        config: JSON.parse(JSON.stringify(requestedConfig)) as PromptEnhancementInput['config'],
+        ...(presetIdRef.current ? { presetId: presetIdRef.current } : {}),
+        ...(requestedImages.length ? { images: requestedImages, imageMode, imageDialect } : {}),
+        ...(requestedSkill ? {
+          skillModelVersion: requestedSkill.modelVersion,
+          skillTask: requestedSkill.task,
+          ...(requestedSkill.conditioningAdapter ? { conditioningAdapter: requestedSkill.conditioningAdapter } : {}),
+        } : {}),
+        ...(!requestedImages.length && selectedProfile ? {
+          enhancementContext: {
+            task: 't2v' as const,
+            referenceDialect: requestedDialect,
+            assets: [],
+            referenceOrderConfirmed: true,
+          },
+        } : {}),
+      };
+    };
+    const taskGateMessage = () => {
+      const skill = skillSelectionRef.current;
+      if (!skill || skill.targetModel !== targetModelRef.current) return null;
+      const option = skillOptionsRef.current.find(item => skillProfileKey(item) === skillProfileKey(skill));
+      return !skillCatalogRef.current
+        ? 'The selected task guidance is still loading; retry after the task catalog is ready.'
+        : !option?.selectable || option.guidance
+          ? option?.guidance || 'The selected task is not supported by the current target and media. Choose a valid task before chatting.'
+          : null;
+    };
+    const currentProjectIdentity = () => null;
+    const chatTurnInput = (chatMessage: string): PromptEnhancementInput | null => {
+      if (taskGateMessage()) return null;
+      return buildInput(chatMessage);
+    };
+    const handoff = async (signal: AbortSignal) => {
+      const enhanced = enhancedPromptRef.current.trim();
+      const scene = userPromptRef.current.trim();
+      const revision = getPromptEngineerContextRevision();
+      const provenance = enhancedPromptProvenanceRef.current;
+      const enhancedIsCurrent = Boolean(enhanced && provenance?.text === enhanced && provenance.revision === revision);
+      const finalPrompt = enhancedIsCurrent ? enhanced : scene;
+      const requestedTarget = targetModelRef.current;
+      if (!finalPrompt || !requestedTarget) return null;
+      const requestedProjectType = projectTypeRef.current;
+      const preset = requestedProjectType === 'live_action'
+        ? selectedLiveActionPresetRef.current
+        : selectedAnimationPresetRef.current;
+      const input = buildInput(scene || finalPrompt);
+      if (!input) return null;
+      const prepared = await api.preparePromptEnhancement({ ...input, signal });
+      const promptStillCurrent = enhancedIsCurrent
+        ? enhancedPromptRef.current.trim() === enhanced
+        : userPromptRef.current.trim() === scene;
+      if (signal.aborted || !promptStillCurrent || revision !== getPromptEngineerContextRevision()) return null;
+      if (input.skillTask && prepared.prompt_skill.status !== 'available') {
+        throw new Error(prepared.prompt_skill.message || 'The selected task is not supported by the prepared target and media context.');
+      }
+      const preparedImages = prepared.images_were_supplied && prepared.images
+        ? prepared.images.map(image => ({ id: image.id, mimeType: image.mime_type, data: image.data }))
+        : input.images || [];
+      const media = preparedImages.map((image, index) => {
+        const resolvedAsset = prepared.enhancement_context?.assets.find(asset => asset.ordinal === index + 1);
+        const role = resolvedAsset?.role ?? (input.imageMode === 'starting_frame'
+          ? 'first_frame'
+          : input.imageMode === 'reference' ? 'reference' : 'description_only_reference');
+        return {
+        id: image.id,
+        kind: 'image' as const,
+        role,
+        ordinal: index + 1,
+        conditioning: input.imageMode !== 'description_only',
+        source: 'cinema-tab-memory' as const,
+        mimeType: image.mimeType,
+        data: image.data,
+        };
+      });
+      const draft = {
+          promptSource: enhancedIsCurrent ? ('enhanced_prompt' as const) : ('scene_description' as const),
+          finalPrompt,
+          targetModel: prepared.canonical_target_model,
+          modelVersion: prepared.prompt_skill.model_version ?? input.skillModelVersion ?? null,
+          task: prepared.task ?? prepared.prompt_skill.task ?? input.skillTask ?? input.enhancementContext?.task ?? null,
+          dialectId: prepared.dialect_id ?? prepared.prompt_skill.dialect_id ?? input.imageDialect ?? input.enhancementContext?.referenceDialect ?? null,
+          conditioningAdapter: prepared.prompt_skill.conditioning_adapter ?? input.conditioningAdapter ?? null,
+          projectType: requestedProjectType,
+          presetId: presetIdRef.current ?? null,
+          presetName: preset?.name ?? null,
+          cinematicConfig: input.config,
+          preset: preset ? JSON.parse(JSON.stringify(preset)) as Record<string, unknown> : null,
+          cinematographyStyle: requestedProjectType === 'live_action' && cinematographyStyleRef.current
+            ? JSON.parse(JSON.stringify(cinematographyStyleRef.current)) as CinematographyStyle
+            : null,
+          enhancementContext: prepared.enhancement_context,
+          imageMode: input.imageMode ?? null,
+          imageDialect: prepared.dialect_id ?? input.imageDialect ?? null,
+          media,
+          mediaSummary: media.length
+            ? `${media.length} image${media.length === 1 ? '' : 's'} · ${media.map(item => `#${item.id} ${item.role}`).join(', ')} · ${media.some(item => item.conditioning) ? 'conditioning snapshot' : 'description-only snapshot'}`
+            : null,
+        };
+      return { draft, sourceContextRevision: revision };
+    };
+    return {
+      statusNote: taskGateMessage(),
+      projectIdentity: currentProjectIdentity(),
+      getRevision: getPromptEngineerContextRevision,
+      getConstraintSnapshot: () => {
+        const projectType = projectTypeRef.current;
+        const preset = projectType === 'live_action'
+          ? selectedLiveActionPresetRef.current
+          : selectedAnimationPresetRef.current;
+        const skill = skillSelectionRef.current;
+        return {
+          revision: getPromptEngineerContextRevision(),
+          targetModel: targetModelRef.current,
+          projectType,
+          config: JSON.parse(JSON.stringify(enhancementConfigRef.current)) as PromptEnhancementInput['config'],
+          ...(presetIdRef.current ? { presetId: presetIdRef.current } : {}),
+          ...(preset?.name ? { presetName: preset.name } : {}),
+          ...(skill?.targetModel === targetModelRef.current ? {
+            skillModelVersion: skill.modelVersion,
+            skillTask: skill.task,
+            ...(skill.conditioningAdapter ? { conditioningAdapter: skill.conditioningAdapter } : {}),
+          } : {}),
+        };
+      },
+      chatTurnInput,
+      handoff,
+      applyValidatedPrompt: (prompt, expectedRevision) => {
+        if (expectedRevision !== getPromptEngineerContextRevision()) return false;
+        setEnhancedPrompt(prompt);
+        enhancedPromptProvenanceRef.current = { text: prompt.trim(), revision: expectedRevision };
+        return true;
+      },
+    };
+  }), []);
+  const skillsQuery = useQuery({
+    queryKey: ['prompt-enhancement-skills', targetModel],
+    queryFn: () => api.getPromptEnhancementSkills({ targetModel }),
+    enabled: targetModel.length > 0,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const skillCatalog: PromptSkillCatalogResponse | undefined = skillsQuery.isSuccess ? skillsQuery.data : undefined;
+  skillCatalogRef.current = skillCatalog;
+  const activeVideoProfile = useMemo(
+    () => enhancementProfiles.find(item => item.target_model === targetModel),
+    [enhancementProfiles, targetModel],
+  );
+  const skillOptions = useMemo<SkillProfileOption[]>(() => {
+    if (!skillCatalog) return [];
+    const hasImages = enhancementImages.length > 0;
+    const videoTask = !hasImages
+      ? (activeVideoProfile ? 't2v' as const : null)
+      : !activeVideoProfile
+        ? null
+        : enhancementImageMode === 'description_only'
+          ? 't2v' as const
+          : enhancementImageMode === 'starting_frame' ? 'i2v' as const : 'reference' as const;
+    const assetRoles = new Set<string>(
+      activeVideoProfile && hasImages && enhancementImageMode === 'starting_frame'
+        ? ['first_frame']
+        : activeVideoProfile && hasImages && enhancementImageMode === 'reference'
+          ? ['reference_image']
+          : [],
+    );
+    const imageDialectState = imageDialect || activeImageCapability?.default_dialect || '';
+    const effectiveDialect = activeVideoProfile
+      ? (hasImages
+        ? (activeVideoProfile.dialects.some(item => item.id === imageDialectState) ? imageDialectState : activeVideoProfile.default_dialect)
+        : (enhancementDialect || activeVideoProfile.default_dialect))
+      : (hasImages && imageDialectState ? imageDialectState : null);
+    const options = evaluateSkillProfiles(skillCatalog, {
+      hasImages,
+      imageMode: enhancementImageMode,
+      imageCount: enhancementImages.length,
+      conditioningCount: hasImages && enhancementImageMode !== 'description_only' ? enhancementImages.length : 0,
+      videoTask,
+      assetRoles,
+      effectiveDialect,
+    });
+    // A selection kept from an older catalog refresh stays visible and blocked;
+    // it is never silently switched to another task.
+    if (skillSelection && skillSelection.targetModel === targetModel
+      && !options.some(option => option.key === skillProfileKey(skillSelection))) {
+      options.unshift({
+        key: skillProfileKey(skillSelection),
+        label: `${skillProfileLabel(skillSelection.task, skillSelection.conditioningAdapter)} — no longer offered`,
+        selectable: false,
+        task: skillSelection.task,
+        modelVersion: skillSelection.modelVersion,
+        conditioningAdapter: skillSelection.conditioningAdapter,
+        guidance: 'This task guidance is no longer offered for this model. Choose another task or return the task menu to Automatic.',
+      });
+    }
+    return options;
+  }, [skillCatalog, targetModel, activeVideoProfile, enhancementImages, enhancementImageMode, imageDialect, enhancementDialect, activeImageCapability, skillSelection]);
+  skillOptionsRef.current = skillOptions;
+  const selectedSkillOption = skillSelection
+    ? skillOptions.find(option => option.key === skillProfileKey(skillSelection) && option.selectable)
+    : undefined;
+  const hiddenTaskModes = skillCatalog
+    ? new Set(skillCatalog.matches
+      .filter(match => match.status === 'unsupported')
+      .map(match => `${match.task}|${match.conditioning_adapter ?? ''}`)).size
+    : 0;
+  let skillNotice: string | null = null;
+  let skillNoticeTone: 'guidance' | 'info' = 'info';
+  if (skillSelection) {
+    skillNotice = selectedSkillOption
+      ? selectedSkillOption.guidance ?? null
+      : 'The selected task guidance is unavailable for this model. Choose another task or return the task menu to Automatic.';
+    skillNoticeTone = 'guidance';
+  } else if (skillCatalog && skillOptions.length === 0 && skillCatalog.message) {
+    skillNotice = skillCatalog.message;
+  } else if (hiddenTaskModes > 0 && skillOptions.some(option => option.selectable)) {
+    skillNotice = `${hiddenTaskModes} additional task mode${hiddenTaskModes === 1 ? ' is' : 's are'} not selectable for prompt enhancement yet.`;
+  }
 
   useEffect(() => {
     enhancementRevisionRef.current += 1;
-  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect, selectedLlmProvider, selectedLlmModel, selectedLiveActionPreset?.id, selectedAnimationPreset?.id, enhancementImages, enhancementImageMode, imageDialect]);
+    if (enhancementUsesAgentRef.current) enhancementAbortRef.current?.abort();
+    notifyAgentSurfaceContextChanged('prompt-engineer');
+  }, [userPrompt, targetModel, projectType, liveActionConfig, animationConfig, enhancementDialect, selectedLiveActionPreset, selectedAnimationPreset, cinematographyStyle, enhancementImages, enhancementImageMode, imageDialect, enhancementProfiles, activeImageCapability, imageCapabilities, skillSelection, skillOptions, skillCatalog?.manifest_hash]);
+
+  useEffect(() => {
+    let previous = getAgentExecutionFingerprint('prompt-engineer');
+    const invalidate = () => {
+      const next = getAgentExecutionFingerprint('prompt-engineer');
+      if (next === previous) return;
+      previous = next;
+      if (enhancementUsesAgentRef.current) {
+        enhancementRevisionRef.current += 1;
+        enhancementAbortRef.current?.abort();
+      }
+    };
+    const unsubscribeSettings = subscribeAgentSettings(invalidate);
+    const unsubscribeGateway = subscribeAgentGateway(invalidate);
+    return () => {
+      unsubscribeSettings();
+      unsubscribeGateway();
+    };
+  }, []);
 
   useEffect(() => () => {
     enhancementRevisionRef.current += 1;
+    enhancementAbortRef.current?.abort();
   }, []);
   
   // Target AI models (fetched from API)
@@ -2277,8 +2630,6 @@ function App() {
   const [isLoadingTargetModels, setIsLoadingTargetModels] = useState(false);
   const [targetModelWarning, setTargetModelWarning] = useState<string | null>(null);
   const sessionHydrated = useCinemaStore(state => state.sessionHydrated);
-
-  const activeImageCapability = imageCapabilities?.targets.find(item => item.target_model === targetModel);
 
   // Preset panel state (right-docked collapsible panel) - with localStorage persistence
   const [isPresetPanelOpen, setIsPresetPanelOpen] = useState(() => {
@@ -2475,6 +2826,26 @@ function App() {
     setImageDialect(capability?.default_dialect ?? '');
   }, [imageCapabilities, targetModel]);
 
+  // A generation-target change never carries a prior task selection across models.
+  useEffect(() => {
+    setSkillSelection(null);
+  }, [targetModel]);
+
+  const handleSkillSelectionChange = useCallback((key: string) => {
+    if (!key) {
+      setSkillSelection(null);
+      return;
+    }
+    const option = skillOptions.find(item => item.key === key);
+    if (!option || !option.selectable) return;
+    setSkillSelection({
+      targetModel,
+      task: option.task,
+      modelVersion: option.modelVersion,
+      conditioningAdapter: option.conditioningAdapter,
+    });
+  }, [skillOptions, targetModel]);
+
   // Save preset panel state to localStorage (consolidated key)
   useEffect(() => {
     const state = {
@@ -2522,8 +2893,9 @@ function App() {
 
     const handlePointerMove = (e: PointerEvent | MouseEvent) => {
       e.preventDefault();
-      const newWidth = window.innerWidth - e.clientX;
-      const maxWidth = Math.max(280, window.innerWidth - 40);
+      const workspace = presetPanelRef.current?.closest('.directors-console__content')?.getBoundingClientRect();
+      const newWidth = (workspace?.right ?? window.innerWidth) - e.clientX;
+      const maxWidth = Math.max(280, (workspace?.width ?? window.innerWidth) - 40);
       const clampedWidth = Math.max(280, Math.min(maxWidth, newWidth));
       setPresetPanelWidth(clampedWidth);
     };
@@ -2625,6 +2997,28 @@ function App() {
   // Handle LLM prompt enhancement
   const handleEnhancePrompt = useCallback(async () => {
     setEnhanceWarnings([]);
+    let agentSettings = getAgentSettingsState();
+    if (agentSettings.loading) {
+      await loadAgentSettings();
+      agentSettings = getAgentSettingsState();
+    }
+    if (agentSettings.loading) {
+      setEnhanceError('Agent settings are still loading. Retry after they finish loading.');
+      return;
+    }
+    if (agentSettings.error || !agentSettings.record) {
+      setEnhanceError(agentSettings.error || 'Agent settings are unavailable. Retry from Settings.');
+      return;
+    }
+    const isLegacy = agentSettings.record.migrationState === 'legacy_explicit';
+    if (!isLegacy && agentSettings.record.migrationState !== 'harness_configured') {
+      setEnhanceError('Choose an authenticated agent model or explicitly select the legacy direct provider in Agent Settings.');
+      return;
+    }
+    if (!isLegacy && agentSettings.record.selection?.harnessId !== 'pi' && agentSettings.record.selection?.harnessId !== 'codex') {
+      setEnhanceError(`The selected ${agentSettings.record.selection?.harnessId ?? 'harness'} is not available for prompt enhancement.`);
+      return;
+    }
     const requestedPrompt = userPrompt.trim();
     const requestedImages = enhancementImages.map(image => ({ ...image }));
     if (!requestedPrompt && requestedImages.length === 0) {
@@ -2668,14 +3062,23 @@ function App() {
       }
     }
 
-    if (!selectedLlmProvider || !selectedLlmModel) {
-      setEnhanceError('Please select an LLM provider and model. Configure providers in Settings.');
-      return;
-    }
-    const provider = configuredProviders.find(p => p.providerId === selectedLlmProvider);
-    if (!provider) {
-      setEnhanceError('Selected provider not found. Please configure in Settings.');
-      return;
+    const requestedSkill = skillSelectionRef.current && skillSelectionRef.current.targetModel === targetModel
+      ? skillSelectionRef.current
+      : null;
+    if (requestedSkill) {
+      if (!skillCatalog) {
+        setEnhanceError('Task guidance could not be loaded for this model. Retry, or return the task menu to Automatic.');
+        return;
+      }
+      const selectedSkill = skillOptions.find(option => option.key === skillProfileKey(requestedSkill));
+      if (!selectedSkill || !selectedSkill.selectable) {
+        setEnhanceError('The selected task guidance is not offered for this model. Choose another task or return the task menu to Automatic.');
+        return;
+      }
+      if (selectedSkill.guidance) {
+        setEnhanceError(selectedSkill.guidance);
+        return;
+      }
     }
 
     const requestedTarget = targetModel;
@@ -2683,8 +3086,9 @@ function App() {
     const submittedConfigJson = JSON.stringify(requestedProjectType === 'live_action' ? liveActionConfig : animationConfig);
     const requestedConfig = JSON.parse(submittedConfigJson);
     const requestedPresetId = requestedProjectType === 'live_action' ? selectedLiveActionPreset?.id : selectedAnimationPreset?.id;
-    const requestedProvider = selectedLlmProvider;
-    const requestedModel = selectedLlmModel;
+    const requestedProvider = isLegacy ? selectedProviderRef.current : '';
+    const requestedModel = isLegacy ? selectedModelRef.current : '';
+    const agentFingerprint = getAgentExecutionFingerprint('prompt-engineer');
     const requestedMode = enhancementImageMode;
     const requestedImageDialectState = imageDialect;
     const requestedImageDialect = imageDialect || activeImageCapability?.default_dialect || '';
@@ -2693,78 +3097,116 @@ function App() {
       ? enhancementDialect
       : selectedProfile?.default_dialect ?? '';
     const requestRevision = enhancementRevisionRef.current;
+    const requestContextRevision = getPromptEngineerContextRevision();
     const requestStillCurrent = () => requestRevision === enhancementRevisionRef.current
       && userPromptRef.current.trim() === requestedPrompt
       && targetModelRef.current === requestedTarget
       && projectTypeRef.current === requestedProjectType
       && enhancementDialectRef.current === enhancementDialect
       && JSON.stringify(enhancementConfigRef.current) === submittedConfigJson
-      && selectedProviderRef.current === requestedProvider
-      && selectedModelRef.current === requestedModel
+      && (!isLegacy || (selectedProviderRef.current === requestedProvider && selectedModelRef.current === requestedModel))
+      && (isLegacy || agentFingerprint === getAgentExecutionFingerprint('prompt-engineer'))
       && presetIdRef.current === requestedPresetId
       && imageModeRef.current === requestedMode
       && imageDialectRef.current === requestedImageDialectState
       && imagesRef.current.length === requestedImages.length
       && imagesRef.current.every((image, index) => image.id === requestedImages[index].id
-        && image.mimeType === requestedImages[index].mimeType && image.data === requestedImages[index].data);
+        && image.mimeType === requestedImages[index].mimeType && image.data === requestedImages[index].data)
+      && (requestedSkill === null
+        ? skillSelectionRef.current === null
+        : (skillSelectionRef.current !== null
+          && skillSelectionRef.current.targetModel === requestedSkill.targetModel
+          && skillProfileKey(skillSelectionRef.current) === skillProfileKey(requestedSkill)));
 
+    enhancementAbortRef.current?.abort();
+    const requestController = new AbortController();
+    enhancementAbortRef.current = requestController;
+    enhancementUsesAgentRef.current = !isLegacy;
     setIsEnhancing(true);
     setEnhanceError(null);
-    const submittedOAuthToken = provider.credentials.oauthToken;
-    const submittedOAuthRefreshToken = provider.credentials.oauthRefreshToken;
-    try {
-      const result = await api.enhancePrompt({
-        userPrompt: requestedPrompt,
-        llmProvider: requestedProvider,
-        llmModel: requestedModel,
-        targetModel: requestedTarget,
-        projectType: requestedProjectType,
-        config: requestedConfig,
-        ...(requestedPresetId ? { presetId: requestedPresetId } : {}),
-        ...(requestedImages.length ? {
-          images: requestedImages,
-          imageMode: requestedMode,
-          imageDialect: requestedImageDialect,
-        } : {}),
-        ...(!requestedImages.length && selectedProfile ? {
-          enhancementContext: {
-            task: 't2v' as const,
-            ...(requestedDialect ? { referenceDialect: requestedDialect } : {}),
-            assets: [],
-            referenceOrderConfirmed: true,
-          },
-        } : {}),
-        credentials: {
-          apiKey: provider.credentials.apiKey,
-          endpoint: provider.credentials.endpoint,
-          oauthToken: provider.credentials.oauthToken,
+    const enhancementInput = {
+      userPrompt: requestedPrompt,
+      targetModel: requestedTarget,
+      projectType: requestedProjectType,
+      config: requestedConfig,
+      ...(requestedPresetId ? { presetId: requestedPresetId } : {}),
+      ...(requestedImages.length ? {
+        images: requestedImages,
+        imageMode: requestedMode,
+        imageDialect: requestedImageDialect,
+      } : {}),
+      ...(requestedSkill ? {
+        skillModelVersion: requestedSkill.modelVersion,
+        skillTask: requestedSkill.task,
+        ...(requestedSkill.conditioningAdapter ? { conditioningAdapter: requestedSkill.conditioningAdapter } : {}),
+      } : {}),
+      ...(!requestedImages.length && selectedProfile ? {
+        enhancementContext: {
+          task: 't2v' as const,
+          ...(requestedDialect ? { referenceDialect: requestedDialect } : {}),
+          assets: [],
+          referenceOrderConfirmed: true,
         },
-      });
-
-      const currentProvider = getConfiguredProviders().find(current => current.providerId === requestedProvider);
-      if (result.oauth_token && submittedOAuthToken && selectedLlmProviderRef.current === requestedProvider
-        && getSelectedLlmSettings()?.provider === requestedProvider
-        && currentProvider?.credentials.oauthToken === submittedOAuthToken
-        && currentProvider?.credentials.oauthRefreshToken === submittedOAuthRefreshToken) {
-        updateSavedOAuthToken(requestedProvider, result.oauth_token);
-        setConfiguredProviders(getConfiguredProviders());
-      }
-      if (!requestStillCurrent()) return;
-      if (result.success) {
-        setEnhancedPrompt(result.enhanced_prompt);
-        setEnhanceWarnings(result.warnings ?? []);
+      } : {}),
+    };
+    try {
+      let enhancedPrompt: string;
+      let warnings: string[];
+      if (isLegacy) {
+        if (!requestedProvider || !requestedModel) throw new Error('Select a legacy provider and model in Settings.');
+        const provider = getConfiguredProviders().find(item => item.providerId === requestedProvider);
+        if (!provider) throw new Error('Selected legacy provider was not found. Configure it in Settings.');
+        const submittedOAuthToken = provider.credentials.oauthToken;
+        const submittedOAuthRefreshToken = provider.credentials.oauthRefreshToken;
+        const result = await api.enhancePrompt({
+          ...enhancementInput,
+          llmProvider: requestedProvider,
+          llmModel: requestedModel,
+          credentials: {
+            apiKey: provider.credentials.apiKey,
+            endpoint: provider.credentials.endpoint,
+            oauthToken: provider.credentials.oauthToken,
+          },
+          signal: requestController.signal,
+        });
+        const currentProvider = getConfiguredProviders().find(current => current.providerId === requestedProvider);
+        if (result.oauth_token && submittedOAuthToken && selectedLlmProviderRef.current === requestedProvider
+          && getSelectedLlmSettings()?.provider === requestedProvider
+          && currentProvider?.credentials.oauthToken === submittedOAuthToken
+          && currentProvider?.credentials.oauthRefreshToken === submittedOAuthRefreshToken) {
+          updateSavedOAuthToken(requestedProvider, result.oauth_token);
+          setConfiguredProviders(getConfiguredProviders());
+        }
+        if (!result.success) throw new Error(result.error || 'Enhancement failed.');
+        enhancedPrompt = result.enhanced_prompt;
+        warnings = result.warnings ?? [];
       } else {
-        setEnhanceError(result.error || 'Enhancement failed');
+        const result = await enhancePromptWithPi(enhancementInput, {
+          surface: 'prompt-engineer',
+          signal: requestController.signal,
+        });
+        enhancedPrompt = result.enhanced_prompt;
+        warnings = result.warnings;
       }
+      if (!requestStillCurrent() || requestContextRevision !== getPromptEngineerContextRevision()) return;
+      setEnhancedPrompt(enhancedPrompt);
+      enhancedPromptProvenanceRef.current = { text: enhancedPrompt.trim(), revision: requestContextRevision };
+      setEnhanceWarnings(warnings);
     } catch (error) {
       if (requestStillCurrent()) {
-        setEnhanceError(error instanceof Error ? error.message : 'Enhancement failed');
+        setEnhanceError(requestController.signal.aborted
+          ? 'Prompt enhancement cancelled.'
+          : error instanceof Error ? error.message : 'Enhancement failed');
         setEnhanceWarnings([]);
       }
     } finally {
-      setIsEnhancing(false);
+      if (enhancementAbortRef.current === requestController) {
+        enhancementAbortRef.current = null;
+        enhancementUsesAgentRef.current = false;
+        setIsEnhancing(false);
+      }
     }
-  }, [userPrompt, enhancementImages, selectedLlmProvider, selectedLlmModel, configuredProviders, targetModel, projectType, liveActionConfig, animationConfig, selectedLiveActionPreset, selectedAnimationPreset, enhancementProfiles, enhancementDialect, enhancementImageMode, imageDialect, activeImageCapability, imageCapabilities, setEnhancedPrompt]);
+  }, [userPrompt, enhancementImages, targetModel, projectType, liveActionConfig, animationConfig, selectedLiveActionPreset, selectedAnimationPreset, enhancementProfiles, enhancementDialect, enhancementImageMode, imageDialect, activeImageCapability, imageCapabilities, skillCatalog, skillOptions, setEnhancedPrompt]);
 
   const getSeverityClass = (severity: RuleSeverity) => {
     switch (severity) {
@@ -2774,6 +3216,33 @@ function App() {
       default: return '';
     }
   };
+
+  const selectedAgent = agentSettings.record?.selection;
+  const selectedAgentLabel = selectedAgent?.harnessId === 'codex' ? 'Codex' : 'Pi';
+  const selectedPiModel = (selectedAgent?.harnessId === 'pi' || selectedAgent?.harnessId === 'codex') && agentGateway.modelsHarnessId === selectedAgent?.harnessId
+    ? agentGateway.models.find(model => model.provider === selectedAgent?.provider && model.modelId === selectedAgent?.modelId)
+    : undefined;
+  const enhancementSetupMessage = agentSettings.loading
+    ? 'Loading the shared agent selection…'
+    : agentSettings.error
+      ? agentSettings.error
+      : !agentSettings.record || agentSettings.record.migrationState === 'unconfigured'
+        ? 'Prompt enhancement is not configured. Select an authenticated agent model or explicitly choose legacy direct provider in Agent Settings.'
+        : agentSettings.record.migrationState === 'legacy_explicit'
+          ? configuredProviders.length === 0
+            ? 'Legacy direct provider is selected, but no provider is configured. Configure one in Agent Settings.'
+            : null
+          : selectedAgent?.harnessId !== 'pi' && selectedAgent?.harnessId !== 'codex'
+            ? `The selected ${selectedAgent?.harnessId ?? 'agent'} is not available for prompt enhancement.`
+            : agentGateway.status !== 'ready'
+              ? agentGateway.message
+              : agentGateway.modelsLoading
+                ? `Checking authenticated ${selectedAgentLabel} models…`
+                : agentGateway.availability?.state !== 'ready'
+                  ? agentGateway.availability?.message || `${selectedAgentLabel} has no authenticated models.`
+                  : !selectedPiModel
+                    ? `The selected ${selectedAgentLabel} model is not in the authenticated inventory. Its selection is preserved; refresh or choose an available model in Agent Settings.`
+                    : null;
 
   return (
     <div 
@@ -2877,6 +3346,15 @@ function App() {
             {variants.map(variant => <option key={variant.id} value={variant.id}>{variant.label}</option>)}
           </select>;
         })()}
+        <PromptSkillSelector
+          options={skillOptions}
+          value={skillSelection ? skillProfileKey(skillSelection) : ''}
+          onValueChange={handleSkillSelectionChange}
+          loading={skillsQuery.isPending}
+          disabled={isLoadingTargetModels}
+          notice={skillNotice}
+          noticeTone={skillNoticeTone}
+        />
         {targetModelWarning && (
           <span role="status" style={{ color: 'var(--text-warning, #f59e0b)', fontSize: '0.75rem' }}>
             {targetModelWarning}
@@ -2888,6 +3366,7 @@ function App() {
         <button className="toolbar-btn" onClick={handleEnhancePrompt} disabled={isEnhancing || (!userPrompt.trim() && enhancementImages.length === 0)}>
           {isEnhancing ? 'Enhancing...' : 'Enhance with AI'}
         </button>
+        {isEnhancing && <button className="toolbar-btn" onClick={() => enhancementAbortRef.current?.abort()}>Cancel enhancement</button>}
         <button className="toolbar-settings" onClick={() => setIsSettingsOpen(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="3" />
@@ -3151,8 +3630,7 @@ function App() {
           </p>
         )}
 
-        {/* No providers configured message */}
-        {configuredProviders.length === 0 && (
+        {enhancementSetupMessage && (
           <p style={{ 
             fontSize: '0.8rem', 
             color: 'var(--text-muted)', 
@@ -3162,7 +3640,7 @@ function App() {
             backgroundColor: 'var(--bg-medium)',
             borderRadius: '4px',
           }}>
-            Click the gear icon to configure an AI provider for prompt enhancement
+            {enhancementSetupMessage}
           </p>
         )}
       </div>

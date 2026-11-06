@@ -24,8 +24,43 @@ const API_BASE = import.meta.env.PROD && import.meta.env.VITE_BUILD_MODE === 'co
   : '';
 
 export type EnhancementTask = 't2v' | 'i2v' | 'ref2v';
+export type PromptSkillTask = 't2v' | 'i2v' | 'first_last' | 'reference' | 'v2v' | 't2i' | 'edit' | 'multi_reference' | 'style_reference' | 'outpaint' | 'rgba' | 'control' | 'relight' | 'restore' | 'upscale' | 'hdr' | 'audio_edit';
+export type PromptConditioningAdapter = 'ingredients' | 'union_control' | 'motion_track_control' | 'layout_to_render' | 'in_outpainting' | 'relight' | 'day_to_night' | 'colorization' | 'decompression' | 'deblur' | 'water_simulation' | 'clean_plate' | 'instant_shave' | 'cross_eyed' | 'pixel_spatial_upscaler' | 'refine_details' | 'restore' | 'alpha_gen' | 'hdr' | 'sdr_to_hdr' | 'dub_it';
 export type EnhancementAssetKind = 'image' | 'video' | 'audio';
 export type EnhancementAssetRole = 'first_frame' | 'last_frame' | 'reference_image' | 'reference_video' | 'reference_audio';
+
+export type AgentHarnessId = 'pi' | 'codex' | 'claude-code';
+export type AgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+export type AgentMigrationState = 'unconfigured' | 'legacy_explicit' | 'harness_configured';
+export type AgentSurface = 'prompt-engineer' | 'prompt-enhancement' | 'console' | 'workspace';
+
+export interface AgentSelection {
+  schemaVersion: 1;
+  harnessId: AgentHarnessId;
+  provider: string;
+  modelId: string;
+  thinkingLevel?: AgentThinkingLevel | null;
+}
+
+export interface AgentSettingsRecord {
+  schemaVersion: 1;
+  migrationState: AgentMigrationState;
+  selection: AgentSelection | null;
+}
+
+export interface AgentSessionRef {
+  surface: AgentSurface;
+  harnessId: AgentHarnessId;
+  sessionId: string;
+  projectIdentity?: string;
+}
+
+export interface PiAvailability {
+  state: 'unconfigured' | 'ready' | 'unavailable' | 'disposed';
+  authenticatedModelCount: number;
+  checkedAt?: string;
+  message: string;
+}
 
 export interface EnhancementContext {
   task: EnhancementTask;
@@ -64,6 +99,222 @@ export interface EnhancementImage {
   id: number;
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
   data: string;
+}
+
+export interface PromptEnhancementInput {
+  userPrompt: string;
+  targetModel: string;
+  projectType: 'live_action' | 'animation';
+  config: LiveActionConfig | AnimationConfig;
+  enhancementContext?: EnhancementContext;
+  presetId?: string;
+  images?: EnhancementImage[];
+  imageMode?: EnhancementImageMode;
+  imageDialect?: string;
+  skillModelVersion?: string;
+  skillTask?: PromptSkillTask;
+  conditioningAdapter?: PromptConditioningAdapter;
+}
+
+export interface StandalonePromptInput {
+  userPrompt: string;
+  targetModel: string;
+  task?: PromptSkillTask;
+  modelVersion?: string;
+  dialectId?: string;
+  conditioningAdapter?: PromptConditioningAdapter;
+  enhancementContext?: EnhancementContext;
+}
+
+export interface PromptSkillResolution {
+  status: 'available' | 'requires_selection' | 'unsupported';
+  skill_id: string | null;
+  skill_version: string | null;
+  model_version: string | null;
+  task: string | null;
+  dialect_id: string | null;
+  conditioning_adapter: string | null;
+  resource_ids: string[];
+  resources: Array<{ id: string; path: string; sha256: string }>;
+  sources: Array<{ id: string; kind: string; title: string; url?: string; reviewedAt: string; note?: string }>;
+  content_hash: string;
+  manifest_hash: string;
+  fingerprint: string;
+  message?: string | null;
+}
+
+export interface ModelPromptGuidance {
+  status: 'available' | 'requires_selection' | 'unsupported';
+  target_model: string;
+  model_version: string | null;
+  task: PromptSkillTask | null;
+  dialect_id: string | null;
+  conditioning_adapter: PromptConditioningAdapter | null;
+  guidance: string;
+  fingerprint: string | null;
+  resources: Array<{ path: string; sha256: string }>;
+  sources: PromptSkillResolution['sources'];
+  media_requirements: Record<string, unknown>;
+  readiness: 'guidance_only';
+  message: string | null;
+  choices: Array<{
+    target_model: string;
+    model_version: string;
+    task: PromptSkillTask;
+    dialect_id: string | null;
+    conditioning_adapter: PromptConditioningAdapter | null;
+  }>;
+}
+
+export interface PromptSkillCatalogMatch {
+  skill_id: string;
+  label: string;
+  skill_version: string;
+  target_model: string;
+  model_version: string;
+  version_required: boolean;
+  task: PromptSkillTask;
+  dialect_id: string | null;
+  conditioning_adapter: PromptConditioningAdapter | null;
+  resources: string[];
+  media: {
+    imageModes?: EnhancementImageMode[];
+    minImages?: number;
+    maxImages?: number;
+    requiresImagesWhenMode?: EnhancementImageMode[];
+    requiredRoles?: EnhancementAssetRole[];
+    requiredRolesAny?: EnhancementAssetRole[];
+  };
+  sources: PromptSkillResolution['sources'];
+  status: 'available' | 'requires_selection' | 'unsupported';
+  message?: string | null;
+}
+
+export interface PromptSkillCatalogResponse {
+  manifest_version: string;
+  manifest_hash: string;
+  status: 'available' | 'requires_selection' | 'unsupported';
+  target_model: string | null;
+  message: string | null;
+  matches: PromptSkillCatalogMatch[];
+  context_limit_bytes: number;
+  availability_scope: string;
+}
+
+export interface PreparedPromptEnhancement {
+  system_prompt: string;
+  user_prompt: string;
+  canonical_target_model: string;
+  task: EnhancementTask | null;
+  dialect_id: string | null;
+  enhancement_context: {
+    task: EnhancementTask;
+    reference_dialect?: string | null;
+    duration_seconds?: number | null;
+    assets: Array<{
+      binding_id: string;
+      kind: EnhancementAssetKind;
+      role: EnhancementAssetRole;
+      ordinal: number;
+      label?: string | null;
+      description?: string | null;
+      reference_name?: string | null;
+    }>;
+    reference_order_confirmed: boolean;
+  } | null;
+  images: Array<{ id: number; mime_type: EnhancementImage['mimeType']; data: string }> | null;
+  images_were_supplied: boolean;
+  prompt_skill: PromptSkillResolution;
+}
+
+export interface StandalonePromptPreparation {
+  system_prompt: string;
+  user_prompt: string;
+  canonical_target_model: string;
+  task: PromptSkillTask | null;
+  dialect_id: string | null;
+  enhancement_context: PreparedPromptEnhancement['enhancement_context'];
+  prompt_skill: ModelPromptGuidance;
+  fingerprint: string;
+  warnings: string[];
+}
+
+export interface WorkflowRecipeSearch {
+  query?: string;
+  targetModel?: string;
+  modelVersion?: string;
+  task?: string;
+  dialectId?: string;
+  conditioningAdapter?: string;
+}
+
+export interface WorkflowRecipeSearchResult {
+  count: number;
+  catalogFingerprint: string;
+  recipes: Array<Record<string, unknown>>;
+}
+
+function serializeEnhancementInput(options: PromptEnhancementInput): Record<string, unknown> {
+  return {
+    user_prompt: options.userPrompt,
+    target_model: options.targetModel,
+    project_type: options.projectType,
+    config: options.config,
+    ...(options.presetId !== undefined ? { preset_id: options.presetId } : {}),
+    ...(options.images !== undefined ? {
+      images: options.images.map(image => ({ id: image.id, mime_type: image.mimeType, data: image.data })),
+    } : {}),
+    ...(options.imageMode !== undefined ? { image_mode: options.imageMode } : {}),
+    ...(options.imageDialect !== undefined ? { image_dialect: options.imageDialect } : {}),
+    ...(options.skillModelVersion !== undefined ? { skill_model_version: options.skillModelVersion } : {}),
+    ...(options.skillTask !== undefined ? { skill_task: options.skillTask } : {}),
+    ...(options.conditioningAdapter !== undefined ? { conditioning_adapter: options.conditioningAdapter } : {}),
+    ...(options.enhancementContext ? {
+      enhancement_context: {
+        task: options.enhancementContext.task,
+        ...(options.enhancementContext.referenceDialect ? { reference_dialect: options.enhancementContext.referenceDialect } : {}),
+        ...(options.enhancementContext.durationSeconds !== undefined ? { duration_seconds: options.enhancementContext.durationSeconds } : {}),
+        assets: options.enhancementContext.assets.map(asset => ({
+          binding_id: asset.bindingId,
+          kind: asset.kind,
+          role: asset.role,
+          ordinal: asset.ordinal,
+          ...(asset.label !== undefined ? { label: asset.label } : {}),
+          ...(asset.description !== undefined ? { description: asset.description } : {}),
+          ...(asset.referenceName !== undefined ? { reference_name: asset.referenceName } : {}),
+        })),
+        reference_order_confirmed: options.enhancementContext.referenceOrderConfirmed,
+      },
+    } : {}),
+  };
+}
+
+function serializeStandalonePromptInput(options: StandalonePromptInput): Record<string, unknown> {
+  return {
+    user_prompt: options.userPrompt,
+    target_model: options.targetModel,
+    ...(options.task !== undefined ? { task: options.task } : {}),
+    ...(options.modelVersion !== undefined ? { model_version: options.modelVersion } : {}),
+    ...(options.dialectId !== undefined ? { dialect_id: options.dialectId } : {}),
+    ...(options.conditioningAdapter !== undefined ? { conditioning_adapter: options.conditioningAdapter } : {}),
+    ...(options.enhancementContext ? {
+      enhancement_context: {
+        task: options.enhancementContext.task,
+        ...(options.enhancementContext.referenceDialect ? { reference_dialect: options.enhancementContext.referenceDialect } : {}),
+        ...(options.enhancementContext.durationSeconds !== undefined ? { duration_seconds: options.enhancementContext.durationSeconds } : {}),
+        assets: options.enhancementContext.assets.map(asset => ({
+          binding_id: asset.bindingId,
+          kind: asset.kind,
+          role: asset.role,
+          ordinal: asset.ordinal,
+          ...(asset.label !== undefined ? { label: asset.label } : {}),
+          ...(asset.description !== undefined ? { description: asset.description } : {}),
+          ...(asset.referenceName !== undefined ? { reference_name: asset.referenceName } : {}),
+        })),
+        reference_order_confirmed: options.enhancementContext.referenceOrderConfirmed,
+      },
+    } : {}),
+  };
 }
 
 export type EnhancementImageMode = 'reference' | 'starting_frame' | 'description_only';
@@ -108,9 +359,10 @@ export interface PromptEnhancementProfilesResponse {
 
 class ApiClient {
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+    const timeout = AbortSignal.timeout(path === '/enhance-prompt' ? 90_000 : 30_000);
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
-      signal: options?.signal ?? AbortSignal.timeout(path === '/enhance-prompt' ? 90_000 : 30_000),
+      signal: options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
@@ -128,6 +380,24 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  /** Search the locally curated, fingerprinted workflow recipe catalog. */
+  async searchWorkflowRecipes(filters: WorkflowRecipeSearch = {}): Promise<WorkflowRecipeSearchResult> {
+    const query = new URLSearchParams();
+    if (filters.query) query.set('q', filters.query);
+    if (filters.targetModel) query.set('target_model', filters.targetModel);
+    if (filters.modelVersion) query.set('model_version', filters.modelVersion);
+    if (filters.task) query.set('task', filters.task);
+    if (filters.dialectId) query.set('dialect_id', filters.dialectId);
+    if (filters.conditioningAdapter) query.set('conditioning_adapter', filters.conditioningAdapter);
+    const encoded = query.toString();
+    return this.fetch(`/api/workflow-recipes${encoded ? `?${encoded}` : ''}`);
+  }
+
+  /** Read one pinned recipe by its stable catalog ID, never by a caller path. */
+  async getWorkflowRecipe(recipeId: string): Promise<Record<string, unknown>> {
+    return this.fetch(`/api/workflow-recipes/${encodeURIComponent(recipeId)}`);
   }
 
   /** Get options for a specific field based on current configuration */
@@ -182,7 +452,8 @@ class ApiClient {
   /** Generate a prompt from a live-action configuration */
   async generateLiveActionPrompt(
     config: LiveActionConfig,
-    targetModel: string = 'generic'
+    targetModel: string = 'generic',
+    presetId?: string
   ): Promise<GeneratePromptResponse> {
     return this.fetch('/generate-prompt', {
       method: 'POST',
@@ -190,6 +461,7 @@ class ApiClient {
         project_type: 'live_action',
         config,
         target_model: targetModel,
+        ...(presetId !== undefined ? { preset_id: presetId } : {}),
       }),
     });
   }
@@ -197,7 +469,8 @@ class ApiClient {
   /** Generate a prompt from an animation configuration */
   async generateAnimationPrompt(
     config: AnimationConfig,
-    targetModel: string = 'generic'
+    targetModel: string = 'generic',
+    presetId?: string
   ): Promise<GeneratePromptResponse> {
     return this.fetch('/generate-prompt', {
       method: 'POST',
@@ -205,6 +478,7 @@ class ApiClient {
         project_type: 'animation',
         config,
         target_model: targetModel,
+        ...(presetId !== undefined ? { preset_id: presetId } : {}),
       }),
     });
   }
@@ -604,24 +878,41 @@ class ApiClient {
     return this.fetch('/prompt-enhancement/profiles');
   }
 
+  /** Fetch the locally packaged task-specific prompting skills. */
+  async getPromptEnhancementSkills(options: { targetModel?: string; modelVersion?: string } = {}): Promise<PromptSkillCatalogResponse> {
+    const query = new URLSearchParams();
+    if (options.targetModel) query.set('target_model', options.targetModel);
+    if (options.modelVersion) query.set('model_version', options.modelVersion);
+    const encoded = query.toString();
+    return this.fetch(`/prompt-enhancement/skills${encoded ? `?${encoded}` : ''}`);
+  }
+
+  /** Fetch local model-specific prompt guidance without project context. */
+  async getModelPromptGuidance(options: {
+    targetModel: string;
+    modelVersion?: string;
+    task?: PromptSkillTask;
+    dialectId?: string;
+    conditioningAdapter?: PromptConditioningAdapter;
+  }): Promise<ModelPromptGuidance> {
+    const query = new URLSearchParams({ target_model: options.targetModel });
+    if (options.modelVersion !== undefined) query.set('model_version', options.modelVersion);
+    if (options.task !== undefined) query.set('task', options.task);
+    if (options.dialectId !== undefined) query.set('dialect_id', options.dialectId);
+    if (options.conditioningAdapter !== undefined) query.set('conditioning_adapter', options.conditioningAdapter);
+    return this.fetch(`/api/prompt-guidance?${query.toString()}`);
+  }
+
   /** Enhance a user prompt using an LLM with cinematic context */
-  async enhancePrompt(options: {
-    userPrompt: string;
+  async enhancePrompt(options: PromptEnhancementInput & {
     llmProvider: string;
     llmModel: string;
-    targetModel: string;
-    projectType: 'live_action' | 'animation';
-    config: LiveActionConfig | AnimationConfig;
-    enhancementContext?: EnhancementContext;
-    presetId?: string;
-    images?: EnhancementImage[];
-    imageMode?: EnhancementImageMode;
-    imageDialect?: string;
     credentials: {
       apiKey?: string;
       endpoint?: string;
       oauthToken?: string;
     };
+    signal?: AbortSignal;
   }): Promise<{
     success: boolean;
     enhanced_prompt: string;
@@ -635,41 +926,122 @@ class ApiClient {
     return this.fetch('/enhance-prompt', {
       method: 'POST',
       body: JSON.stringify({
-        user_prompt: options.userPrompt,
+        ...serializeEnhancementInput(options),
         llm_provider: options.llmProvider,
         llm_model: options.llmModel,
-        target_model: options.targetModel,
-        project_type: options.projectType,
-        config: options.config,
-        ...(options.presetId !== undefined ? { preset_id: options.presetId } : {}),
-        ...(options.images !== undefined ? {
-          images: options.images.map(image => ({ id: image.id, mime_type: image.mimeType, data: image.data })),
-        } : {}),
-        ...(options.imageMode !== undefined ? { image_mode: options.imageMode } : {}),
-        ...(options.imageDialect !== undefined ? { image_dialect: options.imageDialect } : {}),
-        ...(options.enhancementContext ? {
-          enhancement_context: {
-            task: options.enhancementContext.task,
-            ...(options.enhancementContext.referenceDialect ? { reference_dialect: options.enhancementContext.referenceDialect } : {}),
-            ...(options.enhancementContext.durationSeconds !== undefined ? { duration_seconds: options.enhancementContext.durationSeconds } : {}),
-            assets: options.enhancementContext.assets.map(asset => ({
-              binding_id: asset.bindingId,
-              kind: asset.kind,
-              role: asset.role,
-              ordinal: asset.ordinal,
-              ...(asset.label ? { label: asset.label } : {}),
-              ...(asset.description ? { description: asset.description } : {}),
-              ...(asset.referenceName ? { reference_name: asset.referenceName } : {}),
-            })),
-            reference_order_confirmed: options.enhancementContext.referenceOrderConfirmed,
-          },
-        } : {}),
         credentials: {
           api_key: options.credentials.apiKey,
           endpoint: options.credentials.endpoint,
           oauth_token: options.credentials.oauthToken,
         },
       }),
+      signal: options.signal,
+    });
+  }
+
+  /** Prepare the exact cinematic prompt without provider credentials. */
+  async preparePromptEnhancement(
+    options: PromptEnhancementInput & { signal?: AbortSignal },
+  ): Promise<PreparedPromptEnhancement> {
+    return this.fetch('/prompt-enhancement/prepare', {
+      method: 'POST',
+      body: JSON.stringify(serializeEnhancementInput(options)),
+      signal: options.signal,
+    });
+  }
+
+  /** Revalidate a completed harness response against the effective request context. */
+  async validatePromptEnhancement(
+    options: PromptEnhancementInput & {
+      expectedTargetModel: string;
+      expectedTask: EnhancementTask | null;
+      expectedDialectId: string | null;
+      expectedEnhancementContext: PreparedPromptEnhancement['enhancement_context'];
+      expectedPromptSkillFingerprint?: string;
+      enhancedPrompt: string;
+      truncated?: boolean;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    success: boolean;
+    enhanced_prompt: string;
+    warnings?: string[];
+    error?: string;
+  }> {
+    return this.fetch('/prompt-enhancement/validate', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...serializeEnhancementInput(options),
+        expected_target_model: options.expectedTargetModel,
+        expected_task: options.expectedTask,
+        expected_dialect_id: options.expectedDialectId,
+        expected_enhancement_context: options.expectedEnhancementContext,
+        ...(options.expectedPromptSkillFingerprint !== undefined ? { expected_prompt_skill_fingerprint: options.expectedPromptSkillFingerprint } : {}),
+        enhanced_prompt: options.enhancedPrompt,
+        truncated: options.truncated ?? false,
+      }),
+      signal: options.signal,
+    });
+  }
+
+  /** Enhance through an explicitly selected legacy provider without PE configuration. */
+  async enhanceStandalonePrompt(options: StandalonePromptInput & {
+    llmProvider: string;
+    llmModel: string;
+    credentials: { apiKey?: string; endpoint?: string; oauthToken?: string };
+    signal?: AbortSignal;
+  }): Promise<{ success: boolean; enhanced_prompt: string; warnings?: string[]; error?: string; oauth_token?: string }> {
+    return this.fetch('/prompt-enhancement/standalone/enhance', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...serializeStandalonePromptInput(options),
+        llm_provider: options.llmProvider,
+        llm_model: options.llmModel,
+        credentials: {
+          api_key: options.credentials.apiKey,
+          endpoint: options.credentials.endpoint,
+          oauth_token: options.credentials.oauthToken,
+        },
+      }),
+      signal: options.signal,
+    });
+  }
+
+  /** Prepare a standalone model-guided prompt without project configuration. */
+  async prepareStandalonePrompt(
+    options: StandalonePromptInput & { signal?: AbortSignal },
+  ): Promise<StandalonePromptPreparation> {
+    return this.fetch('/prompt-enhancement/standalone/prepare', {
+      method: 'POST',
+      body: JSON.stringify(serializeStandalonePromptInput(options)),
+      signal: options.signal,
+    });
+  }
+
+  /** Revalidate an enhanced standalone prompt against its prepared fingerprint. */
+  async validateStandalonePrompt(
+    options: StandalonePromptInput & {
+      expectedFingerprint: string;
+      enhancedPrompt: string;
+      truncated: boolean;
+      signal?: AbortSignal;
+    },
+  ): Promise<{
+    success: boolean;
+    enhanced_prompt: string;
+    warnings?: string[];
+    error?: string;
+    oauth_token?: string;
+  }> {
+    return this.fetch('/prompt-enhancement/standalone/validate', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...serializeStandalonePromptInput(options),
+        expected_fingerprint: options.expectedFingerprint,
+        enhanced_prompt: options.enhancedPrompt,
+        truncated: options.truncated,
+      }),
+      signal: options.signal,
     });
   }
 
@@ -818,6 +1190,19 @@ class ApiClient {
         selected_model: settings.selected_model,
         target_model: settings.target_model,
       }),
+    });
+  }
+
+  /** Get the versioned, non-secret agent settings record. */
+  async getAgentSettings(): Promise<AgentSettingsRecord> {
+    return this.fetch('/agent-settings', { cache: 'no-store' });
+  }
+
+  /** Replace the versioned, non-secret agent settings record. */
+  async updateAgentSettings(settings: AgentSettingsRecord): Promise<AgentSettingsRecord> {
+    return this.fetch('/agent-settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
     });
   }
 

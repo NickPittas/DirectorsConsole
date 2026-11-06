@@ -54,6 +54,7 @@ export interface ParameterConfig {
   type: 'integer' | 'float' | 'seed' | 'enum' | 'boolean' | 'prompt' | 'string' | 'image' | 'image_list' | 'video' | 'video_list' | 'media' | 'lora';
   default: any;
   description: string;
+  requiredMedia?: boolean; // Recipe-required conditioning input metadata.
   
   // Constraints
   constraints?: {

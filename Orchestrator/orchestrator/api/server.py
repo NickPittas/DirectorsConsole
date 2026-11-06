@@ -39,6 +39,8 @@ from orchestrator.core.models.job import Job, JobStatus
 
 # Import job group modules
 from orchestrator.api import job_groups, ws_job_groups
+from orchestrator.api import backend_capability_routes
+from orchestrator.api import backend_installation_routes
 from orchestrator.api import gallery_routes
 from orchestrator.core.parallel_job_manager import ParallelJobManager
 
@@ -285,6 +287,8 @@ app.add_middleware(
 # Include job group routers
 app.include_router(job_groups.router)
 app.include_router(ws_job_groups.router)
+app.include_router(backend_capability_routes.router)
+app.include_router(backend_installation_routes.router)
 
 # Include gallery router
 app.include_router(gallery_routes.router)
@@ -330,6 +334,8 @@ def set_backend_manager(backend_manager: Any) -> None:
     """
     global _backend_manager
     _backend_manager = backend_manager
+    backend_capability_routes.set_backend_manager(backend_manager)
+    backend_installation_routes.set_backend_manager(backend_manager)
     logger.info("REST API connected to BackendManager")
 
 

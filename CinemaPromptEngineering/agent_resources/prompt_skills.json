@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "manifestVersion": "2026-11-05.1",
+  "contextLimitBytes": 65536,
+  "targetVersionSelections": [
+    {
+      "targetModel": "ltx_2",
+      "status": "requires_selection",
+      "message": "The saved ltx_2 target does not identify the local LTX-2.3 or LTX-2.5 prompt dialect. Select the exact canonical target model."
+    }
+  ],
+  "skills": [
+    {
+      "id": "ltx-video",
+      "label": "LTX video prompting",
+      "version": "1",
+      "entry": "skills/ltx-video/SKILL.md",
+      "sources": [
+        { "id": "ltx-local-guidance", "kind": "local-user-guidance", "title": "LTX prompting skill and references", "reviewedAt": "2026-10-07" },
+        { "id": "ltx-model-author", "kind": "model-author", "title": "LTX-2 prompting guide and versioned model documentation", "url": "https://docs.ltx.io/api-documentation/implementation-guides/prompting-guide", "reviewedAt": "2026-10-07" },
+        { "id": "ltx-ic-lora-catalog", "kind": "model-author", "title": "LTX IC-LoRA adapter catalog", "url": "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters", "reviewedAt": "2026-11-05", "note": "The catalog page was reachable; adapter/version details are retained from the reviewed local model-card reference and source index. This does not prove installation or workflow availability." },
+        { "id": "ltx-comfy-25", "kind": "official", "title": "ComfyUI LTX-2.5 workflow guide", "url": "https://docs.comfy.org/tutorials/video/ltx/ltx-2-5", "reviewedAt": "2026-11-05" }
+      ],
+      "targets": [
+        { "id": "ltx_2.3", "modelVersion": "2.3", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "ltx_2.5", "modelVersion": "2.5", "versionSource": "Exact canonical target ID in cinema_rules.target_models." }
+      ],
+      "matches": [
+        { "id": "ltx23-t2v", "targets": ["ltx_2.3"], "task": "t2v", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/generation-modes.md"] },
+        { "id": "ltx23-i2v", "targets": ["ltx_2.3"], "task": "i2v", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/generation-modes.md"], "media": { "requiredRolesAny": ["first_frame"] } },
+        { "id": "ltx23-ingredients", "targets": ["ltx_2.3"], "task": "reference", "adapter": "ingredients", "dialect": "ltx_ingredients", "resources": ["skills/ltx-video/references/ingredients.md"], "media": { "requiredRolesAny": ["reference_image"], "minImages": 1, "maxImages": 1, "imageModes": ["reference"] } },
+        { "id": "ltx25-t2v", "targets": ["ltx_2.5"], "task": "t2v", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/generation-modes.md"] },
+        { "id": "ltx25-i2v", "targets": ["ltx_2.5"], "task": "i2v", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/generation-modes.md"], "media": { "requiredRolesAny": ["first_frame"] } },
+        { "id": "ltx25-first-last", "targets": ["ltx_2.5"], "task": "first_last", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/generation-modes.md"], "media": { "requiredRoles": ["first_frame", "last_frame"] } },
+        { "id": "ltx25-ingredients", "targets": ["ltx_2.5"], "task": "reference", "adapter": "ingredients", "dialect": "ltx_ingredients", "resources": ["skills/ltx-video/references/ingredients.md"], "media": { "requiredRolesAny": ["reference_image"], "minImages": 1, "maxImages": 1, "imageModes": ["reference"] } },
+        { "id": "ltx23-union", "targets": ["ltx_2.3"], "task": "control", "adapter": "union_control", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/control-adapters.md"], "media": { "requiredRolesAny": ["reference_image", "reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent Union-Control inputs without mislabeling them as Ingredients." },
+        { "id": "ltx23-motion-track", "targets": ["ltx_2.3"], "task": "control", "adapter": "motion_track_control", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/control-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent Motion-Track-Control video inputs." },
+        { "id": "ltx25-layout", "targets": ["ltx_2.5"], "task": "control", "adapter": "layout_to_render", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/control-adapters.md"], "media": { "requiredRoles": ["reference_video", "reference_image"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent separate layout-driver and look-reference inputs." },
+        { "id": "ltx23-in-outpainting", "targets": ["ltx_2.3"], "task": "outpaint", "adapter": "in_outpainting", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-relight", "targets": ["ltx_2.3"], "task": "edit", "adapter": "relight", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-day-night", "targets": ["ltx_2.3"], "task": "edit", "adapter": "day_to_night", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-day-night", "targets": ["ltx_2.5"], "task": "edit", "adapter": "day_to_night", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-colorization", "targets": ["ltx_2.3"], "task": "edit", "adapter": "colorization", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-colorization", "targets": ["ltx_2.5"], "task": "edit", "adapter": "colorization", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-decompression", "targets": ["ltx_2.3"], "task": "edit", "adapter": "decompression", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-decompression", "targets": ["ltx_2.5"], "task": "edit", "adapter": "decompression", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-deblur", "targets": ["ltx_2.3"], "task": "edit", "adapter": "deblur", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-deblur", "targets": ["ltx_2.5"], "task": "edit", "adapter": "deblur", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-water", "targets": ["ltx_2.3"], "task": "edit", "adapter": "water_simulation", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-water", "targets": ["ltx_2.5"], "task": "edit", "adapter": "water_simulation", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-clean-plate", "targets": ["ltx_2.3"], "task": "edit", "adapter": "clean_plate", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-clean-plate", "targets": ["ltx_2.5"], "task": "edit", "adapter": "clean_plate", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-instant-shave", "targets": ["ltx_2.3"], "task": "edit", "adapter": "instant_shave", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-cross-eyed", "targets": ["ltx_2.3"], "task": "edit", "adapter": "cross_eyed", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-pixel-upscaler", "targets": ["ltx_2.3"], "task": "upscale", "adapter": "pixel_spatial_upscaler", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-pixel-upscaler", "targets": ["ltx_2.5"], "task": "upscale", "adapter": "pixel_spatial_upscaler", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-refine-details", "targets": ["ltx_2.5"], "task": "upscale", "adapter": "refine_details", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-restore", "targets": ["ltx_2.5"], "task": "restore", "adapter": "restore", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-alpha", "targets": ["ltx_2.5"], "task": "rgba", "adapter": "alpha_gen", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-hdr", "targets": ["ltx_2.3"], "task": "hdr", "adapter": "hdr", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx25-sdr-hdr", "targets": ["ltx_2.5"], "task": "hdr", "adapter": "sdr_to_hdr", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md"], "media": { "requiredRoles": ["reference_video"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent this adapter's source-video input." },
+        { "id": "ltx23-dubit", "targets": ["ltx_2.3"], "task": "audio_edit", "adapter": "dub_it", "dialect": "ltx_native", "resources": ["skills/ltx-video/references/editing-adapters.md", "skills/ltx-video/references/generation-modes.md"], "media": { "requiredRoles": ["reference_video", "reference_audio"] }, "availability": "unsupported", "availabilityMessage": "The current validated LTX enhancement dialect cannot represent DubIt video/audio inputs." }
+      ]
+    },
+    {
+      "id": "minimax-h3",
+      "label": "MiniMax H3 prompting",
+      "version": "1",
+      "entry": "skills/minimax-h3/SKILL.md",
+      "sources": [
+        { "id": "minimax-h3-local-guide", "kind": "model-author", "title": "MiniMax H3 local video prompt guides", "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3", "reviewedAt": "2026-09-18" },
+        { "id": "minimax-h3-hosted-guide", "kind": "model-author", "title": "MiniMax hosted video generation API", "url": "https://platform.minimax.io/docs/api-reference/video/generation/api/v2-video-generation.json", "reviewedAt": "2026-09-18" },
+        { "id": "minimax-local-prompt", "kind": "project-curated", "title": "Existing local H3 prompt profiles and output validator", "reviewedAt": "2026-11-05" }
+      ],
+      "targets": [
+        { "id": "minimax_h3", "modelVersion": "H3", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "minimax_h3_max", "modelVersion": "H3 Max", "versionSource": "Exact canonical target ID in cinema_rules.target_models." }
+      ],
+      "matches": [
+        { "id": "h3-local-t2v", "targets": ["minimax_h3"], "task": "t2v", "dialect": "local_h3", "resources": ["skills/minimax-h3/references/local-h3.md"] },
+        { "id": "h3-local-i2v", "targets": ["minimax_h3"], "task": "i2v", "dialect": "local_h3", "resources": ["skills/minimax-h3/references/local-h3.md"], "media": { "requiredRolesAny": ["first_frame"] } },
+        { "id": "h3-local-first-last", "targets": ["minimax_h3"], "task": "first_last", "dialect": "local_h3", "resources": ["skills/minimax-h3/references/local-h3.md"], "media": { "requiredRoles": ["first_frame", "last_frame"] } },
+        { "id": "h3-local-reference", "targets": ["minimax_h3"], "task": "reference", "dialect": "local_h3", "resources": ["skills/minimax-h3/references/local-h3.md"], "media": { "requiredRolesAny": ["reference_image", "reference_video", "reference_audio"] } },
+        { "id": "h3-local-v2v", "targets": ["minimax_h3"], "task": "v2v", "dialect": "local_h3", "resources": ["skills/minimax-h3/references/local-h3.md"], "media": { "requiredRoles": ["reference_video"] } },
+        { "id": "h3-hosted-t2v", "targets": ["minimax_h3"], "task": "t2v", "dialect": "minimax_api", "resources": ["skills/minimax-h3/references/hosted-minimax.md"] },
+        { "id": "h3-hosted-i2v", "targets": ["minimax_h3"], "task": "i2v", "dialect": "minimax_api", "resources": ["skills/minimax-h3/references/hosted-minimax.md"], "media": { "requiredRolesAny": ["first_frame"] } },
+        { "id": "h3-hosted-first-last", "targets": ["minimax_h3"], "task": "first_last", "dialect": "minimax_api", "resources": ["skills/minimax-h3/references/hosted-minimax.md"], "media": { "requiredRoles": ["first_frame", "last_frame"] } },
+        { "id": "h3-hosted-reference", "targets": ["minimax_h3", "minimax_h3_max"], "task": "reference", "dialect": "minimax_api", "resources": ["skills/minimax-h3/references/hosted-minimax.md"], "media": { "requiredRolesAny": ["reference_image", "reference_video", "reference_audio"] } }
+      ]
+    },
+    {
+      "id": "qwen-image",
+      "label": "Qwen-Image 2.1 prompting",
+      "version": "1",
+      "entry": "skills/qwen-image/SKILL.md",
+      "sources": [
+        { "id": "qwen-image-21", "kind": "model-author", "title": "Qwen-Image 2.1 model-author repository", "url": "https://github.com/QwenLM/Qwen-Image-2.1", "reviewedAt": "2026-11-05" },
+        { "id": "qwen-image-comfy", "kind": "official", "title": "ComfyUI Qwen-Image 2.1 workflow guide", "url": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1", "reviewedAt": "2026-11-05" },
+        { "id": "qwen-local-guidance", "kind": "local-user-guidance", "title": "Existing Qwen-Image prompting skill and project model guide", "reviewedAt": "2026-11-05", "note": "Authored spatial counts and PE JSON output are not hard model requirements and are not this API's output contract." }
+      ],
+      "targets": [
+        { "id": "qwen_image", "modelVersion": "2.1", "versionRequired": true, "versionDialects": { "qwen_image_2_1": "2.1" }, "versionSource": "Explicit skill_model_version or the declared qwen_image_2_1 image dialect." }
+      ],
+      "matches": [
+        { "id": "qwen21-t2i", "targets": ["qwen_image"], "task": "t2i", "resources": ["skills/qwen-image/references/generation-and-text.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "qwen21-edit", "targets": ["qwen_image"], "task": "edit", "dialect": "qwen_image_2_1", "resources": ["skills/qwen-image/references/editing-and-references.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "qwen21-multi-reference", "targets": ["qwen_image"], "task": "multi_reference", "dialect": "qwen_image_2_1", "resources": ["skills/qwen-image/references/editing-and-references.md"], "media": { "imageModes": ["reference"], "minImages": 2 } },
+        { "id": "qwen21-outpaint", "targets": ["qwen_image"], "task": "outpaint", "dialect": "qwen_image_2_1", "resources": ["skills/qwen-image/references/rgba-and-outpainting.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "qwen21-rgba", "targets": ["qwen_image"], "task": "rgba", "resources": ["skills/qwen-image/references/rgba-and-outpainting.md"], "media": { "imageModes": ["description_only", "reference"], "requiresImagesWhenMode": ["reference"] } }
+      ]
+    },
+    {
+      "id": "flux-krea-image",
+      "label": "FLUX and Krea image prompting",
+      "version": "1",
+      "entry": "skills/flux-krea-image/SKILL.md",
+      "sources": [
+        { "id": "bfl-flux1", "kind": "model-author", "title": "Black Forest Labs FLUX.1 prompting guide", "url": "https://docs.bfl.ml/guides/prompting_summary", "reviewedAt": "2026-11-05" },
+        { "id": "bfl-kontext", "kind": "model-author", "title": "Black Forest Labs FLUX.1 Kontext guide", "url": "https://docs.bfl.ml/guides/prompting_guide_kontext_i2i", "reviewedAt": "2026-11-05" },
+        { "id": "bfl-flux2", "kind": "model-author", "title": "Black Forest Labs FLUX.2 prompting guide", "url": "https://docs.bfl.ai/guides/prompting_guide_flux2", "reviewedAt": "2026-11-05" },
+        { "id": "krea-models", "kind": "model-author", "title": "Krea 2 model and prompting guidance", "url": "https://www.krea.ai/blog/explorative-prompting-krea-2", "reviewedAt": "2026-11-05" },
+        { "id": "project-image-guides", "kind": "project-curated", "title": "Existing FLUX, Kontext, Krea, and Qwen model prompt guides", "reviewedAt": "2026-11-05" }
+      ],
+      "targets": [
+        { "id": "flux.1", "modelVersion": "1", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux.1_pro", "modelVersion": "1 Pro", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_kontext", "modelVersion": "1 Kontext", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_krea", "modelVersion": "1 Krea", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_2_dev", "modelVersion": "2 Dev", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_2_klein", "modelVersion": "2 Klein", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_2_max", "modelVersion": "2 Max", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_2_pro", "modelVersion": "2 Pro", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "flux_2_flex", "modelVersion": "2 Flex", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "krea_2_large", "modelVersion": "2 Large", "versionSource": "Exact canonical target ID in cinema_rules.target_models." },
+        { "id": "krea_2_turbo", "modelVersion": "2 Turbo", "versionSource": "Exact canonical target ID in cinema_rules.target_models." }
+      ],
+      "matches": [
+        { "id": "flux1-t2i", "targets": ["flux.1"], "task": "t2i", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux1-pro-t2i", "targets": ["flux.1_pro"], "task": "t2i", "dialect": "flux1_pro_original", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux1-pro-redux", "targets": ["flux.1_pro"], "task": "style_reference", "dialect": "flux1_pro_redux", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1, "maxImages": 1 } },
+        { "id": "flux1-edit", "targets": ["flux.1"], "task": "edit", "dialect": "flux1_img2img", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["starting_frame"], "minImages": 1 } },
+        { "id": "flux1-style-reference", "targets": ["flux.1"], "task": "style_reference", "dialect": "flux1_redux", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "kontext-edit", "targets": ["flux_kontext"], "task": "edit", "dialect": "flux_kontext_edit", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["starting_frame"], "minImages": 1 } },
+        { "id": "flux-krea-t2i", "targets": ["flux_krea"], "task": "t2i", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux-krea-edit", "targets": ["flux_krea"], "task": "edit", "dialect": "flux_krea_img2img", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["starting_frame"], "minImages": 1 } },
+        { "id": "flux2-dev-t2i", "targets": ["flux_2_dev"], "task": "t2i", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux2-dev-edit", "targets": ["flux_2_dev"], "task": "edit", "dialect": "flux2_dev", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "flux2-dev-multi", "targets": ["flux_2_dev"], "task": "multi_reference", "dialect": "flux2_dev", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 2 } },
+        { "id": "flux2-klein-t2i", "targets": ["flux_2_klein"], "task": "t2i", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux2-klein-edit", "targets": ["flux_2_klein"], "task": "edit", "dialect": "flux2_klein", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "flux2-klein-multi", "targets": ["flux_2_klein"], "task": "multi_reference", "dialect": "flux2_klein", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 2 } },
+        { "id": "flux2-other-t2i", "targets": ["flux_2_max", "flux_2_pro", "flux_2_flex"], "task": "t2i", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "flux2-other-edit", "targets": ["flux_2_max", "flux_2_pro", "flux_2_flex"], "task": "edit", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "flux2-other-multi", "targets": ["flux_2_max", "flux_2_pro", "flux_2_flex"], "task": "multi_reference", "resources": ["skills/flux-krea-image/references/flux-variants.md"], "media": { "imageModes": ["reference"], "minImages": 2 } },
+        { "id": "krea2-large-t2i", "targets": ["krea_2_large"], "task": "t2i", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "krea2-large-edit", "targets": ["krea_2_large"], "task": "edit", "dialect": "krea2_large_style", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["starting_frame"], "minImages": 1 } },
+        { "id": "krea2-large-style", "targets": ["krea_2_large"], "task": "style_reference", "dialect": "krea2_large_style", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } },
+        { "id": "krea2-turbo-t2i", "targets": ["krea_2_turbo"], "task": "t2i", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["description_only"], "maxImages": 0 } },
+        { "id": "krea2-turbo-edit", "targets": ["krea_2_turbo"], "task": "edit", "dialect": "krea2_turbo_style", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["starting_frame"], "minImages": 1 } },
+        { "id": "krea2-turbo-style", "targets": ["krea_2_turbo"], "task": "style_reference", "dialect": "krea2_turbo_style", "resources": ["skills/flux-krea-image/references/krea-variants.md"], "media": { "imageModes": ["reference"], "minImages": 1 } }
+      ]
+    }
+  ]
+}

@@ -1002,6 +1002,8 @@ export class ProjectManager {
       cameraAngles?: Record<string, unknown>;
       enhancementPreferences?: EnhancementPreferences;
       deletedImages?: string[];
+      globalPromptOverride?: string;
+      useGlobalPrompt?: boolean;
     },
     settingsOverride?: ProjectSettings,
   ): Promise<{ success: boolean; savedPath?: string; error?: string }> {
@@ -1187,6 +1189,8 @@ export class ProjectManager {
             camera_angles: additionalState?.cameraAngles || null,
             enhancement_preferences: additionalState?.enhancementPreferences || null,
             deleted_images: additionalState?.deletedImages || [],
+            global_prompt_override: additionalState?.globalPromptOverride || '',
+            use_global_prompt: additionalState?.useGlobalPrompt ?? false,
             saved_at: new Date().toISOString(),
           },
         }),
@@ -1225,6 +1229,8 @@ export class ProjectManager {
       camera_angles?: Record<string, unknown>;
       enhancement_preferences?: EnhancementPreferences;
       deleted_images?: string[];
+      global_prompt_override?: string;
+      use_global_prompt?: boolean;
       saved_at: string;
     };
     error?: string;

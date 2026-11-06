@@ -47,6 +47,7 @@ export default defineConfig({
       '/presets': { target: 'http://localhost:9800', changeOrigin: true },
       '/apply-preset': { target: 'http://localhost:9800', changeOrigin: true },
       '/settings': { target: 'http://localhost:9800', changeOrigin: true },
+      '/agent-settings': { target: 'http://localhost:9800', changeOrigin: true },
       '/credentials': { target: 'http://localhost:9800', changeOrigin: true },
       '/enhance-prompt': { target: 'http://localhost:9800', changeOrigin: true },
       '/prompt-enhancement': { target: 'http://localhost:9800', changeOrigin: true },

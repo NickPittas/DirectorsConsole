@@ -178,7 +178,9 @@ class ComfyUINodeDefinitions {
     this.requests.set(url, request);
     try {
       const definitions = await request;
-      this.cache.set(url, { definitions, timestamp: Date.now() });
+      if (this.requests.get(url) === request) {
+        this.cache.set(url, { definitions, timestamp: Date.now() });
+      }
       return definitions;
     } finally {
       if (this.requests.get(url) === request) this.requests.delete(url);
@@ -195,6 +197,14 @@ class ComfyUINodeDefinitions {
 
   getDefinitions(comfyUrl: string): ObjectInfo | null {
     return this.cache.get(normalizeUrl(comfyUrl))?.definitions || null;
+  }
+
+  getFreshDefinitionsSnapshot(comfyUrl: string): { definitions: ObjectInfo; capturedAt: string } | null {
+    const entry = this.cache.get(normalizeUrl(comfyUrl));
+    if (!entry || !Number.isFinite(entry.timestamp)) return null;
+    const age = Date.now() - entry.timestamp;
+    if (age < 0 || age >= this.cacheTTL) return null;
+    return { definitions: entry.definitions, capturedAt: new Date(entry.timestamp).toISOString() };
   }
 
   getNodeDefinition(nodeType: string, comfyUrl: string): NodeDefinition | null {

@@ -34,23 +34,43 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import html
+import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 # === PID LOCK FILE ===
 # Prevent duplicate start.py instances from running
 LOCK_FILE = Path(__file__).parent / ".start.pid"
+AGENT_GATEWAY_TEMP_FILES: set[Path] = set()
+
+
+def cleanup_agent_gateway_files() -> None:
+    """Remove this launcher's private one-use gateway bootstrap files."""
+    for path in tuple(AGENT_GATEWAY_TEMP_FILES):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            print("WARNING: Could not remove a temporary agent gateway file.", file=sys.stderr)
+            continue
+        AGENT_GATEWAY_TEMP_FILES.discard(path)
+
+
+atexit.register(cleanup_agent_gateway_files)
 
 
 def check_and_create_lock():
@@ -761,6 +781,7 @@ class ProcessManager:
         if platform.system() == "Windows":
             self._windows_cleanup_orphans()
 
+        cleanup_agent_gateway_files()
         log("SHUTDOWN", "All services stopped", Colors.GREEN)
 
     def _windows_cleanup_orphans(self) -> None:
@@ -1229,6 +1250,228 @@ def install_npm_dependencies(frontend_dir: Path) -> bool:
         return False
 
 
+def agent_gateway_data_directory() -> Path:
+    """Return the per-user directory shared with the gateway's Pi session store."""
+    home = Path.home()
+    if platform.system() == "Windows":
+        return home / "AppData" / "Local" / "DirectorsConsole" / "agent-gateway"
+    if platform.system() == "Darwin":
+        return home / "Library" / "Application Support" / "DirectorsConsole" / "agent-gateway"
+    return home / ".local" / "share" / "directors-console" / "agent-gateway"
+
+
+def write_private_gateway_file(name: str, content: str) -> Path:
+    """Write a short-lived launcher file under the user's private app-data directory."""
+    directory = agent_gateway_data_directory()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        os.chmod(directory, 0o700)
+    file_descriptor, raw_path = tempfile.mkstemp(prefix=f"{name}-", dir=directory)
+    path = Path(raw_path)
+    AGENT_GATEWAY_TEMP_FILES.add(path)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as file:
+            file.write(content)
+        if os.name != "nt":
+            os.chmod(path, 0o600)
+    except Exception:
+        cleanup_agent_gateway_files()
+        raise
+    return path
+
+
+def agent_gateway_node_status() -> tuple[bool, str]:
+    """Check the gateway's narrower Node engine without changing frontend support."""
+    node_path = shutil.which("node")
+    if not node_path:
+        return False, "Node.js is unavailable."
+    try:
+        result = subprocess.run(
+            [node_path, "--version"], capture_output=True, text=True, timeout=5
+        )
+    except Exception:
+        return False, "Node.js version could not be read."
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:\+.*)?", result.stdout.strip())
+    if result.returncode != 0 or not match:
+        return False, "Node.js version could not be read."
+    major, minor = int(match.group(1)), int(match.group(2))
+    if (major == 22 and minor >= 19) or major >= 24:
+        return True, f"Node.js {result.stdout.strip()} is supported."
+    return False, f"Node.js {result.stdout.strip()} is below the gateway minimum (22.19 or 24+)."
+
+
+def agent_gateway_install_status(gateway_dir: Path) -> tuple[bool, str]:
+    supported, message = agent_gateway_node_status()
+    if not supported:
+        return False, message
+    if not (gateway_dir / "dist" / "server.js").is_file():
+        return False, "Gateway build output is missing; run python start.py --setup."
+    if not (gateway_dir / "node_modules" / "@earendil-works" / "pi-coding-agent" / "package.json").is_file():
+        return False, "Gateway dependencies are missing; run python start.py --setup."
+    return True, message
+
+
+def setup_agent_gateway(gateway_dir: Path) -> bool:
+    """Install the pinned gateway lockfile without package lifecycle scripts, then build."""
+    supported, message = agent_gateway_node_status()
+    if not supported:
+        log("AGENT", f"Gateway setup skipped: {message}", Colors.YELLOW)
+        return False
+    npm_cmd = "npm.cmd" if platform.system() == "Windows" else "npm"
+    try:
+        log("AGENT", "Installing pinned gateway dependencies without lifecycle scripts...", Colors.CYAN)
+        installed = subprocess.run(
+            [npm_cmd, "ci", "--ignore-scripts"], cwd=gateway_dir, timeout=300
+        )
+        if installed.returncode != 0:
+            log("AGENT", "Gateway dependency setup failed.", Colors.YELLOW)
+            return False
+        built = subprocess.run([npm_cmd, "run", "build"], cwd=gateway_dir, timeout=300)
+        if built.returncode != 0:
+            log("AGENT", "Gateway build failed; normal launcher startup will keep it disabled.", Colors.YELLOW)
+            return False
+        log("AGENT", "Gateway dependencies and build are ready.", Colors.GREEN)
+        return True
+    except subprocess.TimeoutExpired:
+        log("AGENT", "Gateway setup timed out.", Colors.YELLOW)
+        return False
+    except Exception as e:
+        log("AGENT", f"Gateway setup failed: {e}", Colors.YELLOW)
+        return False
+
+
+def resolve_native_codex() -> Optional[str]:
+    """Find a native Codex executable without invoking it."""
+    system = platform.system()
+    if system == "Linux":
+        magic = (b"\x7fELF",)
+    elif system == "Windows":
+        magic = (b"MZ",)
+    elif system == "Darwin":
+        magic = (
+            b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+            b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
+        )
+    else:
+        return None
+    candidates = (
+        shutil.which("codex"),
+        Path.home() / ".local/share/mise/installs/codex/0.166.0/bin/codex",
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            native = Path(candidate).resolve(strict=True)
+            if native.name.lower() in ("codex", "codex.exe") and native.is_file():
+                with native.open("rb") as executable:
+                    header = executable.read(4)
+                if any(header.startswith(signature) for signature in magic):
+                    return str(native)
+        except (OSError, RuntimeError):
+            continue
+    return None
+
+
+def start_agent_gateway(
+    pm: ProcessManager,
+    gateway_dir: Path,
+    port: int,
+    origin: str,
+) -> tuple[Optional[subprocess.Popen], Optional[Path], str]:
+    """Start only the owned gateway process and prepare its one-use browser bootstrap."""
+    if not 1 <= port <= 65535:
+        log("AGENT", "Gateway disabled: its port must be between 1 and 65535.", Colors.YELLOW)
+        return None, None, ""
+    if is_port_in_use(port):
+        log("AGENT", f"Gateway disabled: port {port} is already in use; existing process left untouched.", Colors.YELLOW)
+        return None, None, ""
+
+    node_path = shutil.which("node")
+    if not node_path:
+        log("AGENT", "Gateway disabled: Node.js is unavailable.", Colors.YELLOW)
+        return None, None, ""
+
+    pairing_token = secrets.token_urlsafe(32)
+    credential_file: Optional[Path] = None
+    pairing_file: Optional[Path] = None
+    process: Optional[subprocess.Popen] = None
+    gateway_url = f"http://127.0.0.1:{port}"
+    try:
+        credential_file = write_private_gateway_file(
+            "launcher-credential", json.dumps({"pairingToken": pairing_token})
+        )
+        paired_url = (
+            f"{origin}/#dc_agent_gateway={quote(gateway_url, safe='')}"
+            f"&dc_agent_pair={pairing_token}"
+        )
+        redirect_html = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"referrer\" content=\"no-referrer\">"
+            f"<meta http-equiv=\"refresh\" content=\"0;url={html.escape(paired_url, quote=True)}\">"
+            "<title>Opening Director's Console</title></head>"
+            "<body>Opening the locally paired Director's Console tab…</body></html>"
+        )
+        pairing_file = write_private_gateway_file("browser-pairing", redirect_html)
+        gateway_env = os.environ.copy()
+        if "DC_CODEX_EXECUTABLE" not in gateway_env:
+            native_codex = resolve_native_codex()
+            if native_codex:
+                gateway_env["DC_CODEX_EXECUTABLE"] = native_codex
+        if gateway_env.get("DC_CODEX_EXECUTABLE"):
+            gateway_env.setdefault("DC_CODEX_HOME", gateway_env.get("CODEX_HOME") or str(Path.home() / ".codex"))
+        command = [
+            node_path,
+            str(gateway_dir / "dist" / "server.js"),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--origin",
+            origin,
+            "--bootstrap-file",
+            str(credential_file),
+        ]
+        kwargs = {
+            "cwd": gateway_dir,
+            "env": gateway_env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "bufsize": 1,
+            "universal_newlines": True,
+        }
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(command, **kwargs)
+        pm.processes["agent_gateway"] = process
+        import threading
+
+        threading.Thread(
+            target=stream_output,
+            args=(process, "AGENT", Colors.MAGENTA),
+            daemon=True,
+        ).start()
+        if not wait_for_health(f"{gateway_url}/health", timeout=10, prefix="AGENT"):
+            log("AGENT", "Gateway did not become ready; Director's Console will continue without agent sessions.", Colors.YELLOW)
+            pm.stop_process("agent_gateway")
+            cleanup_agent_gateway_files()
+            return None, None, ""
+        if credential_file.exists():
+            credential_file.unlink(missing_ok=True)
+            AGENT_GATEWAY_TEMP_FILES.discard(credential_file)
+        log("AGENT", f"Gateway ready at {gateway_url}; harness availability remains unconfigured until requested.", Colors.GREEN)
+        return process, pairing_file, gateway_url
+    except Exception as e:
+        log("AGENT", f"Gateway disabled after startup error: {e}", Colors.YELLOW)
+        if process and process.poll() is None:
+            pm.stop_process("agent_gateway")
+        cleanup_agent_gateway_files()
+        return None, None, ""
+
+
 def main():
     # Check for duplicate instance and create lock file
     check_and_create_lock()
@@ -1264,6 +1507,12 @@ Examples:
         type=int,
         default=5173,
         help="CPE Frontend port (default: 5173)",
+    )
+    parser.add_argument(
+        "--agent-gateway-port",
+        type=int,
+        default=9810,
+        help="Local Pi agent gateway port (default: 9810)",
     )
     parser.add_argument(
         "--no-orchestrator", action="store_true", help="Skip starting Orchestrator"
@@ -1303,6 +1552,8 @@ Examples:
     # Initialize environment manager
     env_manager = EnvironmentManager(script_dir)
 
+    gateway_dir = script_dir / "CinemaPromptEngineering" / "agent_gateway"
+
     # --- Setup Mode ---
     if args.setup:
         if not env_manager.setup_all(force_reinstall=args.force):
@@ -1315,11 +1566,22 @@ Examples:
             frontend_dir = script_dir / "CinemaPromptEngineering" / "frontend"
             install_npm_dependencies(frontend_dir)
 
+        if not args.no_frontend:
+            setup_agent_gateway(gateway_dir)
+
         log_header("Setup Complete!")
         print(color("  All environments are ready.", Colors.GREEN))
         print(color("  Run 'python start.py' to start all services.", Colors.GRAY))
         print()
         return
+
+    gateway_available = False
+    if not args.no_frontend:
+        gateway_available, gateway_message = agent_gateway_install_status(gateway_dir)
+        if gateway_available:
+            log("AGENT", f"Gateway startup available: {gateway_message}", Colors.GREEN)
+        else:
+            log("AGENT", f"Gateway disabled: {gateway_message}", Colors.YELLOW)
 
     # --- Verify Environments ---
     if not args.skip_verify:
@@ -1473,6 +1735,10 @@ Examples:
 
     # --- Start Frontend ---
     frontend_process = None
+    vite_ready = False
+    agent_gateway_process = None
+    agent_gateway_pairing_file = None
+    agent_gateway_url = ""
     if not args.no_frontend:
         log_header("Starting Frontend")
 
@@ -1530,8 +1796,6 @@ Examples:
                     # Wait for Vite to be ready
                     log("UI", "Waiting for Vite to compile...", Colors.YELLOW)
                     start_time = time.time()
-                    vite_ready = False
-
                     while time.time() - start_time < 60:
                         if frontend_process.poll() is not None:
                             log(
@@ -1570,6 +1834,19 @@ Examples:
                 except Exception as e:
                     log("UI", f"Failed to start frontend: {e}", Colors.RED)
 
+    # --- Start the optional local Pi gateway only alongside the app frontend ---
+    if args.no_frontend:
+        log("AGENT", "Gateway disabled for backend-only mode.", Colors.GRAY)
+    elif gateway_available and frontend_process and vite_ready:
+        agent_gateway_process, agent_gateway_pairing_file, agent_gateway_url = start_agent_gateway(
+            pm,
+            gateway_dir,
+            args.agent_gateway_port,
+            f"http://localhost:{args.frontend_port}",
+        )
+    elif gateway_available:
+        log("AGENT", "Gateway disabled because the frontend did not become ready.", Colors.YELLOW)
+
     # --- Summary ---
     log_header("Director's Console Running!")
 
@@ -1588,6 +1865,10 @@ Examples:
         print(
             f"    {color('Frontend:', Colors.GRAY)}      {color(f'http://localhost:{args.frontend_port}', Colors.GREEN)}"
         )
+    if agent_gateway_process:
+        print(
+            f"    {color('Agent Gateway:', Colors.GRAY)} {color(agent_gateway_url, Colors.MAGENTA)}"
+        )
 
     print()
     print(color("  Process IDs:", Colors.GRAY))
@@ -1599,8 +1880,18 @@ Examples:
     # Open browser
     if not args.no_browser and not args.no_frontend and frontend_process:
         time.sleep(2)
-        log("BROWSER", f"Opening http://localhost:{args.frontend_port}", Colors.MAGENTA)
-        webbrowser.open(f"http://localhost:{args.frontend_port}")
+        if agent_gateway_process and agent_gateway_pairing_file:
+            log("BROWSER", "Opening Director's Console with a one-use local pairing bootstrap.", Colors.MAGENTA)
+            if not webbrowser.open(agent_gateway_pairing_file.as_uri()):
+                log("BROWSER", f"Open this private local pairing file manually: {agent_gateway_pairing_file}", Colors.YELLOW)
+        else:
+            log("BROWSER", f"Opening http://localhost:{args.frontend_port}", Colors.MAGENTA)
+            webbrowser.open(f"http://localhost:{args.frontend_port}")
+    elif args.no_browser and agent_gateway_process and agent_gateway_pairing_file:
+        print(color(
+            f"  Manual local pairing: open {agent_gateway_pairing_file} in a browser within 5 minutes.",
+            Colors.YELLOW,
+        ))
 
     print()
     print(color("  Press Ctrl+C to stop all services", Colors.GRAY))

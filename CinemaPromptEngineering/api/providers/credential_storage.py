@@ -12,13 +12,13 @@ import hashlib
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,47 @@ class StoredSettings(BaseModel):
     selected_model: Optional[str] = None
     target_model: Optional[str] = None
     providers: dict[str, ProviderCredentials] = {}
+
+
+class AgentSelection(BaseModel):
+    """Non-secret, exact harness model selection."""
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1]
+    harnessId: Literal["pi", "codex", "claude-code"]
+    provider: StrictStr = Field(min_length=1, max_length=128)
+    modelId: StrictStr = Field(min_length=1, max_length=256)
+    thinkingLevel: Literal["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] | None = None
+
+    @field_validator("provider", "modelId")
+    @classmethod
+    def require_nonblank_identity(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("provider and modelId must be nonblank without surrounding whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def validate_thinking_level(self) -> "AgentSelection":
+        if self.thinkingLevel == "ultra" and self.harnessId != "codex":
+            raise ValueError("ultra is supported only by the Codex harness.")
+        return self
+
+
+class AgentSettingsRecord(BaseModel):
+    """Versioned, non-secret agent selection and migration state."""
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1]
+    migrationState: Literal["unconfigured", "legacy_explicit", "harness_configured"] = "unconfigured"
+    selection: AgentSelection | None = None
+
+    @model_validator(mode="after")
+    def validate_migration_state(self) -> "AgentSettingsRecord":
+        if self.migrationState == "harness_configured" and self.selection is None:
+            raise ValueError("harness_configured requires a harness selection")
+        if self.migrationState == "unconfigured" and self.selection is not None:
+            raise ValueError("unconfigured cannot contain a harness selection")
+        return self
 
 
 # =============================================================================
@@ -297,6 +338,23 @@ class CredentialStorage:
                 (key, value, datetime.utcnow().isoformat())
             )
             conn.commit()
+
+    def get_agent_settings(self) -> AgentSettingsRecord:
+        """Load the single versioned agent settings record."""
+        value = self.get_setting("agent_settings")
+        if value is None:
+            return AgentSettingsRecord(schemaVersion=1)
+        try:
+            return AgentSettingsRecord.model_validate_json(value)
+        except Exception as exc:
+            logger.error("[Storage] Stored agent settings record is invalid")
+            raise ValueError("Stored agent settings are invalid and were not changed.") from exc
+
+    def set_agent_settings(self, settings: AgentSettingsRecord) -> AgentSettingsRecord:
+        """Validate and atomically replace the single agent settings record."""
+        validated = AgentSettingsRecord.model_validate(settings.model_dump(mode="python"))
+        self.set_setting("agent_settings", validated.model_dump_json())
+        return validated
     
     # -------------------------------------------------------------------------
     # Credentials (sensitive, encrypted)

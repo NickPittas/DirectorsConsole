@@ -1,5 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { api } from '@/api/client';
+import { AgentHarnessSettings } from './AgentHarnessSettings';
+import { getAgentSettingsState, subscribeAgentSettings } from '@/services/agent-gateway-client';
 
 // =============================================================================
 // Pywebview Detection and Helper Functions
@@ -788,6 +790,8 @@ export function saveTargetModel(model: string): void {
 // =============================================================================
 
 export default function Settings({ isOpen, onClose }: SettingsProps) {
+  const agentSettings = useSyncExternalStore(subscribeAgentSettings, getAgentSettingsState, getAgentSettingsState);
+  const legacySelected = agentSettings.record?.migrationState === 'legacy_explicit';
   // State
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<Record<string, ProviderCredentials>>({});
@@ -1803,7 +1807,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
     >
       <div style={styles.panel}>
         <header style={styles.header}>
-          <h2 id="settings-title" style={styles.headerTitle}>AI Provider Settings</h2>
+          <h2 id="settings-title" style={styles.headerTitle}>Agent Settings</h2>
           <button
             style={styles.closeButton}
             onClick={handleCancel}
@@ -1825,6 +1829,16 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
         </header>
 
         <div style={styles.content}>
+          <AgentHarnessSettings />
+          {legacySelected && (
+          <details style={{ border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '0.85rem 1rem', marginBottom: '1rem' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 500 }}>
+              Legacy direct-provider compatibility and credentials
+            </summary>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: 1.45, margin: '0.65rem 0 1rem' }}>
+              Existing provider credentials and model settings remain stored. Choose “Use legacy direct provider” above before legacy enhancement can run. This section does not copy credentials into a harness.
+            </p>
+            <div style={{ paddingTop: '0.25rem' }}>
           <section style={styles.section}>
             <h3 style={styles.sectionTitle}>Compatible Endpoints</h3>
             <div style={styles.inputGroup}>
@@ -2412,6 +2426,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
               Select an AI provider to configure it for prompt enhancement.
             </div>
           )}
+            </div>
+          </details>
+          )}
         </div>
 
         <footer style={styles.footer}>
@@ -2421,7 +2438,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           >
             Cancel
           </button>
-          <button
+          {legacySelected && <button
             style={{ 
               ...styles.button, 
               ...styles.buttonPrimary,
@@ -2430,8 +2447,8 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
             onClick={handleSave}
             disabled={!hasUnsavedChanges}
           >
-            Save Changes
-          </button>
+            Save legacy changes
+          </button>}
         </footer>
       </div>
 

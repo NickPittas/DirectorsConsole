@@ -635,6 +635,53 @@ class OrchestratorManager {
   }
 }
 
+export interface ManagedDependencyPlanRequest {
+  graph_fingerprint: string;
+  required_node_classes: string[];
+  dependencies: Array<Record<string, unknown>>;
+}
+
+async function backendCapabilityRequest<T>(
+  orchestratorUrl: string,
+  backendId: string,
+  path: string,
+  body?: ManagedDependencyPlanRequest,
+): Promise<T> {
+  const base = new URL(orchestratorUrl);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+    throw new Error('The configured Orchestrator URL is invalid for a capability request.');
+  }
+  const response = await fetch(`${base.toString().replace(/\/$/, '')}/api/backends/${encodeURIComponent(backendId)}/${path}`, {
+    method: body ? 'POST' : 'GET',
+    ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(15_000),
+    redirect: 'error',
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(typeof detail?.detail === 'string' ? detail.detail : `Orchestrator capability request failed with HTTP ${response.status}.`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Inspect the exact managed backend ID selected by Storyboard. */
+export function inspectManagedBackendCapabilities(
+  orchestratorUrl: string,
+  backendId: string,
+  refresh = false,
+): Promise<Record<string, unknown>> {
+  return backendCapabilityRequest(orchestratorUrl, backendId, `capabilities${refresh ? '?refresh=true' : ''}`);
+}
+
+/** Build a manual dependency report for the selected managed backend. */
+export function planManagedBackendDependencies(
+  orchestratorUrl: string,
+  backendId: string,
+  request: ManagedDependencyPlanRequest,
+): Promise<Record<string, unknown>> {
+  return backendCapabilityRequest(orchestratorUrl, backendId, 'dependency-plan', request);
+}
+
 // Singleton instance
 export const orchestratorManager = new OrchestratorManager();
 

@@ -6,7 +6,7 @@ import {
   type VersionedDraftRecord,
 } from './session-draft-storage';
 
-export type RecoveryTab = 'cinema' | 'storyboard' | 'gallery';
+export type RecoveryTab = 'cinema' | 'storyboard' | 'gallery' | 'agent';
 
 export interface StoryboardDraftState {
   activeTab: string;
@@ -67,7 +67,7 @@ function isBlob(value: unknown): value is Blob {
 }
 
 function isRecoveryTab(value: unknown): value is RecoveryTab {
-  return value === 'cinema' || value === 'storyboard' || value === 'gallery';
+  return value === 'cinema' || value === 'storyboard' || value === 'gallery' || value === 'agent';
 }
 
 export function isSessionDraftData(value: unknown): value is SessionDraftData {
@@ -189,6 +189,11 @@ export async function readRecoverableActiveDraft(): Promise<VersionedDraftRecord
 export interface IdentityTransitionOptions {
   /** Explicit Discard & New/Start new skips the old payload write. */
   discard?: boolean;
+  assertCurrent?: () => void;
+  /** Must be synchronous; runs after the new identity has been published. */
+  commit?: () => void;
+  /** Internal: activateSessionIdentity clears the pointer in the queued transition. */
+  clearActivePointer?: boolean;
 }
 
 export async function activateSessionIdentity(
@@ -196,8 +201,7 @@ export async function activateSessionIdentity(
   identity: string,
   options: IdentityTransitionOptions = {},
 ): Promise<void> {
-  await controller.transitionIdentity(identity, options);
-  await clearActiveDraftPointer();
+  await controller.transitionIdentity(identity, { ...options, clearActivePointer: true });
 }
 
 export class SessionDraftController {
@@ -247,7 +251,15 @@ export class SessionDraftController {
     const oldIdentity = this.identity;
     const oldGeneration = this.generation;
     const transition = this.queue.then(async () => {
-      if (identity === this.identity) return;
+      options.assertCurrent?.();
+      if (identity === this.identity) {
+        if (options.clearActivePointer) {
+          await clearActiveDraftPointer(options.assertCurrent, () => oldGeneration === this.generation && oldIdentity === this.identity);
+          options.assertCurrent?.();
+        }
+        options.commit?.();
+        return;
+      }
 
       if (!options.discard && this.dirty && this.data && oldIdentity) {
         // A save can overlap updates. Keep taking the latest revision until the
@@ -256,6 +268,7 @@ export class SessionDraftController {
           const revision = this.revision;
           const snapshot = this.data;
           const prepared = await prepareSessionDraft(snapshot);
+          options.assertCurrent?.();
           if (oldGeneration !== this.generation || oldIdentity !== this.identity) return;
           try {
             await saveDraft({ version: 1, identity: oldIdentity, updatedAt: Date.now(), data: prepared }, { activate: true });
@@ -265,6 +278,7 @@ export class SessionDraftController {
             }
             throw error;
           }
+          options.assertCurrent?.();
           if (revision === this.revision && oldIdentity === this.identity) {
             this.dirty = false;
             this.setStatus({ state: 'saved' });
@@ -272,11 +286,17 @@ export class SessionDraftController {
         }
       }
 
+      if (options.clearActivePointer) {
+        await clearActiveDraftPointer(options.assertCurrent, () => oldGeneration === this.generation && oldIdentity === this.identity);
+        options.assertCurrent?.();
+      }
+      options.assertCurrent?.();
       this.generation += 1;
       this.identity = identity;
       this.revision += 1;
       this.dirty = false;
       if (this.status.state === 'failed') this.setStatus({ state: 'idle' });
+      options.commit?.();
     });
     this.queue = transition.catch(() => undefined);
     return transition;

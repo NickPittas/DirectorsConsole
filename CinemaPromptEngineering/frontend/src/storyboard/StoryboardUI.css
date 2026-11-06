@@ -43,6 +43,7 @@
 
 .storyboard-ui {
   display: flex;
+  position: relative;
   flex-direction: column;
   height: 100%;
   background-color: var(--sb-bg-darkest);
@@ -1896,7 +1897,7 @@
 
 /* Show Log Button */
 .show-log-btn {
-  position: fixed;
+  position: absolute;
   bottom: 20px;
   right: 20px;
   padding: 8px 16px;
