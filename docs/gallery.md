@@ -2,10 +2,10 @@
 
 [← Back to the README](../README.md)
 
-Gallery is the project media browser for generated images and videos. Open the
-**Gallery** tab beside Cinema and Storyboard, then choose the project folder in
-the folder tree. The tree shows the project hierarchy; select a folder to load
-its files.
+Gallery browses images and videos from its own selected server and folder. Open
+the **Gallery** tab beside Cinema and Storyboard, enter the root folder and click
+**Open folder**, then browse its folder tree. Gallery works without selecting a Console
+project; its metadata remains stored per project folder.
 
 ## Browse media
 
@@ -51,7 +51,8 @@ files are no longer needed.
 
 ## Send media to Storyboard
 
-A short reference-to-generation handoff:
+This optional reference-to-generation handoff is useful when you want to use a
+Gallery file as a Storyboard workflow input:
 
 1. Select the project folder and choose an image or video.
 2. Open its context menu and choose **Send to Storyboard**.
@@ -65,6 +66,30 @@ parameters in Storyboard. Gallery batch renames also update matching
 Storyboard panel image references. The handoff sets a Storyboard input; it
 does not claim that source pixels are sent to an LLM, nor that every model or
 workflow supports every input type.
+
+## Embedded agent
+
+One Pi/Codex chat is shared across tabs; its model is separate from generation
+targets. Gallery selects its own server/folder and needs no Console project or
+Prompt Engineer handoff. Ask the agent to inspect media or recipes, propose,
+create, or modify workflows, save/attach them, expose controls, run jobs, and
+inspect results. Backend models/custom nodes must be installed; the agent
+cannot install them. This is not full manual-feature parity. Pi has manual
+workflow/render/media-inspection evidence; Gallery mutations are unverified.
+Codex is catalog/login discovery only, with no accepted render.
+
+Chat images send pixels to compatible models; video uses up to three sampled
+frames, audio metadata only, and the shared media library is in memory.
+**Thinking** is inline in collapsed replies; **Application actions** are
+collapsed, with no raw-arguments panel. **New conversation** starts a session,
+not a project reset.
+
+![Gallery with the embedded agent](../Images/agent-workspace/gallery.png)
+
+*Fresh unpaired standby: no model selected or folder open; layout only, no generated result.*
+
+See [agent setup and limits](agents.md) and the [current verification
+report](plans/agent-integration-live-status-2026-11-06.md).
 
 See [Cinema](cinema.md) for enhancement-versus-render guidance and
 [Storyboard](storyboard.md) for workflow and generation guidance. For safe

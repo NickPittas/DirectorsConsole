@@ -1,5 +1,7 @@
 # Session recovery and autosave
 
+## Application draft recovery
+
 The app keeps one versioned IndexedDB draft per session identity in `directors-console-session-drafts`.
 
 - A known saved project uses its normalized project JSON path as its identity.
@@ -15,3 +17,11 @@ The app keeps one versioned IndexedDB draft per session identity in `directors-c
 - Corrupt, unsupported, or unreadable snapshots are not deleted automatically. The recovery screen offers Retry, explicit confirmed Discard of only the active target, or confirmed Start new; a malformed pointer can be cleared without deleting archived records.
 
 Checks use fake IndexedDB and no provider, ComfyUI, personal browser storage, or user workflow fixtures. Browser quota behavior is represented only by the adapter's failure-boundary simulation, not a real quota exhaustion test.
+
+## Embedded agent conversation and actions
+
+IndexedDB drafts and saved project JSON files contain application state; they do not contain the embedded agent's visible chat transcript, chat draft, attachments, activity feed, or media cards. Those UI items are held in memory. A native Pi or Codex harness may persist its own session, but the app does not automatically restore the visible chat transcript from native session history after a restart. Codex restart restoration is not implemented or live-accepted.
+
+**New conversation** starts a fresh harness context and clears the current visible chat, chat draft, and activity feed, independently of the active project. It does not create a project, change the active project, or log out or clear installed harness credentials.
+
+An unknown generation-submission outcome is not retried automatically. Inspect the backend and project outputs manually before deciding what to do. Application actions carry the captured project activation and revisions; stale targets are rejected at guarded action boundaries. Live acceptance covers rejection after an activation change before dispatch; cancellation during an already-awaited write remains unverified.

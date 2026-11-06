@@ -5,8 +5,9 @@
 Cinema Prompt Engineering (CPE) turns a structured cinematography or animation
 configuration into prompt text. It is a prompt-writing tool, not a renderer:
 CPE does **not** render an image or video, upload a prompt to a generator, or
-run a ComfyUI workflow. Use [Storyboard](storyboard.md) when you are ready to
-execute a workflow.
+run a ComfyUI workflow. Storyboard is an optional place to continue with a
+workflow; CPE and the other applications work independently, with no required
+Prompt Engineer handoff.
 
 ## Four-step start
 
@@ -15,9 +16,9 @@ execute a workflow.
    film or animation preset. Applying a preset fills a compatible starting
    configuration; you can still tune it.
 3. **Tune the configuration.** Adjust the fields for the shot or style.
-4. **Choose a target and generate.** Select a generation target, then choose
+4. **Choose a target and generate.** Select a prompt target, then choose
    **Generate** for rule-based prompt text or **Enhance with AI** for LLM-written
-   text. Send the version you want to Storyboard.
+   text. Send the version you want to Storyboard if you plan to use a workflow.
 
 The interface validates combinations as you work. Invalid choices may be
 filtered or disabled, with messages explaining conflicts.
@@ -102,10 +103,10 @@ not a second target selector. If a target, variant, or mode change conflicts
 with attachments, CPE preserves them and blocks enhancement until resolved.
 
 When **Enhance with AI** runs, CPE sends the full active configuration,
-selected preset/style JSON, and motion context, including current fields that
-are empty, future-facing, or arrays. Explicit edit instructions take priority
-over a pictured pose, but that is an instruction to the enhancer, not a
-promise that the model will obey it.
+selected preset/style JSON, motion context, and applicable model/task skills,
+including current fields that are empty, future-facing, or arrays. Explicit
+edit instructions take priority over a pictured pose, but that is an instruction
+to the enhancer, not a promise that the model will obey it.
 
 Image pixels go only to the chosen enhancement LLM when Enhance is clicked;
 it must support image input. This implies no target-generator execution/upload,
@@ -115,6 +116,28 @@ reference-generation workflow.
 Example: attach a photo of a person and write, “Keep the same person lying
 down.” This requests a pose change; it does not claim the photographed person
 was already lying down.
+
+## Embedded agent
+
+The shared chat is beside all three apps; its Pi/Codex model is separate from
+prompt and render targets. Ask for Prompt Engineer constraints or style
+explicitly; ordinary prompts do not inherit them. CPE **Enhance with AI** still
+uses active cinematic settings, preset/style, and model/task skills. Chat image
+attachments send pixels to compatible models; video uses up to three sampled
+frames, audio is metadata-only, and the shared media library is in memory.
+
+The header is compact. **Thinking** expands inside each reply, and
+**Application actions** starts collapsed; there is no raw-arguments panel. **New
+conversation** starts a fresh agent session, not a project reset. Pi has manual
+workflow/render evidence; Codex has catalog/login discovery only, with no
+accepted render. Agent actions do not cover every manual feature.
+
+![CPE with the embedded agent](../Images/agent-workspace/cinema.png)
+
+*Fresh unpaired standby: no model selected; layout only, no generated result.*
+
+See [agent setup and limits](agents.md) and the [current verification
+report](plans/agent-integration-live-status-2026-11-06.md).
 
 ## Related guides
 

@@ -4,6 +4,7 @@
 
 - Python 3.11 or newer
 - Node.js 22.13+ or 24+ with npm
+- For the optional agent gateway: Node.js `^22.19` or `>=24`
 - A ComfyUI node is only required for live rendering; the checks below use mocks and do not contact providers or render nodes.
 
 ## Fresh checkout setup
@@ -19,6 +20,10 @@ python -m pip install -r requirements-dev.txt
 cd CinemaPromptEngineering/frontend
 npm ci
 cd ../..
+cd CinemaPromptEngineering/agent_gateway
+npm ci
+npm run build
+cd ../..
 ```
 
 The root requirements file includes both Python services and the test tools. The normal runtime launcher remains:
@@ -27,13 +32,21 @@ The root requirements file includes both Python services and the test tools. The
 python start.py
 ```
 
-On a clean workstation, `python start.py --setup` provisions the launcher's per-service environments before starting services.
+On a clean workstation, `python start.py --setup` provisions the launcher's per-service environments and exits. Run `python start.py` afterward to start the services.
+
+The optional gateway supports Pi **1.5.0** and native Codex **0.166.0**. It reuses the installed harness login; do not create a new account or password for it. Do not use a `mise` wrapper to mutate global configuration. Use the existing launcher for setup and startup.
+
+The shared agent conversation is project-free. Application actions are scoped to the originating session owner and project activation, and reject stale targets. Agent text and activity stream to the browser over server-sent events (SSE); workflow execution still goes directly from the frontend to the selected ComfyUI backend.
 
 Provider setup is documented once in the [README provider guide](../README.md#ai-llm-provider-setup): use a Google AI Studio API key for `google` / **Google AI (Gemini)**, and use the private CPE `.env` only for authorized Antigravity OAuth app configuration. Do not put real keys, client secrets, or tokens in the checkout, frontend `VITE_*` variables, fixtures, logs, or issues. The offline checks below do not contact providers.
 
-## One offline regression command
+## Manual verification and automated checks
 
-Run this from the repository root after setup:
+For implementation work, the parent agent first reviews the changes and manually verifies the live application. Do not create, generate, or run automated tests or regression checks until that manual verification is complete and the user explicitly approves them. The commands below are references for use only after both conditions are met; they were not run for this documentation change.
+
+### Offline regression command
+
+With the required approval, run this from the repository root after setup:
 
 ```bash
 python scripts/check.py
@@ -50,7 +63,9 @@ for test in tests/test_comfyui_websocket_node.js tests/test_oauth_sync.js tests/
 (cd CinemaPromptEngineering/frontend && npm run build)
 ```
 
-## Current validation snapshot
+## Historical tooling-refresh validation snapshot
+
+This records a separate tooling refresh and is not validation of the current documentation change.
 
 Latest tooling-refresh evidence:
 

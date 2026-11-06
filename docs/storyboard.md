@@ -3,12 +3,11 @@
 [← Back to the README](../README.md)
 
 Storyboard is the production canvas for turning loaded ComfyUI workflows into
-repeatable image and video jobs. Cinema's text-oriented configuration helps
-shape the prompt, while Storyboard builds and submits the selected workflow to
-ComfyUI. Depending on the loaded workflow, custom nodes, and installed weights,
-a panel can run image generation, image editing/reference work, upscaling, or
-video generation. Storyboard does not promise that every panel supports every
-media type.
+repeatable image and video jobs. Cinema can provide optional prompt text, while
+Storyboard builds and submits the selected workflow to ComfyUI. Depending on
+the loaded workflow, custom nodes, and installed weights, a panel can run image
+generation, image editing/reference work, upscaling, or video generation.
+Storyboard does not promise that every panel supports every media type.
 
 ## First shot
 
@@ -121,14 +120,14 @@ action. Gallery can also restore a compatible workflow and parameters
 from ComfyUI metadata. The selected workflow still determines what can be
 submitted.
 
-Do not confuse those workflow media uploads with **Enhance with AI**. The
-Storyboard enhancement composer sends the active CPE configuration, preset,
-and style context to the enhancer. For video targets it also sends the
-confirmed dialect/task and confirmed media binding roles, order, and per-kind
-ordinal labels. It sends metadata only: no image pixels, video frames, audio,
-path, URL, or data URL is passed to the LLM. The enhancer does not inspect the
-source asset and does not execute the ComfyUI workflow. It uses the caller's
-confirmed mapping rather than inventing identity or first-frame support.
+Do not confuse those workflow media uploads with Console **Enhance with AI**.
+That standalone prompt flow uses its own prompt target/task and confirmed media
+binding roles, order, and per-kind ordinal labels, independent of Prompt
+Engineer's configuration, preset, or style. It sends metadata only: no image
+pixels, video frames, audio, path, URL, or data URL is passed to the LLM. The
+enhancer does not inspect the source asset or execute the ComfyUI workflow; it
+uses the caller's confirmed mapping rather than inventing identity or
+first-frame support.
 
 See [Prompt enhancement profiles](../Documentation/PROMPT_ENHANCEMENT_PROFILES.md)
 for target and video-task details. Provider setup is in [providers.md](providers.md).
@@ -173,6 +172,29 @@ busy generations rather than submitting a replacement job.
 ![Storyboard Node Metrics and Selection](../Images/Storyboard%20Node%20Metrics%20and%20Selection.png)
 
 *Target Nodes and metrics show selected backends and current resource readings (earlier layout reference).*
+
+## Embedded agent
+
+Shared chat is beside all three apps; Pi/Codex model choice is separate from
+workflow/render targets. Ask it to inspect recipes; propose, create, or modify
+workflows; save/attach, expose controls, run jobs, and inspect results. This
+does not cover every manual feature. Backends need installed models and custom
+nodes; agent installation is not wired. Pi has manual workflow/render
+evidence; Codex has catalog/login discovery only, with no accepted render.
+
+Console **Enhance** uses its own prompt target/task and confirmed media-binding
+metadata, independent of Prompt Engineer settings. Chat images send pixels to
+compatible models; video uses up to three sampled frames, audio is metadata-only,
+and the shared media library is in memory. **Thinking** is inline in collapsed
+replies; **Application actions** are collapsed, with no raw-arguments panel.
+**New conversation** starts an agent session, not a project reset.
+
+![Storyboard with the embedded agent](../Images/agent-workspace/console.png)
+
+*Fresh unpaired standby: no model or managed render nodes; layout only, no generated result.*
+
+See [agent setup and limits](agents.md) and the [current verification
+report](plans/agent-integration-live-status-2026-11-06.md).
 
 ## Related documentation
 

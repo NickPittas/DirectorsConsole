@@ -2,7 +2,26 @@
 
 Prompt enhancement is available now in both the **Cinema Prompt Engineering** page and the **Storyboard** page. The backend profile registry is the source of truth for video targets, tasks, dialects, reference styles, and source links; image targets use the canonical target catalog and shared family guides instead of the video profile registry.
 
-A **target model** is the image/video generator whose prompt is being written. The **enhancing LLM provider and model** are separate: they rewrite the text and are configured in Settings. Selecting an LLM provider does not select a generation target.
+A **target model** is the image/video generator whose prompt is being written. The **enhancing harness and model** are separate: select Pi or Codex in Settings, or explicitly opt into the legacy direct-provider path. Selecting an enhancing model does not select a generation target. See [agent setup](../docs/agents.md).
+
+## Harnesses and task-specific skills
+
+Prompt Engineer enhancement retains its selected cinematic configuration and preset/style.
+Console enhancement uses its own standalone target/task context and does not read Prompt
+Engineer settings. The shared agent can read cinematic constraints when explicitly asked;
+ordinary chat, Console execution, and Gallery operations do not require them.
+
+The local skill catalog adds exact model/version/task/dialect/adapter guidance. The Prompt
+Engineer task selector offers declared profiles; missing choices or incompatible media
+block enhancement with guidance rather than silently choosing another task. Independent
+agent guidance is available without an open Console project or Prompt Engineer handoff.
+See the [resource catalog](../CinemaPromptEngineering/agent_resources/README.md).
+
+Manual Storyboard Enhance media mappings remain metadata-only. Attachments in the agent
+chat are a separate path: compatible models receive actual image pixels or sampled video
+frames, while audio remains metadata-only. Harness transport limits also apply: up to four
+images, 6 MiB per image and 8 MiB combined; model-specific limits can be lower. Video
+sampling and images share the turn's image budget.
 
 These profiles guide prompt text and attachment formatting only. They do not establish local weights, ComfyUI nodes, provider credentials, account or region access, generator upload/execution, or visual quality. CPE image attachments are separate from Storyboard's legacy metadata-only media mappings.
 
@@ -10,7 +29,7 @@ These profiles guide prompt text and attachment formatting only. They do not est
 
 1. Choose a canonical target from the **General**, **Image**, or **Video** target dropdown.
 2. When multiple variants are available, choose the variant beside the target in the existing toolbar. Without attachments this control selects the video prompting dialect; with attachments it selects the documented image variant/workflow.
-3. Configure the enhancing LLM provider/model in **Settings**.
+3. Choose a harness/model in **Settings**, or explicitly select the legacy direct provider.
 4. Enter a scene idea and cinematography settings. Optionally click **+** or drop PNG/JPEG/WebP images into the composer, select their **Image use**, then click **Enhance with AI**. Images alone are also accepted.
 5. Review or copy the AI-Enhanced Prompt, or click **Send to Storyboard**. The scene prompt is presented as a full-width row above the model-selection controls.
 
@@ -140,4 +159,10 @@ The profiles endpoint remains authoritative for clients: `GET /prompt-enhancemen
 
 ## Verification
 
-Offline lint, TypeScript/build checks, Python compilation, and allowed-path diff checks pass. Rendered UI, live provider/account, paid generation behavior, visual quality, and a complete security audit were not verified; automated tests were not run under the user constraints.
+The earlier profile implementation was checked offline with lint, TypeScript/build,
+Python compilation, and diff inspection. Subsequent manual Pi checks cover independent
+Console enhancement, workflows, rendering and project operations. Codex installed-login
+and catalog discovery pass; authenticated application execution remains outstanding.
+These results do not establish every profile, provider, account, or visual outcome. See
+the [current verification report](../docs/plans/agent-integration-live-status-2026-11-06.md).
+No automated tests or formal security audit were performed for the agent integration.

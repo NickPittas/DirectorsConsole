@@ -2,6 +2,16 @@
 
 This file records dated project milestones from repository history; entries are not GitHub release tags. See the [README changelog](README.md#changelog) for the latest highlights.
 
+## 2026-11-06 — Embedded agents and independent application control
+
+Source commit: `536a584`. This is a dated project milestone, not a version or release tag.
+
+- Added explicit Pi/Codex installed-harness selection and reuse of the existing local authentication. The 2026-11-06 local inventory snapshot exposed 65 Pi models and eight Codex model metadata entries; those counts are machine- and account-specific, not universal availability guarantees.
+- Added one embedded chat beside the three independent applications, with attachments, expandable thinking and action details, a compact header, and **New conversation**. Prompt Engineer constraints are optional and explicit; model/task guidance and skills support task-specific prompting.
+- Added curated cached ComfyUI workflows and controls to propose, preview, save, and attach custom workflows. Added per-backend inspection and model-installation APIs; agent-triggered installation remains restricted and unwired.
+- Added revision-aware durable generation journaling and guarded project operations, plus fixes for browser CORS preflight and native executable discovery through installed harnesses and `mise` shims.
+- Pi has documented manual workflow, rendering, and project-operation acceptance. Codex installed-login reuse and catalog metadata discovery are verified, but authenticated application execution and restart recovery are not. No automated tests were run. This milestone does not claim full human/UI parity, arbitrary optimized LoRA handling, or automatic model installation.
+
 ## 2026-10-02 — Image-aware prompt enhancement
 
 Source commit: `ab0f0c6` (`feat: add image-aware prompt enhancement [skip ci]`).

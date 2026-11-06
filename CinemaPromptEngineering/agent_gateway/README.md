@@ -1,6 +1,6 @@
 # Director's Console agent gateway
 
-The gateway is a local Node HTTP service around the pinned Pi adapter. Importing
+The gateway is a local Node HTTP service around the Pi and native Codex adapters. Importing
 the library has no side effects; only `dist/server.js` starts a listener. The
 launcher starts it only when the frontend is ready and its optional dependencies
 and build output are present. Missing dependencies, an unsupported Node version,

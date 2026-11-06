@@ -2,7 +2,7 @@
 
 **Design the shot. Run the workflow. Keep the results together.**
 
-Director's Console brings cinematic prompt design, reference-driven image and video workflows, and project media management into one workspace for filmmakers and AI artists. Author a shot in Cinema Prompt Engineering, render it through ComfyUI in Storyboard, and review the results in Gallery.
+Director's Console brings cinematic prompt design, ComfyUI image and video workflows, and media management into one workspace. Cinema Prompt Engineering, Storyboard (the Director Console), and Gallery are independent applications that can exchange prompts and media. An embedded agent can work across them from any tab; using Console or Gallery does not require a Prompt Engineer handoff.
 
 *Project Eliot*
 
@@ -16,6 +16,7 @@ Director's Console brings cinematic prompt design, reference-driven image and vi
 - [Cinema Prompt Engineering](#cinema-prompt-engineering)
 - [Storyboard](#storyboard)
 - [Gallery](#gallery)
+- [Embedded Agent](#embedded-agent)
 - [Installation and Quick Start](#installation-and-quick-start)
 - [AI LLM Provider Setup](#ai-llm-provider-setup)
 - [Architecture](#architecture)
@@ -31,6 +32,7 @@ Director's Console brings cinematic prompt design, reference-driven image and vi
 - **Per-shot control** — Keep panel-specific parameters, versions, notes, and history together.
 - **Parallel rendering** — Select multiple ComfyUI nodes and follow progress for each job.
 - **Project media organization** — Browse, rate, tag, rename, compare, trash, and hand off project files.
+- **Embedded agent** — Choose Pi or Codex with an exact model and thinking level, reuse the installed harness login, and chat beside any application.
 
 ## Cinema Prompt Engineering
 
@@ -48,7 +50,7 @@ CPE is the text and configuration side of the application. Select Live-Action Ci
 
 Storyboard is the execution workspace. Import or select a ComfyUI workflow, expose its supported controls, assign per-shot parameters, add image/video inputs where the workflow allows them, and send the workflow directly to one or parallel ComfyUI render nodes.
 
-Actual image/reference generation, editing, upscaling, and video generation depend on the selected workflow, installed weights, and custom nodes. The frontend uses ComfyUI REST and WebSocket APIs for execution; **Storyboard Enhance** remains metadata-only for workflow media and does not render or send media pixels to an LLM.
+Actual generation depends on the selected workflow, installed weights, and custom nodes. The frontend uses ComfyUI REST and WebSocket APIs directly for execution. Console prompt enhancement uses its own generation target and task context; it does not depend on Prompt Engineer settings. Agent attachments can provide actual images or sampled video frames to a compatible harness model.
 
 **Guide:** [Storyboard](docs/storyboard.md) · [Multi-node generation](docs/MULTI_NODE_GENERATION.md)
 
@@ -58,7 +60,31 @@ Gallery is the project media tab beside Cinema and Storyboard. Use grid, list, o
 
 Gallery can send a reference to an exposed Storyboard input or restore compatible workflow metadata from a PNG. That handoff prepares a workflow input; the selected workflow still determines what can be submitted.
 
+Gallery selects its own folder and server and can be used without opening a Console project.
+
 **Guide:** [Gallery](docs/gallery.md)
+
+## Embedded Agent
+
+Open **Settings → Agent harness and model**, choose **Pi** or **Codex**, refresh the authenticated inventory, select the model and optional thinking level, and save. Harness models write prompts and operate the application; the media generation target remains a separate choice.
+
+The launcher uses installed harness authentication. Pi reads its normal agent profile; Codex uses the existing `CODEX_HOME` or `~/.codex` by default. No account credentials are copied into Director's Console. Native Codex `0.166.0` is currently required. See [agent setup and limits](docs/agents.md).
+
+- Ask for an outcome: create an image at a requested resolution, crop an attachment, or animate an image. The agent can inspect configured backends, use curated recipes, or propose a custom workflow, save and attach it, set exposed controls, and run it.
+- Ask for cinematic constraints explicitly when you want them. Ordinary Console prompts and Gallery work remain independent of Prompt Engineer.
+- Expand **Thinking** inside a reply or **Application actions** to inspect progress. Conversation, attachment, and message-help text is collapsed by default; **New conversation** starts a fresh harness session.
+
+### Current interface
+
+These captures show the current layout in an unpaired standby browser: no agent model is selected, Gallery has no folder open, and Console has no managed render nodes. They demonstrate the interface, not a completed agent run.
+
+![Cinema Prompt Engineering with embedded agent](Images/agent-workspace/cinema.png)
+
+![Director Console with embedded agent](Images/agent-workspace/console.png)
+
+![Independent Gallery with embedded agent](Images/agent-workspace/gallery.png)
+
+Pi has documented manual workflow, render, media, and project-operation evidence. Codex installed-login discovery is verified; authenticated application turns and restart recovery remain outstanding. Audio attachments are metadata-only, and video perception uses sampled frames. See the [verification report](docs/plans/agent-integration-live-status-2026-11-06.md) for the distinction between implementation and live acceptance.
 
 ## A typical shot
 
@@ -73,6 +99,7 @@ Gallery can send a reference to an exposed Storyboard input or restore compatibl
 
 - Python 3.11+
 - Node.js 22.13+ (22.x) or 24+, with npm
+- For the optional agent gateway: Node.js 22.19+ on the 22.x line, or 24+
 - Git
 - Windows, macOS, or Linux
 - For rendering: a running ComfyUI node with the selected workflow's models and custom nodes. Prompt authoring does not require a render node.
@@ -93,6 +120,7 @@ python start.py
 | Frontend | http://localhost:5173 | Director's Console UI |
 | CPE backend | http://localhost:9800 | Rules and prompt API |
 | Orchestrator | http://localhost:9820 | Project, file, Gallery, and job-group operations |
+| Agent gateway | http://127.0.0.1:9810 | Paired local harness sessions and application actions |
 
 Optional flags: `python start.py --no-browser`, `python start.py --no-orchestrator`, and `python start.py --no-frontend`.
 
@@ -100,7 +128,7 @@ For manual setup, development commands, and regression checks, see [Contributing
 
 ## AI LLM Provider Setup
 
-Provider setup is optional for rule-based Cinema prompts and required only for Enhance with AI. Compatible local servers and existing OpenAI Codex OAuth are supported where configured. A model catalog or connection does not prove account access or vision availability.
+Rule-based Cinema prompts need no LLM account. Use the shared Pi/Codex harness selection for agent chat and enhancement, or explicitly select **Use legacy direct provider** for the older provider path. The legacy OpenAI Codex OAuth provider is separate from the installed Codex harness. A model catalog or connection does not prove generation access or vision availability.
 
 ### Google AI (Gemini) API key setup
 
@@ -117,6 +145,7 @@ See the complete [provider guide](docs/providers.md) for compatible endpoints, l
 - **Frontend:** calls selected ComfyUI nodes directly through REST/WebSocket for workflow generation.
 - **CPE API:** provides cinematography rules, configuration, and optional LLM enhancement.
 - **Orchestrator:** handles project/file operations, Gallery services, backend status, and job groups.
+- **Agent gateway:** pairs with the local browser, streams harness replies and activity over HTTP/SSE, and dispatches typed application actions. ComfyUI generation still goes directly from the frontend to the selected backend.
 
 See [Multi-node generation](docs/MULTI_NODE_GENERATION.md) and the [architecture details in the guides](docs/storyboard.md).
 
@@ -127,6 +156,7 @@ See [Multi-node generation](docs/MULTI_NODE_GENERATION.md) and the [architecture
 | Cinema | [docs/cinema.md](docs/cinema.md) |
 | Storyboard | [docs/storyboard.md](docs/storyboard.md) |
 | Gallery | [docs/gallery.md](docs/gallery.md) |
+| Agents and harness setup | [docs/agents.md](docs/agents.md) |
 | Providers | [docs/providers.md](docs/providers.md) |
 | Presets | [docs/cinema-presets.md](docs/cinema-presets.md) |
 | Technical reference | [docs/cinematography-reference.md](docs/cinematography-reference.md) |
@@ -136,6 +166,15 @@ See [Multi-node generation](docs/MULTI_NODE_GENERATION.md) and the [architecture
 | Recovery | [docs/session-recovery.md](docs/session-recovery.md) |
 
 ## Changelog
+
+### 2026-11-06 — Embedded agents and independent application control
+
+- Added Pi/Codex harness selection, installed-login reuse, shared chat beside all three tabs, attachments, inline expandable thinking, collapsed help, and fresh-session creation.
+- Added scoped application actions, workflow proposal/recipe preparation, backend inspection, revision-aware workflow saves, and a durable generation journal that does not automatically retry ambiguous submissions.
+- Kept Console enhancement and Gallery folder selection independent of Prompt Engineer; cinematic constraints are optional and explicit.
+- Fixed model-catalog browser preflight and native Codex discovery through `mise` shims.
+
+Pi has manual acceptance evidence; Codex login/catalog discovery is verified, with autonomous application execution still pending. See [release notes](CHANGELOG.md) and [current verification status](docs/plans/agent-integration-live-status-2026-11-06.md).
 
 ### 2026-10-02 — Image-aware composer and provider handling
 

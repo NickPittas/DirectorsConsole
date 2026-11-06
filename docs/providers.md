@@ -2,7 +2,15 @@
 
 [← Back to the README](../README.md)
 
-Cinema writes prompts **for a target generator**; an optional **enhancing provider** refines that text. Select the enhancing LLM provider/model in **Settings** and the generator target separately. Attached images require image-input support in the chosen LLM and transport. Unsupported image requests fail rather than silently switching providers or falling back to text-only enhancement.
+Cinema writes prompts **for a target generator**; an optional **enhancing provider** refines that text. Agent chat and enhancement use the shared Pi/Codex harness. The provider choices below are the opt-in legacy path: select **Use legacy direct provider** in Settings to use them. The installed Codex harness is separate from the legacy OpenAI Codex OAuth provider listed below.
+
+## Agent harness and legacy provider paths
+
+Use **Settings → Agent harness and model** for shared Pi/Codex agent chat and enhancement. The selected harness reuses its local login and exact saved model; see the [agent guide](agents.md) for setup and verification limits.
+
+Choose **Use legacy direct provider** only when you want the provider-specific API-key, compatible-endpoint, local-server, or OAuth setup in this guide. Its **OpenAI Codex (ChatGPT Plus/Pro)** entry is an older direct-provider OAuth integration, not the installed native Codex harness. Keep their authentication and model selections distinct.
+
+Both paths require a supported model for the requested input. A model catalog or successful connection does not guarantee account access, image support, or generation capability; neither path silently falls back to another provider or model.
 
 ![AI provider settings](../Images/CPE%20LLM%20Providers.png)
 
