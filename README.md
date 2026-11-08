@@ -10,6 +10,17 @@ Director's Console brings cinematic prompt design, ComfyUI image and video workf
 
 *Existing panel overview: per-shot panels, parameters, reference inputs, and node selection are shown; the latest controls are documented in the [Storyboard guide](docs/storyboard.md).*
 
+<!-- moeffect-demo:start -->
+## Demo
+
+Watch the landscape demonstration below.
+
+https://github.com/user-attachments/assets/b5335be3-3095-4ab9-a2e6-4dabb0632e14
+
+[Watch on the website and read more about the tool](https://moeffect.gr/index.php/tools/directors-console/).
+
+<!-- moeffect-demo:end -->
+
 ## Table of Contents
 
 - [Why Director's Console](#why-directors-console)
